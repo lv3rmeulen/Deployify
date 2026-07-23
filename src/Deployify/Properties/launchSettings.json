@@ -1,0 +1,9 @@
+{
+  "profiles": {
+    "Deployify": {
+      "commandName": "Project",
+      "commandLineArgs": "apply",
+      "workingDirectory": "C:\\iorepo\\DifaTemplate\\src\\Weather.AppHost"
+    }
+  }
+}

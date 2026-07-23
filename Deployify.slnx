@@ -1,0 +1,23 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="README.md" />
+  </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="test/Deployify.Core.Tests/Deployify.Core.Tests.csproj" />
+    <Project Path="test/Deployify.Integration.Tests/Deployify.Integration.Tests.csproj" />
+    <Project Path="test/Deployify.Target.AwsEcs.Tests/Deployify.Target.AwsEcs.Tests.csproj" />
+    <Project Path="test/Deployify.Target.AzureContainerApps.Tests/Deployify.Target.AzureContainerApps.Tests.csproj" />
+    <Project Path="test/Deployify.Target.Compose.Tests/Deployify.Target.Compose.Tests.csproj" />
+    <Project Path="test/Deployify.Target.Kubernetes.Tests/Deployify.Target.Kubernetes.Tests.csproj" />
+    <Project Path="test/Deployify.Target.Nomad.Tests/Deployify.Target.Nomad.Tests.csproj" />
+    <Project Path="test/Deployify.Target.NomadConsul.Tests/Deployify.Target.NomadConsul.Tests.csproj" />
+  </Folder>
+  <Project Path="src/Deployify.Core/Deployify.Core.csproj" />
+  <Project Path="src/Deployify.Target.AwsEcs/Deployify.Target.AwsEcs.csproj" />
+  <Project Path="src/Deployify.Target.AzureContainerApps/Deployify.Target.AzureContainerApps.csproj" />
+  <Project Path="src/Deployify.Target.Compose/Deployify.Target.Compose.csproj" />
+  <Project Path="src/Deployify.Target.Kubernetes/Deployify.Target.Kubernetes.csproj" />
+  <Project Path="src/Deployify.Target.Nomad/Deployify.Target.Nomad.csproj" />
+  <Project Path="src/Deployify.Target.NomadConsul/Deployify.Target.NomadConsul.csproj" />
+  <Project Path="src/Deployify/Deployify.csproj" />
+</Solution>

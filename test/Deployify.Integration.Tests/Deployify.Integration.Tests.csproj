@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Deployify.Integration.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk"    Version="17.*" />
+    <PackageReference Include="xunit.v3" Version="1.*" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.*">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="NSubstitute"               Version="5.*" />
+    <PackageReference Include="Shouldly" Version="4.*" />
+    
+    <PackageReference Include="System.CommandLine"        Version="2.0.0-beta4.22272.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Deployify\Deployify.csproj" />
+    <ProjectReference Include="..\..\src\Deployify.Core\Deployify.Core.csproj" />
+    <ProjectReference Include="..\..\src\Deployify.Target.Nomad\Deployify.Target.Nomad.csproj" />
+    <ProjectReference Include="..\..\src\Deployify.Target.Kubernetes\Deployify.Target.Kubernetes.csproj" />
+    <ProjectReference Include="..\..\src\Deployify.Target.Compose\Deployify.Target.Compose.csproj" />
+    <ProjectReference Include="..\..\src\Deployify.Target.AwsEcs\Deployify.Target.AwsEcs.csproj" />
+    <ProjectReference Include="..\..\src\Deployify.Target.AzureContainerApps\Deployify.Target.AzureContainerApps.csproj" />
+    <ProjectReference Include="..\..\src\Deployify.Target.NomadConsul\Deployify.Target.NomadConsul.csproj" />
+  </ItemGroup>
+
+</Project>
