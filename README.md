@@ -753,7 +753,7 @@ deployify apply    --env prod --auto-approve
 ## Project structure
 
 ```
-Deployify.sln
+Deployify.slnx
 src/
   Deployify/                              CLI entry point
     Commands/
