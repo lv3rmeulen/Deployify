@@ -56,7 +56,7 @@ internal static class Fixtures
             {
                 Type = "project.v0",
                 Path = "Api/Api.csproj",
-                Env = new Dictionary<string, string> { ["ASPNETCORE_E Dictionary<string, string>IRONMENT"] = "Production" },
+                Env = new Dictionary<string, string> { ["ASPNETCORE_ENVIRONMENT"] = "Production" },
                 Bindings = new Dictionary<string, AspireBinding> { ["http"] = new() { ContainerPort = 8080, Protocol = "http" } }
             },
             ["worker"] = new()
