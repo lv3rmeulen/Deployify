@@ -46,9 +46,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-nuget-
 
-      - name: Restore tools
-        run: dotnet tool restore
-
       - name: Restore packages
         run: dotnet restore
 
