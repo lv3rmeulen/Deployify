@@ -10,6 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # MinVer needs the full history and tags
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -22,4 +24,4 @@ jobs:
         run: dotnet build Deployify.slnx --configuration Release --no-restore
 
       - name: Test
-        run: dotnet test Deployify.slnx --configuration Release --no-build
+        run: dotnet test --solution Deployify.slnx --configuration Release --no-build
