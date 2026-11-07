@@ -32,6 +32,6 @@ jobs:
       - name: Test and collect coverage
         run: >
           dotnet tool run dotnet-coverage collect
-          "dotnet test --configuration Release --no-build --logger GitHubActions"
+          "dotnet test --solution Deployify.slnx --configuration Release --no-build --report-github"
           --output-format cobertura
           --output ./artifacts/coverage.cobertura.xml
