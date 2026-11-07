@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Deployify.Core.Expressions;
 
 namespace Deployify.Target.AwsEcs;
 
@@ -22,6 +23,12 @@ public sealed class EcsService
     public int Memory { get; set; } = 512;
 
     public Dictionary<string, string> Env { get; set; } = [];
+
+    /// <summary>
+    /// Env vars whose value contains a secret parameter. They are kept out of <see cref="Env"/>
+    /// and written the target's own secret way rather than into plain-text artifacts.
+    /// </summary>
+    public Dictionary<string, ResolvedValue> SecretEnv { get; set; } = [];
 
     public List<EcsPortMapping> PortMappings { get; set; } = [];
 

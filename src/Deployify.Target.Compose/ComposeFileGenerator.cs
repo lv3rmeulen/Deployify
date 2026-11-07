@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Deployify.Core.Expressions;
 using Deployify.Core.Models;
 
 namespace Deployify.Target.Compose;
@@ -32,7 +33,7 @@ public sealed class ComposeFileGenerator
         var ports = ServicePorts.Assign(manifest, composeConfig.BasePort);
 
         // Services share one Compose network and reach each other by service name.
-        var resolver = new PlaceholderResolver(manifest, ports, new EndpointStrategy());
+        var resolver = new PlaceholderResolver(manifest, ports, new EndpointStrategy(), ParameterResolution.For(config));
 
         foreach (var (name, resource) in manifest.Resources)
         {
@@ -58,18 +59,10 @@ public sealed class ComposeFileGenerator
                     : name
                 : resource.Image;
 
-            foreach (var (k, v) in resolver.ResolveAll(resource.Env))
-            {
-                svc.Env[k] = v;
-            }
-
-            if (overrides?.Env is not null)
-            {
-                foreach (var (k, v) in overrides.Env)
-                {
-                    svc.Env[k] = v;
-                }
-            }
+            // Values that contain a secret parameter are kept apart and stored the target's own way.
+            var env = resolver.ResolveEnvironment(resource.Env, overrides?.Env);
+            svc.Env = env.Plain;
+            svc.SecretEnv = env.Secrets;
 
             // Ports — each binding has a unique port, published on the same host port.
             if (resource.Bindings is not null)
@@ -150,11 +143,17 @@ public sealed class ComposeFileGenerator
         await File.WriteAllTextAsync(path, yaml, s_utf8NoBom, ct);
         svc.ComposeFilePath = path;
 
-        if (composeConfig.GenerateEnvFile && svc.Env.Count > 0)
+        if (composeConfig.GenerateEnvFile && HasEnv(svc))
         {
             var envPath = Path.Combine(dir, ".env");
             await WriteEnvFileAsync(svc, envPath, ct);
             svc.EnvFilePath = envPath;
+        }
+        else if (!composeConfig.GenerateEnvFile && svc.SecretEnv.Count > 0)
+        {
+            // Inline env: secrets appear in compose.yml as ${Parameters__x}; Compose reads the
+            // values from the .env file next to the compose file.
+            await WriteInterpolationEnvFileAsync(Path.Combine(dir, ".env"), InterpolationVariables([svc]), ct);
         }
 
         return path;
@@ -169,6 +168,13 @@ public sealed class ComposeFileGenerator
         var yaml = RenderMergedFile(services, composeConfig);
         var path = Path.Combine(outputDirectory, "compose.yml");
         await File.WriteAllTextAsync(path, yaml, s_utf8NoBom, ct);
+
+        var variables = InterpolationVariables(services);
+        if (!composeConfig.GenerateEnvFile && variables.Count > 0)
+        {
+            await WriteInterpolationEnvFileAsync(Path.Combine(outputDirectory, ".env"), variables, ct);
+        }
+
         return path;
     }
 
@@ -289,7 +295,7 @@ public sealed class ComposeFileGenerator
         }
 
         // Env — reference .env file if generated, else inline
-        if (svc.Env.Count > 0)
+        if (HasEnv(svc))
         {
             if (cfg.GenerateEnvFile)
             {
@@ -302,6 +308,13 @@ public sealed class ComposeFileGenerator
                 foreach (var (k, v) in svc.Env)
                 {
                     sb.AppendLine($"{pad3}{QuoteYaml(k)}: {QuoteYaml(EscapeInterpolation(v))}");
+                }
+
+                // Secret parameters become ${VAR} references, filled in from .env by Compose.
+                foreach (var (k, v) in svc.SecretEnv)
+                {
+                    var value = v.Render(p => "${" + ResolvedEnvironment.VariableName(p) + "}", text: EscapeInterpolation);
+                    sb.AppendLine($"{pad3}{QuoteYaml(k)}: {QuoteYaml(value)}");
                 }
             }
         }
@@ -352,8 +365,55 @@ public sealed class ComposeFileGenerator
             sb.AppendLine($"{k}={EscapeEnvValue(v)}");
         }
 
-        await File.WriteAllTextAsync(path, sb.ToString(), s_utf8NoBom, ct);
+        foreach (var (k, v) in svc.SecretEnv)
+        {
+            sb.AppendLine($"{k}={EscapeEnvValue(v.ToString())}");
+        }
+
+        await WriteSecretFileAsync(path, sb.ToString(), ct);
     }
+
+    /// <summary>
+    /// The variables that secret env values refer to as <c>${…}</c> when env is written
+    /// inline, with their values. Keyed by <see cref="ResolvedEnvironment.VariableName"/>.
+    /// </summary>
+    public static SortedDictionary<string, string> InterpolationVariables(IEnumerable<ComposeService> services)
+    {
+        var result = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        foreach (var part in services.SelectMany(s => s.SecretEnv.Values).SelectMany(v => v.Parameters))
+        {
+            result[ResolvedEnvironment.VariableName(part)] = part.Value;
+        }
+
+        return result;
+    }
+
+    private static async Task WriteInterpolationEnvFileAsync(
+        string path, IReadOnlyDictionary<string, string> variables, CancellationToken ct)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("# Secret parameters for compose.yml — generated by deployify");
+        sb.AppendLine("# Do not commit this file to source control.");
+        sb.AppendLine();
+        foreach (var (k, v) in variables)
+        {
+            sb.AppendLine($"{k}={EscapeEnvValue(v)}");
+        }
+
+        await WriteSecretFileAsync(path, sb.ToString(), ct);
+    }
+
+    /// <summary>Writes a file that may hold secrets, readable by the owner only on Unix.</summary>
+    private static async Task WriteSecretFileAsync(string path, string content, CancellationToken ct)
+    {
+        await File.WriteAllTextAsync(path, content, s_utf8NoBom, ct);
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+    }
+
+    private static bool HasEnv(ComposeService svc) => svc.Env.Count > 0 || svc.SecretEnv.Count > 0;
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 

@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
+using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
 
 namespace Deployify.Core.Models;
@@ -40,6 +42,23 @@ public sealed class EnvironmentConfig
 
     /// <summary>Per-service overrides keyed by service name</summary>
     public Dictionary<string, ServiceOverride> ServiceOverrides { get; set; } = [];
+
+    /// <summary>
+    /// Values for Aspire <c>parameter.v0</c> resources, keyed by parameter name, or
+    /// <c>name.input</c> for an input other than <c>value</c>. A value of <c>"env:NAME"</c> is read
+    /// from environment variable NAME, which is how secret parameters should be supplied.
+    /// Parameters not listed here fall back to a <c>Parameters__name</c> environment variable,
+    /// then the manifest's default, then a generated value kept in deployify-parameters.json.
+    /// </summary>
+    public Dictionary<string, string> Parameters { get; set; } = [];
+
+    /// <summary>
+    /// Where parameter values come from at run time. Not persisted: the CLI sets it to a source
+    /// backed by deployify-parameters.json, and <see cref="ParameterResolution.For"/> falls back
+    /// to an in-memory source so every generator in one run sees the same values.
+    /// </summary>
+    [JsonIgnore]
+    public IParameterSource? ParameterSource { get; set; }
 
     /// <summary>
     /// Container runtime used when publishing images via <c>dotnet publish -t:PublishContainer</c>.

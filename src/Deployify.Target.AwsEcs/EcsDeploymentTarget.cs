@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
 using Microsoft.Extensions.Logging;
@@ -164,6 +165,12 @@ public sealed class EcsDeploymentTarget(
 
             try
             {
+                foreach (var (key, value) in svc.SecretEnv)
+                {
+                    await client.PutSecureStringParameterAsync(
+                        EcsTaskDefinitionGenerator.SecretParameterName(cfg, svc.Name, key), value.ToString(), ct);
+                }
+
                 var taskDefArn = await client.RegisterTaskDefinitionAsync(taskDefPath, ct);
                 logger.LogInformation("Registered task definition: {Arn}", taskDefArn);
 
@@ -222,7 +229,7 @@ public sealed class EcsDeploymentTarget(
                 Image = svc.Image,
                 ImageTag = svc.ImageTag,
                 Count = svc.DesiredCount,
-                Env = svc.Env,
+                Env = ResolvedEnvironment.ForDisplay(svc.Env, svc.SecretEnv),
                 Ports = [.. svc.PortMappings.Select(p => $"{p.ContainerPort}/{p.Protocol}")],
                 Dependencies = svc.Dependencies,
                 AdditionalInfo = new Dictionary<string, string>

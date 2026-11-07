@@ -118,6 +118,44 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger)
             .GetString()!;
     }
 
+    // ── Secrets ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Creates or overwrites a SecureString parameter in SSM Parameter Store. The value goes
+    /// through a temporary owner-only input file rather than the command line, so it doesn't
+    /// show up in the process list.
+    /// </summary>
+    public async Task PutSecureStringParameterAsync(string name, string value, CancellationToken ct = default)
+    {
+        var inputPath = Path.Combine(Path.GetTempPath(), $"deployify-ssm-{Guid.NewGuid():N}.json");
+        try
+        {
+            var json = JsonSerializer.Serialize(new Dictionary<string, object>
+            {
+                ["Name"] = name,
+                ["Value"] = value,
+                ["Type"] = "SecureString",
+                ["Overwrite"] = true
+            });
+            await File.WriteAllTextAsync(inputPath, json, ct);
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(inputPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            }
+
+            var args = BuildArgs($"ssm put-parameter --cli-input-json \"file://{inputPath}\" --output json");
+            var (exit, output) = await RunAsync("aws", args, ct);
+            if (exit != 0)
+            {
+                throw new InvalidOperationException($"Failed to store secret parameter {name}: {output.Trim()}");
+            }
+        }
+        finally
+        {
+            File.Delete(inputPath);
+        }
+    }
+
     // ── Create or update service ──────────────────────────────────────────────
 
     public async Task<string> UpsertServiceAsync(

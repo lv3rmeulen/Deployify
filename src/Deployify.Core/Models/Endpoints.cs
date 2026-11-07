@@ -1,8 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
-using System.Text.RegularExpressions;
+using Deployify.Core.Expressions;
 
 namespace Deployify.Core.Models;
 
@@ -135,34 +134,69 @@ public sealed class EndpointStrategy
 /// <summary>
 /// Resolves Aspire placeholders such as <c>{api.bindings.http.url}</c>,
 /// <c>{api.bindings.http.targetPort}</c> or <c>{cache.connectionString}</c> into
-/// concrete values for one deployment target. Placeholders can appear anywhere inside
-/// a value and can nest (a connection string that refers to bindings). Anything that
-/// can't be resolved, such as a <c>parameter.v0</c> input, is left as-is and reported
-/// through <see cref="Unresolved"/>.
+/// concrete strings for one deployment target.
+///
+/// This is the string-in, string-out facade the target generators use. The work is done by
+/// <see cref="ExpressionResolver"/>; use <see cref="Expressions"/> directly to get structured
+/// values (secret tracking, parameter parts) and <see cref="Diagnostics"/>.
+///
+/// Anything that can't be resolved, such as a <c>parameter.v0</c> input when no
+/// <see cref="IParameterSource"/> is given, is left as-is and reported through
+/// <see cref="Unresolved"/>.
 /// </summary>
 public sealed class PlaceholderResolver(
     AspireManifest manifest,
     IReadOnlyDictionary<(string Resource, string Binding), int> ports,
-    EndpointStrategy strategy)
+    EndpointStrategy strategy,
+    IParameterSource? parameters = null)
 {
-    private static readonly Regex s_placeholder =
-        new(@"\{(?<res>[A-Za-z0-9_-]+)\.(?<path>[A-Za-z0-9_.-]+)\}", RegexOptions.Compiled);
+    private ExpressionResolver? _expressions;
 
-    private readonly HashSet<string> _unresolved = new(StringComparer.Ordinal);
-
-    /// <summary>Placeholders seen so far that could not be resolved.</summary>
-    public IReadOnlyCollection<string> Unresolved => _unresolved;
-
-    /// <summary>
-    /// When true (the default), the https binding of a project resource resolves to its
-    /// http endpoint. Deployed project containers only listen on HTTP_PORTS; no TLS
-    /// certificate is configured, so nothing answers on the https port. Aspire's service
-    /// discovery prefers an https entry when one exists, so leaving it pointing at a dead
-    /// port breaks every call between services.
-    /// </summary>
+    /// <inheritdoc cref="ExpressionResolver.ProjectHttpsAsHttp"/>
     public bool ProjectHttpsAsHttp { get; init; } = true;
 
-    public string Resolve(string value) => Resolve(value, depth: 0);
+    /// <summary>The underlying resolver. Created on first use so init-only options apply to it.</summary>
+    public ExpressionResolver Expressions
+        => _expressions ??= new ExpressionResolver(manifest, ports, strategy, parameters)
+        {
+            ProjectHttpsAsHttp = ProjectHttpsAsHttp
+        };
+
+    /// <summary>Placeholders seen so far that could not be resolved.</summary>
+    public IReadOnlyCollection<string> Unresolved => Expressions.Unresolved;
+
+    /// <summary>Why each unresolved placeholder could not be resolved.</summary>
+    public IReadOnlyList<ExpressionDiagnostic> Diagnostics => Expressions.Diagnostics;
+
+    public string Resolve(string value) => Expressions.Resolve(value).ToString();
+
+    /// <summary>
+    /// Resolves a resource's env and splits it into plain and secret values. Override values
+    /// (from serviceOverrides) are taken literally and win over the manifest.
+    /// </summary>
+    public ResolvedEnvironment ResolveEnvironment(
+        IReadOnlyDictionary<string, string>? env,
+        IReadOnlyDictionary<string, string>? overrides = null)
+    {
+        var result = new ResolvedEnvironment();
+        if (env is not null)
+        {
+            foreach (var (k, v) in env)
+            {
+                result.Set(k, Expressions.Resolve(v));
+            }
+        }
+
+        if (overrides is not null)
+        {
+            foreach (var (k, v) in overrides)
+            {
+                result.SetPlain(k, v);
+            }
+        }
+
+        return result;
+    }
 
     /// <summary>Resolves every value of an env dictionary into a new dictionary.</summary>
     public Dictionary<string, string> ResolveAll(IReadOnlyDictionary<string, string>? env)
@@ -179,79 +213,5 @@ public sealed class PlaceholderResolver(
         }
 
         return result;
-    }
-
-    private string Resolve(string value, int depth)
-    {
-        if (depth > 8 || !value.Contains('{'))
-        {
-            return value;
-        }
-
-        return s_placeholder.Replace(value, m =>
-        {
-            var resolved = ResolveOne(m.Groups["res"].Value, m.Groups["path"].Value, depth);
-            if (resolved is null)
-            {
-                _unresolved.Add(m.Value);
-            }
-
-            return resolved ?? m.Value;
-        });
-    }
-
-    private string? ResolveOne(string resource, string path, int depth)
-    {
-        if (!manifest.Resources.TryGetValue(resource, out var res))
-        {
-            return null;
-        }
-
-        var parts = path.Split('.');
-
-        // {res.connectionString}
-        if (parts is ["connectionString"])
-        {
-            return res.ConnectionString is null ? null : Resolve(res.ConnectionString, depth + 1);
-        }
-
-        // {res.value} on value.v0 resources
-        if (parts is ["value"] && res.ExtensionData is not null &&
-            res.ExtensionData.TryGetValue("value", out var v) && v.ValueKind == JsonValueKind.String)
-        {
-            return Resolve(v.GetString()!, depth + 1);
-        }
-
-        // {res.bindings.<binding>.<property>}
-        if (parts is ["bindings", var bindingName, var property] &&
-            res.Bindings is not null && res.Bindings.TryGetValue(bindingName, out var binding))
-        {
-            if (ProjectHttpsAsHttp && property != "targetPort" &&
-                binding.Scheme == "https" && res.Type.StartsWith("project.", StringComparison.Ordinal) &&
-                res.Bindings.FirstOrDefault(b => b.Value.Scheme == "http") is { Key: not null } http)
-            {
-                bindingName = http.Key;
-                binding = http.Value;
-            }
-
-            if (!ports.TryGetValue((resource, bindingName), out var containerPort))
-            {
-                return null;
-            }
-
-            var scheme = binding.EffectiveScheme;
-            return property switch
-            {
-                "targetPort" => containerPort.ToString(),
-                "port" => strategy.Port(resource, bindingName, containerPort).ToString(),
-                "host" => strategy.Host(resource),
-                "scheme" => scheme,
-                "url" => strategy.Url?.Invoke(resource, bindingName, scheme, containerPort)
-                         ?? $"{scheme}://{strategy.Host(resource)}:{strategy.Port(resource, bindingName, containerPort)}",
-                _ => null
-            };
-        }
-
-        return null;
     }
 }

@@ -55,6 +55,14 @@ public static class StateFileSecrets
                 found.Add($"{envName}.dashboard.browserToken");
             }
 
+            foreach (var (name, value) in env.Parameters)
+            {
+                if (s_secretWords.Any(name.ToLowerInvariant().Replace("-", "").Replace("_", "").Contains) && Secrets.IsLiteral(value))
+                {
+                    found.Add($"{envName}.parameters.{name}");
+                }
+            }
+
             foreach (var (key, value) in env.TargetConfig)
             {
                 var element = value switch

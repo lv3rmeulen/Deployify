@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Deployify.Core.Expressions;
 
 namespace Deployify.Target.AzureContainerApps;
 
@@ -23,6 +24,12 @@ public sealed class AcaApp
     public string Memory { get; set; } = "0.5Gi";
 
     public Dictionary<string, string> Env { get; set; } = [];
+
+    /// <summary>
+    /// Env vars whose value contains a secret parameter. They are kept out of <see cref="Env"/>
+    /// and written the target's own secret way rather than into plain-text artifacts.
+    /// </summary>
+    public Dictionary<string, ResolvedValue> SecretEnv { get; set; } = [];
 
     public List<AcaPort> Ports { get; set; } = [];
 

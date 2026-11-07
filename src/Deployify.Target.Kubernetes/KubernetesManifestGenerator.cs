@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Deployify.Core.Expressions;
 using Deployify.Core.Models;
 
 namespace Deployify.Target.Kubernetes;
@@ -28,7 +29,7 @@ public sealed class KubernetesManifestGenerator
         var resolver = new PlaceholderResolver(manifest, ports, new EndpointStrategy
         {
             Host = res => $"{res}.{NamespaceFor(kubernetesConfig, res)}"
-        });
+        }, ParameterResolution.For(config));
 
         foreach (var (name, resource) in manifest.Resources)
         {
@@ -60,18 +61,10 @@ public sealed class KubernetesManifestGenerator
                     : resource.Image
             };
 
-            foreach (var (k, v) in resolver.ResolveAll(resource.Env))
-            {
-                svc.Env[k] = v;
-            }
-
-            if (overrides?.Env is not null)
-            {
-                foreach (var (k, v) in overrides.Env)
-                {
-                    svc.Env[k] = v;
-                }
-            }
+            // Values that contain a secret parameter are kept apart and stored the target's own way.
+            var env = resolver.ResolveEnvironment(resource.Env, overrides?.Env);
+            svc.Env = env.Plain;
+            svc.SecretEnv = env.Secrets;
 
             if (resource.Bindings is not null)
             {
@@ -153,6 +146,21 @@ public sealed class KubernetesManifestGenerator
             files.Add(await WriteAsync(dir, "configmap.yaml", RenderConfigMap(svc), ct));
         }
 
+        var secretPath = Path.Combine(dir, "secret.yaml");
+        if (svc.HasSecret)
+        {
+            files.Add(await WriteAsync(dir, "secret.yaml", RenderSecret(svc), ct));
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(secretPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            }
+        }
+        else if (File.Exists(secretPath))
+        {
+            // apply reads every file in the folder; don't leave a secret behind that no longer exists.
+            File.Delete(secretPath);
+        }
+
         files.Add(await WriteAsync(dir, "deployment.yaml", RenderDeployment(svc), ct));
         if (svc.HasService)
         {
@@ -206,6 +214,35 @@ data:
 
         return sb.ToString();
     }
+
+    /// <summary>
+    /// Env vars that contain a secret parameter go in an Opaque Secret instead of the
+    /// ConfigMap, so they are stored and access-controlled as secrets in the cluster.
+    /// </summary>
+    private static string RenderSecret(KubernetesServiceManifest svc)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"""
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {SecretName(svc)}
+  namespace: {svc.Namespace}
+  labels:
+    app: {svc.ServiceName}
+    app.kubernetes.io/managed-by: deployify
+type: Opaque
+stringData:
+""");
+        foreach (var (k, v) in svc.SecretEnv)
+        {
+            sb.AppendLine($"  {k}: {QuoteYaml(v.ToString())}");
+        }
+
+        return sb.ToString();
+    }
+
+    internal static string SecretName(KubernetesServiceManifest svc) => $"{svc.ServiceName}-secrets";
 
     private static string RenderDeployment(KubernetesServiceManifest svc)
     {
@@ -264,11 +301,20 @@ spec:
             }
         }
 
-        if (svc.HasConfigMap)
+        if (svc.HasConfigMap || svc.HasSecret)
         {
             sb.AppendLine("          envFrom:");
-            sb.AppendLine("            - configMapRef:");
-            sb.AppendLine($"                name: {svc.ServiceName}-config");
+            if (svc.HasConfigMap)
+            {
+                sb.AppendLine("            - configMapRef:");
+                sb.AppendLine($"                name: {svc.ServiceName}-config");
+            }
+
+            if (svc.HasSecret)
+            {
+                sb.AppendLine("            - secretRef:");
+                sb.AppendLine($"                name: {SecretName(svc)}");
+            }
         }
 
         sb.AppendLine($"""

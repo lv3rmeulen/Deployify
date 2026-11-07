@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Deployify.Core.Expressions;
 
 namespace Deployify.Target.Compose;
 
@@ -18,6 +19,12 @@ public sealed class ComposeService
     public int Replicas { get; set; } = 1;
 
     public Dictionary<string, string> Env { get; set; } = [];
+
+    /// <summary>
+    /// Env vars whose value contains a secret parameter. They are kept out of <see cref="Env"/>
+    /// and written the target's own secret way rather than into plain-text artifacts.
+    /// </summary>
+    public Dictionary<string, ResolvedValue> SecretEnv { get; set; } = [];
 
     public List<ComposePort> Ports { get; set; } = [];
 

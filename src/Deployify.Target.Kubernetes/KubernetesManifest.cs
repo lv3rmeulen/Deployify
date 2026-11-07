@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Deployify.Core.Expressions;
 
 namespace Deployify.Target.Kubernetes;
 
@@ -15,6 +16,12 @@ public sealed class KubernetesServiceManifest
     public string ImageTag { get; set; } = "latest";
     public int Replicas { get; set; } = 1;
     public Dictionary<string, string> Env { get; set; } = [];
+
+    /// <summary>
+    /// Env vars whose value contains a secret parameter. They are kept out of <see cref="Env"/>
+    /// and written the target's own secret way rather than into plain-text artifacts.
+    /// </summary>
+    public Dictionary<string, ResolvedValue> SecretEnv { get; set; } = [];
     public List<KubernetesPort> Ports { get; set; } = [];
     public List<string> Dependencies { get; set; } = [];
 
@@ -26,6 +33,7 @@ public sealed class KubernetesServiceManifest
 
     // Which optional resources to generate
     public bool HasConfigMap => Env.Count > 0;
+    public bool HasSecret => SecretEnv.Count > 0;
     public bool HasService => Ports.Count > 0;
     public bool HasIngress { get; set; }
     public string? IngressHost { get; set; }

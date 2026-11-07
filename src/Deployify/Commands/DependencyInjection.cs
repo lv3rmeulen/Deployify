@@ -61,6 +61,10 @@ internal static class DependencyInjection
         var stateManager = sp0.GetRequiredService<IStateManager>();
         var (config, envName) = await stateManager.LoadActiveAsync(stateDirectory, envOverride, ct);
 
+        // Parameter values: explicit config, Parameters__* env vars, manifest defaults, then
+        // generated values kept in deployify-parameters.json so every deploy reuses them.
+        config.ParameterSource = ParameterStore.Load(stateDirectory, envName).CreateSource(config);
+
         // Prefer AppHostPath from state; fall back to the path the user passed.
         // Manifest resource paths are relative to the AppHost project directory.
         var resolvedAppHostDir = config.AppHostPath is not null && Directory.Exists(config.AppHostPath)

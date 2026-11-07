@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using Deployify.Core.Expressions;
 using Deployify.Core.Models;
 
 namespace Deployify.Target.AwsEcs;
@@ -30,7 +31,7 @@ public sealed class EcsTaskDefinitionGenerator
         var services = new List<EcsService>();
         var ports = ServicePorts.Assign(manifest, ecsConfig.BasePort);
         // With Service Connect each service is reachable at <name>:<port>.
-        var resolver = new PlaceholderResolver(manifest, ports, new EndpointStrategy());
+        var resolver = new PlaceholderResolver(manifest, ports, new EndpointStrategy(), ParameterResolution.For(config));
 
         foreach (var (name, resource) in manifest.Resources)
         {
@@ -58,18 +59,10 @@ public sealed class EcsTaskDefinitionGenerator
                     : name
                 : resource.Image;
 
-            foreach (var (k, v) in resolver.ResolveAll(resource.Env))
-            {
-                svc.Env[k] = v;
-            }
-
-            if (overrides?.Env is not null)
-            {
-                foreach (var (k, v) in overrides.Env)
-                {
-                    svc.Env[k] = v;
-                }
-            }
+            // Values that contain a secret parameter are kept apart and stored the target's own way.
+            var env = resolver.ResolveEnvironment(resource.Env, overrides?.Env);
+            svc.Env = env.Plain;
+            svc.SecretEnv = env.Secrets;
 
             if (resource.Bindings is not null)
             {
@@ -138,6 +131,20 @@ public sealed class EcsTaskDefinitionGenerator
         return path;
     }
 
+    /// <summary>The SSM parameter that holds secret env var <paramref name="key"/> of a service.</summary>
+    public static string SecretParameterName(EcsTargetConfig ecsConfig, string serviceName, string key)
+    {
+        var prefix = string.IsNullOrWhiteSpace(ecsConfig.SecretsPrefix)
+            ? $"/deployify/{ecsConfig.ClusterName}"
+            : ecsConfig.SecretsPrefix.TrimEnd('/');
+        if (!prefix.StartsWith('/'))
+        {
+            prefix = "/" + prefix;
+        }
+
+        return $"{prefix}/{serviceName}/{key}";
+    }
+
     // ── Task definition builder ───────────────────────────────────────────────
 
     private static object BuildTaskDefinition(
@@ -173,6 +180,17 @@ public sealed class EcsTaskDefinitionGenerator
                 {
                     ["name"] = kvp.Key,
                     ["value"] = kvp.Value
+                }).ToList();
+        }
+
+        // Secret env vars are read from SSM Parameter Store at task start; apply writes them.
+        if (service.SecretEnv.Count > 0)
+        {
+            containerDef["secrets"] = service.SecretEnv.Keys
+                .Select(key => new Dictionary<string, string>
+                {
+                    ["name"] = key,
+                    ["valueFrom"] = SecretParameterName(ecsConfig, service.Name, key)
                 }).ToList();
         }
 

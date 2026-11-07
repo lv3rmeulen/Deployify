@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using Deployify.Core.Expressions;
 using Deployify.Core.Models;
 
 namespace Deployify.Target.AzureContainerApps;
@@ -39,7 +40,7 @@ public sealed class AcaManifestGenerator
             Port = (res, binding, containerPort) =>
                 manifest.Resources[res].Bindings![binding].IsHttp ? 80 : containerPort,
             Url = (res, _, scheme, _) => scheme is "http" or "https" ? $"http://{res}" : null
-        });
+        }, ParameterResolution.For(config));
 
         foreach (var (name, resource) in manifest.Resources)
         {
@@ -69,18 +70,10 @@ public sealed class AcaManifestGenerator
                     : name
                 : resource.Image;
 
-            foreach (var (k, v) in resolver.ResolveAll(resource.Env))
-            {
-                app.Env[k] = v;
-            }
-
-            if (overrides?.Env is not null)
-            {
-                foreach (var (k, v) in overrides.Env)
-                {
-                    app.Env[k] = v;
-                }
-            }
+            // Values that contain a secret parameter are kept apart and stored the target's own way.
+            var env = resolver.ResolveEnvironment(resource.Env, overrides?.Env);
+            app.Env = env.Plain;
+            app.SecretEnv = env.Secrets;
 
             if (resource.Bindings is not null)
             {
@@ -133,6 +126,10 @@ public sealed class AcaManifestGenerator
 
         var path = Path.Combine(outputDirectory, $"{app.Name}.containerapp.json");
         await File.WriteAllTextAsync(path, json, new UTF8Encoding(false), ct);
+        if (app.SecretEnv.Count > 0 && !OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
         app.SpecFilePath = path;
         return path;
     }
@@ -154,14 +151,21 @@ public sealed class AcaManifestGenerator
             }
         };
 
-        if (app.Env.Count > 0)
+        var secretNames = SecretNames(app);
+        if (app.Env.Count > 0 || app.SecretEnv.Count > 0)
         {
             container["env"] = app.Env
                 .Select(kvp => new Dictionary<string, string>
                 {
                     ["name"] = kvp.Key,
                     ["value"] = kvp.Value
-                }).ToList();
+                })
+                .Concat(app.SecretEnv.Keys.Select(key => new Dictionary<string, string>
+                {
+                    ["name"] = key,
+                    ["secretRef"] = secretNames[key]
+                }))
+                .ToList();
         }
 
         var template = new Dictionary<string, object>
@@ -223,9 +227,57 @@ public sealed class AcaManifestGenerator
         return spec;
     }
 
+    /// <summary>
+    /// Container Apps secret names for each secret env var. Secret names may only contain
+    /// lowercase letters, digits, '-' and '.', so <c>ConnectionStrings__db</c> becomes
+    /// <c>connectionstrings--db</c>; collisions get a numeric suffix.
+    /// </summary>
+    public static Dictionary<string, string> SecretNames(AcaApp app)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        var used = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var key in app.SecretEnv.Keys.Order(StringComparer.Ordinal))
+        {
+            var name = new string([.. key.ToLowerInvariant().Select(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '.' ? c : '-')])
+                .Trim('-', '.');
+            if (name.Length == 0)
+            {
+                name = "secret";
+            }
+
+            if (name.Length > 240)
+            {
+                name = name[..240].TrimEnd('-', '.');
+            }
+
+            var candidate = name;
+            for (var i = 2; !used.Add(candidate); i++)
+            {
+                candidate = $"{name}-{i}";
+            }
+
+            result[key] = candidate;
+        }
+
+        return result;
+    }
+
     private static Dictionary<string, object?> BuildConfiguration(AcaApp app, AcaTargetConfig acaConfig)
     {
         var config = new Dictionary<string, object?>();
+
+        // Secret env values are declared as app secrets and referenced with secretRef.
+        if (app.SecretEnv.Count > 0)
+        {
+            var names = SecretNames(app);
+            config["secrets"] = app.SecretEnv
+                .Select(kvp => new Dictionary<string, string>
+                {
+                    ["name"] = names[kvp.Key],
+                    ["value"] = kvp.Value.ToString()
+                })
+                .ToList();
+        }
 
         // Ingress: public only when Aspire marked the binding external; other HTTP services
         // get internal ingress so peers in the environment can still call them.

@@ -545,6 +545,47 @@ gateway with a TCP listener for every HTTP endpoint marked external in the AppHo
 
 ---
 
+## Parameters and secrets
+
+Aspire `parameter.v0` resources (`builder.AddParameter(...)`, generated database passwords, …) are
+resolved for every target. Values are looked up in this order:
+
+1. `parameters` in the environment's config — use `"env:NAME"` for anything secret
+2. A `Parameters__<name>` environment variable (Aspire's convention; a `-` in the name may be written as `_`)
+3. The manifest's `default.value`
+4. A generated value for inputs with `default.generate`, saved in `deployify-parameters.json` next to
+   the state file so every deploy reuses the same password
+
+```json
+"environments": {
+  "prod": {
+    "parameters": {
+      "api-key": "env:API_KEY",
+      "region": "westeurope"
+    }
+  }
+}
+```
+
+`deployify-parameters.json` holds generated secrets in plain text — add it to `.gitignore`.
+
+Env vars whose value contains a **secret** parameter never go into plain-text artifacts. Each target
+stores them its own way:
+
+| Target | Where secret values go |
+|---|---|
+| Compose | The service's `.env` file (`generateEnvFile`), or `${Parameters__name}` in `compose.yml` with the values in a `.env` next to it |
+| Kubernetes | A `<service>-secrets` Secret, loaded with `envFrom.secretRef` |
+| AzureContainerApps | `configuration.secrets`, referenced with `secretRef` |
+| AwsEcs | SSM Parameter Store SecureStrings under `secretsPrefix` (default `/deployify/<cluster>`), written by `apply` and referenced from the task definition's `secrets`. The execution role needs `ssm:GetParameters` |
+| Nomad / NomadConsul | Nomad Variables at `nomad/jobs/<job>`, written by `apply` and read by a `template` block (Nomad 1.4+) |
+
+`explain` masks secret values. A reference that can't be resolved is left in place and reported.
+
+To pass a literal `{name.property}` through without resolving it, double the braces: `{{name.property}}`.
+
+---
+
 ## Dapr
 
 Deployify can inject a [Dapr](https://dapr.io) sidecar alongside every service at deployment time — no changes to your application code or Aspire AppHost required.

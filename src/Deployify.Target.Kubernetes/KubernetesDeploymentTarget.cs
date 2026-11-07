@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
 using Microsoft.Extensions.Logging;
@@ -211,7 +212,7 @@ public sealed class KubernetesDeploymentTarget(
                 Image = svc.Image,
                 ImageTag = svc.ImageTag,
                 Count = svc.Replicas,
-                Env = svc.Env,
+                Env = ResolvedEnvironment.ForDisplay(svc.Env, svc.SecretEnv),
                 Ports = [.. svc.Ports.Select(p => $"{p.Name}:{p.ContainerPort}/{p.Protocol}")],
                 Dependencies = svc.Dependencies,
                 AdditionalInfo = new Dictionary<string, string>
@@ -221,6 +222,7 @@ public sealed class KubernetesDeploymentTarget(
                     ["cpu"] = $"req:{svc.CpuRequest} limit:{svc.CpuLimit}",
                     ["memory"] = $"req:{svc.MemoryRequest} limit:{svc.MemoryLimit}",
                     ["configmap"] = svc.HasConfigMap ? "yes" : "no",
+                    ["secret"] = svc.HasSecret ? KubernetesManifestGenerator.SecretName(svc) : "no",
                     ["pvc"] = svc.HasPvc ? svc.PvcStorageSize ?? "1Gi" : "no"
                 }
             })

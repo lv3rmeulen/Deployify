@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Deployify.Core.Expressions;
 using Deployify.Core.Models;
 
 namespace Deployify.Target.Nomad;
@@ -11,6 +12,12 @@ public sealed class NomadJob
     public int Count { get; set; } = 1;
     public DeploymentMode Mode { get; set; } = DeploymentMode.Docker;
     public Dictionary<string, string> Env { get; set; } = [];
+
+    /// <summary>
+    /// Env vars whose value contains a secret parameter. They are kept out of <see cref="Env"/>
+    /// and written the target's own secret way rather than into plain-text artifacts.
+    /// </summary>
+    public Dictionary<string, ResolvedValue> SecretEnv { get; set; } = [];
     public List<NomadPort> Ports { get; set; } = [];
     public List<string> Dependencies { get; set; } = [];
 

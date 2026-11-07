@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
 using Deployify.Target.Nomad;
@@ -218,6 +219,13 @@ public sealed class NomadConsulDeploymentTarget(
 
             try
             {
+                // Secrets first: the job's template block reads them when the task starts.
+                if (job.SecretEnv.Count > 0)
+                {
+                    await nomadClient.PutVariableAsync(NomadVariables.JobPath(job.Name),
+                        job.SecretEnv.ToDictionary(kv => kv.Key, kv => kv.Value.ToString()), ct);
+                }
+
                 var evalId = await nomadClient.SubmitJobAsync(hclPath, ct);
                 logger.LogInformation(
                     "Submitted Consul Connect job '{Name}', evalId={EvalId}", job.Name, evalId);
@@ -266,7 +274,7 @@ public sealed class NomadConsulDeploymentTarget(
                 Image = job.Image,
                 ImageTag = job.ImageTag,
                 Count = job.Count,
-                Env = job.Env,
+                Env = ResolvedEnvironment.ForDisplay(job.Env, job.SecretEnv),
                 Ports = [.. job.Ports.Select(p => $"{p.Label}:{p.ContainerPort}/{p.Protocol}")],
                 Dependencies = job.Dependencies,
                 AdditionalInfo = new Dictionary<string, string>

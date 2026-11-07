@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Models;
+using Deployify.Core.Services;
 using Spectre.Console;
 
 namespace Deployify.Commands;
@@ -15,6 +16,14 @@ internal static class SecretsWarning
 {
     public static async Task PrintAsync(DeployifyStateFile state, string directory, CancellationToken ct)
     {
+        // Generated parameter values (database passwords etc.) are plain text by necessity.
+        if (System.IO.File.Exists(System.IO.Path.Combine(directory, ParameterStore.FileName)) &&
+            await IsTrackedByGitAsync(directory, ParameterStore.FileName, ct) is true)
+        {
+            AnsiConsole.MarkupLine($"\n[red]![/] [cyan]{ParameterStore.FileName}[/] holds generated secrets and is not " +
+                                   "git-ignored. Add it to .gitignore so the secrets aren't committed.");
+        }
+
         var literal = StateFileSecrets.FindLiteral(state);
         if (literal.Count == 0)
         {
@@ -30,15 +39,15 @@ internal static class SecretsWarning
         AnsiConsole.MarkupLine("  Store a reference instead, e.g. [cyan]\"env:NOMAD_TOKEN\"[/], and set the variable " +
                                "in your shell or CI secrets.");
 
-        if (await IsTrackedByGitAsync(directory, ct) is true)
+        if (await IsTrackedByGitAsync(directory, "deployify-state.json", ct) is true)
         {
             AnsiConsole.MarkupLine("  [red]This file is not git-ignored.[/] Add [cyan]deployify-state.json[/] and " +
                                    "[cyan]deployify-output/[/] to .gitignore so the secrets aren't committed.");
         }
     }
 
-    /// <summary>True when the state file is inside a git repo and not ignored; null if unknown.</summary>
-    private static async Task<bool?> IsTrackedByGitAsync(string directory, CancellationToken ct)
+    /// <summary>True when <paramref name="fileName"/> is inside a git repo and not ignored; null if unknown.</summary>
+    private static async Task<bool?> IsTrackedByGitAsync(string directory, string fileName, CancellationToken ct)
     {
         try
         {
@@ -49,7 +58,7 @@ internal static class SecretsWarning
                 RedirectStandardOutput = true,
                 RedirectStandardError = true
             };
-            foreach (var a in new[] { "check-ignore", "-q", "deployify-state.json" })
+            foreach (var a in new[] { "check-ignore", "-q", fileName })
             {
                 psi.ArgumentList.Add(a);
             }

@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Deployify.Core.Expressions;
 using Deployify.Core.Models;
 using Microsoft.Extensions.Logging;
 
@@ -33,7 +34,7 @@ public sealed class JobGenerator(ILogger<JobGenerator> logger)
         var nc = ReadConfig(config);
         var ports = ServicePorts.Assign(manifest, nc.BasePort);
         var resolver = new PlaceholderResolver(manifest, ports,
-            new EndpointStrategy { Host = _ => "localhost" });
+            new EndpointStrategy { Host = _ => "localhost" }, ParameterResolution.For(config));
 
         var jobs = new List<NomadJob>();
 
@@ -67,20 +68,18 @@ public sealed class JobGenerator(ILogger<JobGenerator> logger)
                 job.Image = resource.Image;
             }
 
-            foreach (var (k, v) in resolver.ResolveAll(resource.Env))
-            {
-                job.Env[k] = v;
-            }
-
-            if (overrides?.Env is not null)
-            {
-                foreach (var (k, v) in overrides.Env)
-                {
-                    job.Env[k] = v;
-                }
-            }
+            // Values that contain a secret parameter are kept apart and stored the target's own way.
+            var env = resolver.ResolveEnvironment(resource.Env, overrides?.Env);
+            job.Env = env.Plain;
+            job.SecretEnv = env.Secrets;
 
             job.Args = [.. ReadArgs(resource).Select(resolver.Resolve)];
+            if (ReadArgs(resource).Any(a => resolver.Expressions.Resolve(a).IsSecret))
+            {
+                logger.LogWarning(
+                    "An argument of {Service} contains a secret parameter; it is written into the job file. " +
+                    "Pass it as an environment variable instead to keep it in Nomad Variables.", name);
+            }
 
             if (resource.Bindings is not null)
             {
@@ -308,6 +307,11 @@ public sealed class JobGenerator(ILogger<JobGenerator> logger)
             }
 
             sb.AppendLine("      }");
+        }
+
+        if (job.SecretEnv.Count > 0)
+        {
+            NomadVariables.AppendTemplate(sb, job.Name, job.SecretEnv.Keys, "      ");
         }
 
         sb.AppendLine();

@@ -83,6 +83,15 @@ public sealed class EcsTargetConfig
 
     /// <summary>Base port for services whose Aspire bindings carry no port.</summary>
     public int BasePort { get; set; } = 8080;
+
+    /// <summary>
+    /// SSM Parameter Store path under which secret env vars are stored as SecureString
+    /// parameters (<c>{prefix}/{service}/{VAR}</c>). The task definition only references them,
+    /// so no secret is written to the task definition file. Defaults to
+    /// <c>/deployify/{ClusterName}</c>. The execution role needs <c>ssm:GetParameters</c> on
+    /// this path (and <c>kms:Decrypt</c> if the parameters use a customer-managed key).
+    /// </summary>
+    public string? SecretsPrefix { get; set; }
 }
 
 public enum EcsLaunchType

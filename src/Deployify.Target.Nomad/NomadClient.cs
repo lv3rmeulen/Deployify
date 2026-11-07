@@ -96,6 +96,17 @@ public sealed class NomadClient : IDisposable
         return doc.RootElement.TryGetProperty("EvalID", out var id) ? id.GetString() ?? string.Empty : string.Empty;
     }
 
+    /// <summary>
+    /// Creates or replaces the Nomad Variable at <paramref name="path"/> with <paramref name="items"/>
+    /// (PUT /v1/var/:path) in the configured namespace.
+    /// </summary>
+    public async Task PutVariableAsync(string path, IReadOnlyDictionary<string, string> items, CancellationToken ct = default)
+    {
+        var escaped = string.Join('/', path.Split('/').Select(Uri.EscapeDataString));
+        var resp = await _http.PutAsJsonAsync($"v1/var/{escaped}?{Ns}", new { Path = path, Items = items }, ct);
+        await EnsureSuccessAsync(resp, $"write variable {path}", ct);
+    }
+
     public async Task StopJobAsync(string jobName, bool purge = false, CancellationToken ct = default)
     {
         var resp = await _http.DeleteAsync(

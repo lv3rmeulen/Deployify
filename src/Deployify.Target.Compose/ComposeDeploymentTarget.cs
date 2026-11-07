@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
 using Microsoft.Extensions.Logging;
@@ -284,7 +285,7 @@ public sealed class ComposeDeploymentTarget(
                 Image = svc.Image,
                 ImageTag = svc.ImageTag,
                 Count = svc.Replicas,
-                Env = svc.Env,
+                Env = ResolvedEnvironment.ForDisplay(svc.Env, svc.SecretEnv),
                 Ports = [.. svc.Ports.Select(p => $"{p.HostPort}→{p.ContainerPort}/{p.Protocol}")],
                 Dependencies = svc.DependsOn,
                 AdditionalInfo = new Dictionary<string, string>

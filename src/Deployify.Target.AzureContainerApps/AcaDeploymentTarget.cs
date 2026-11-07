@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
 using Microsoft.Extensions.Logging;
@@ -213,7 +214,7 @@ public sealed class AcaDeploymentTarget(
                 Image = app.Image,
                 ImageTag = app.ImageTag,
                 Count = app.MaxReplicas,
-                Env = app.Env,
+                Env = ResolvedEnvironment.ForDisplay(app.Env, app.SecretEnv),
                 Ports = [.. app.Ports.Select(p => $"{p.ContainerPort}/{p.Protocol}")],
                 Dependencies = app.Dependencies,
                 AdditionalInfo = new Dictionary<string, string>

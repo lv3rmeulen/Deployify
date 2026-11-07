@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
 using Microsoft.Extensions.Logging;
@@ -156,6 +157,13 @@ public sealed class NomadDeploymentTarget(
 
             try
             {
+                // Secrets first: the job's template block reads them when the task starts.
+                if (job.SecretEnv.Count > 0)
+                {
+                    await client.PutVariableAsync(NomadVariables.JobPath(job.Name),
+                        job.SecretEnv.ToDictionary(kv => kv.Key, kv => kv.Value.ToString()), ct);
+                }
+
                 var evalId = await client.SubmitJobAsync(hclPath, ct);
                 results.Add(new DeploymentResult { ServiceName = job.Name, DeploymentId = evalId, Success = true });
             }
@@ -185,7 +193,7 @@ public sealed class NomadDeploymentTarget(
                 Image = j.Image,
                 ImageTag = j.ImageTag ?? config.ImageTag,
                 Count = j.Count,
-                Env = j.Env,
+                Env = ResolvedEnvironment.ForDisplay(j.Env, j.SecretEnv),
                 Ports = [.. j.Ports.Select(p => p.To.HasValue ? $"{p.Label}:{p.To}" : p.Label)],
                 Dependencies = j.Dependencies,
                 AdditionalInfo = new Dictionary<string, string> { ["namespace"] = cfg.Namespace, ["datacenters"] = string.Join(", ", cfg.Datacenters), ["mode"] = cfg.DeploymentMode.ToString() }

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Deployify.Core.Expressions;
 
 namespace Deployify.Target.NomadConsul;
 
@@ -24,6 +25,12 @@ public sealed class ConsulJob
 
     /// <summary>Environment variables injected into the task.</summary>
     public Dictionary<string, string> Env { get; set; } = [];
+
+    /// <summary>
+    /// Env vars whose value contains a secret parameter. They are kept out of <see cref="Env"/>
+    /// and written the target's own secret way rather than into plain-text artifacts.
+    /// </summary>
+    public Dictionary<string, ResolvedValue> SecretEnv { get; set; } = [];
 
     /// <summary>
     /// Bindings from the Aspire manifest — used to build the Consul service port
