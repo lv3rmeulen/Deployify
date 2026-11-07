@@ -67,7 +67,7 @@ public sealed class ConsulJobGeneratorModelTests
     public void Generate_RespectsServiceOverride_ImageTag()
     {
         var config = Fixtures.EnvConfig();
-        config.ServiceOverrides["myapp"] = new() { ImageTag = "canary" };
+        config.ServiceOverrides["myapp"] = new ServiceOverride { ImageTag = "canary" };
         var jobs = _sut.Generate(Fixtures.SingleService("myapp"), config, Fixtures.DefaultConsulCfg());
         jobs[0].ImageTag.ShouldBe("canary");
     }
@@ -85,7 +85,7 @@ public sealed class ConsulJobGeneratorModelTests
     public void Generate_RespectsServiceOverride_Count()
     {
         var config = Fixtures.EnvConfig();
-        config.ServiceOverrides["myapp"] = new() { Count = 4 };
+        config.ServiceOverrides["myapp"] = new ServiceOverride { Count = 4 };
         var jobs = _sut.Generate(Fixtures.SingleService("myapp"), config, Fixtures.DefaultConsulCfg());
         jobs[0].Count.ShouldBe(4);
     }
@@ -103,7 +103,7 @@ public sealed class ConsulJobGeneratorModelTests
     public void Generate_MergesEnvVars_FromServiceOverride()
     {
         var config = Fixtures.EnvConfig();
-        config.ServiceOverrides["api"] = new() { Env = { ["MY_VAR"] = "hello" } };
+        config.ServiceOverrides["api"] = new ServiceOverride { Env = { ["MY_VAR"] = "hello" } };
         var jobs = _sut.Generate(Fixtures.SimpleManifest(), config, Fixtures.DefaultConsulCfg());
         jobs.Single(j => j.Name == "api").Env.ShouldContainKey("MY_VAR");
     }
@@ -190,12 +190,12 @@ public sealed class ConsulJobGeneratorModelTests
                 ["my-service"] = new()
                 {
                     Type = "project.v0",
-                    Bindings = new() { ["http"] = new() { ContainerPort = 8080, Protocol = "http" } }
+                    Bindings = new Dictionary<string, AspireBinding> { ["http"] = new() { ContainerPort = 8080, Protocol = "http" } }
                 },
                 ["caller"] = new()
                 {
                     Type = "project.v0",
-                    References = [new() { Name = "my-service" }]
+                    References = [new AspireReference { Name = "my-service" }]
                 }
             }
         };

@@ -107,7 +107,7 @@ public sealed class ConsulHclContentTests
         using var dir = new Fixtures.TempDir();
         var cfg = Fixtures.DefaultConsulCfg();
         var config = Fixtures.EnvConfig();
-        config.ServiceOverrides["myapp"] = new() { Count = 3 };
+        config.ServiceOverrides["myapp"] = new ServiceOverride { Count = 3 };
         var jobs = _sut.Generate(Fixtures.SingleService("myapp"), config, cfg);
         var path = await _sut.WriteHclAsync(jobs[0], config, cfg, dir.Path, TestContext.Current.CancellationToken);
         var hcl = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);

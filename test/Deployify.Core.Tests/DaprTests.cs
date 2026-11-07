@@ -361,7 +361,7 @@ public sealed class DaprTests
             {
                 Type = "project.v0",
                 Path = "Api/Api.csproj",
-                Bindings = new() { ["http"] = new() { Scheme = "http", ContainerPort = 8080 } }
+                Bindings = new Dictionary<string, AspireBinding> { ["http"] = new() { Scheme = "http", ContainerPort = 8080 } }
             },
             ["worker"] = new() { Type = "project.v0", Path = "Worker/Worker.csproj" },
             ["redis"] = new() { Type = "container.v0", Image = "redis:7" }

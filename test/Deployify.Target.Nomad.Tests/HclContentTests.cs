@@ -93,7 +93,7 @@ public sealed class HclContentTests
     {
         using var dir = new TempDir();
         var config = Fixtures.NomadConfig();
-        config.ServiceOverrides["myapp"] = new() { Count = 4 };
+        config.ServiceOverrides["myapp"] = new ServiceOverride { Count = 4 };
         var jobs = _sut.Generate(Fixtures.SingleService("myapp"), config);
         var hcl = await File.ReadAllTextAsync(await _sut.WriteHclAsync(jobs[0], config, dir.Path, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
         hcl.ShouldContain("count = 4");

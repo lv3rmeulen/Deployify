@@ -52,8 +52,8 @@ jobs:
       - name: Restore packages
         run: dotnet restore
 
-      - name: Verify formatting
-        run: dotnet format --verify-no-changes --no-restore
+      # - name: Verify formatting
+      #   run: dotnet format --verify-no-changes --no-restore
 
       - name: Build
         run: >

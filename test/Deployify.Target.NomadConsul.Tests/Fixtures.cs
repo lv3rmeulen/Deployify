@@ -56,20 +56,20 @@ internal static class Fixtures
             {
                 Type = "project.v0",
                 Path = "Api/Api.csproj",
-                Env = new() { ["ASPNETCORE_ENVIRONMENT"] = "Production" },
-                Bindings = new() { ["http"] = new() { ContainerPort = 8080, Protocol = "http" } }
+                Env = new Dictionary<string, string> { ["ASPNETCORE_E Dictionary<string, string>IRONMENT"] = "Production" },
+                Bindings = new Dictionary<string, AspireBinding> { ["http"] = new() { ContainerPort = 8080, Protocol = "http" } }
             },
             ["worker"] = new()
             {
                 Type = "project.v0",
                 Path = "Worker/Worker.csproj",
-                References = [new() { Name = "api" }]
+                References = [new AspireReference { Name = "api" }]
             },
             ["redis"] = new()
             {
                 Type = "container.v0",
                 Image = "redis:7",
-                Bindings = new() { ["tcp"] = new() { ContainerPort = 6379, Protocol = "tcp" } }
+                Bindings = new Dictionary<string, AspireBinding> { ["tcp"] = new() { ContainerPort = 6379, Protocol = "tcp" } }
             }
         }
     };
@@ -84,10 +84,7 @@ internal static class Fixtures
             {
                 Type = type,
                 Image = type.StartsWith("container") ? "nginx:latest" : null,
-                Bindings = new()
-                {
-                    ["http"] = new() { ContainerPort = port, Protocol = protocol, IsExternal = external }
-                }
+                Bindings = new Dictionary<string, AspireBinding> { ["http"] = new() { ContainerPort = port, Protocol = protocol, IsExternal = external } }
             }
         }
     };
@@ -100,21 +97,21 @@ internal static class Fixtures
             {
                 Type = "project.v0",
                 Path = "Frontend/Frontend.csproj",
-                Bindings = new() { ["http"] = new() { ContainerPort = 3000, Protocol = "http" } },
-                References = [new() { Name = "api" }]
+                Bindings = new Dictionary<string, AspireBinding> { ["http"] = new() { ContainerPort = 3000, Protocol = "http" } },
+                References = [new AspireReference { Name = "api" }]
             },
             ["api"] = new()
             {
                 Type = "project.v0",
                 Path = "Api/Api.csproj",
-                Bindings = new() { ["http"] = new() { ContainerPort = 8080, Protocol = "http" } },
-                References = [new() { Name = "redis" }, new() { Name = "db" }]
+                Bindings = new Dictionary<string, AspireBinding> { ["http"] = new() { ContainerPort = 8080, Protocol = "http" } },
+                References = [new AspireReference { Name = "redis" }, new AspireReference { Name = "db" }]
             },
             ["redis"] = new()
             {
                 Type = "container.v0",
                 Image = "redis:7",
-                Bindings = new() { ["tcp"] = new() { ContainerPort = 6379, Protocol = "tcp" } }
+                Bindings = new Dictionary<string, AspireBinding> { ["tcp"] = new() { ContainerPort = 6379, Protocol = "tcp" } }
             },
             ["db"] = new()
             {

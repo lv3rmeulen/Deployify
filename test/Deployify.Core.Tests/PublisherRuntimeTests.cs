@@ -179,7 +179,7 @@ public sealed class PublisherRuntimeTests
         {
             ContainerRegistry = "reg.io/app",
             ImageTag = "v1",
-            ServiceOverrides = { ["api"] = new() { ImageTag = "canary" } }
+            ServiceOverrides = { ["api"] = new ServiceOverride { ImageTag = "canary" } }
         };
 
         await publisher.PublishAsync(manifest, config, "/app", TestContext.Current.CancellationToken);

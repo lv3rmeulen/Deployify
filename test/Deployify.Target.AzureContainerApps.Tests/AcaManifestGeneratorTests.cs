@@ -2,6 +2,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Deployify.Core.Models;
 using Shouldly;
 using Xunit;
 
@@ -49,7 +50,7 @@ public sealed class AcaManifestGeneratorTests
     public void Generate_RespectsServiceOverride_ImageTag()
     {
         var config = AcaFixtures.AcaConfig();
-        config.ServiceOverrides["myapp"] = new() { ImageTag = "canary" };
+        config.ServiceOverrides["myapp"] = new ServiceOverride { ImageTag = "canary" };
         var apps = _sut.Generate(AcaFixtures.SingleService("myapp"), config, new AcaTargetConfig());
         apps[0].ImageTag.ShouldBe("canary");
     }
@@ -58,7 +59,7 @@ public sealed class AcaManifestGeneratorTests
     public void Generate_RespectsServiceOverride_Count_AffectsMaxReplicas()
     {
         var config = AcaFixtures.AcaConfig();
-        config.ServiceOverrides["myapp"] = new() { Count = 5 };
+        config.ServiceOverrides["myapp"] = new ServiceOverride { Count = 5 };
         var apps = _sut.Generate(AcaFixtures.SingleService("myapp"), config, new AcaTargetConfig());
         apps[0].MaxReplicas.ShouldBe(5);
     }

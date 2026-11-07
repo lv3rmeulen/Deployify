@@ -1,6 +1,7 @@
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using Deployify.Core.Models;
 using Shouldly;
 using Xunit;
 
@@ -57,7 +58,7 @@ public sealed class ComposeFileGeneratorTests
     public void Generate_RespectsServiceOverride_ImageTag()
     {
         var config = Fixtures.ComposeConfig();
-        config.ServiceOverrides["myapp"] = new() { ImageTag = "canary" };
+        config.ServiceOverrides["myapp"] = new ServiceOverride { ImageTag = "canary" };
         var svcs = _sut.Generate(Fixtures.SingleService("myapp"), config, Cfg());
         svcs[0].ImageTag.ShouldBe("canary");
     }
@@ -66,7 +67,7 @@ public sealed class ComposeFileGeneratorTests
     public void Generate_RespectsServiceOverride_Count()
     {
         var config = Fixtures.ComposeConfig();
-        config.ServiceOverrides["myapp"] = new() { Count = 3 };
+        config.ServiceOverrides["myapp"] = new ServiceOverride { Count = 3 };
         var svcs = _sut.Generate(Fixtures.SingleService("myapp"), config, Cfg());
         svcs[0].Replicas.ShouldBe(3);
     }

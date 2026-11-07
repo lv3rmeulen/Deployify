@@ -2,6 +2,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Deployify.Core.Models;
 using Shouldly;
 using Xunit;
 
@@ -49,7 +50,7 @@ public sealed class EcsTaskDefinitionGeneratorTests
     public void Generate_RespectsServiceOverride_ImageTag()
     {
         var config = EcsFixtures.EcsConfig();
-        config.ServiceOverrides["myapp"] = new() { ImageTag = "canary" };
+        config.ServiceOverrides["myapp"] = new ServiceOverride { ImageTag = "canary" };
         var services = _sut.Generate(EcsFixtures.SingleService("myapp"), config, new EcsTargetConfig());
         services[0].ImageTag.ShouldBe("canary");
     }
@@ -58,7 +59,7 @@ public sealed class EcsTaskDefinitionGeneratorTests
     public void Generate_RespectsServiceOverride_Count()
     {
         var config = EcsFixtures.EcsConfig();
-        config.ServiceOverrides["myapp"] = new() { Count = 5 };
+        config.ServiceOverrides["myapp"] = new ServiceOverride { Count = 5 };
         var services = _sut.Generate(EcsFixtures.SingleService("myapp"), config, new EcsTargetConfig());
         services[0].DesiredCount.ShouldBe(5);
     }

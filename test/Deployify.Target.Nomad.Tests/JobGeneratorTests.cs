@@ -1,6 +1,7 @@
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using Deployify.Core.Models;
 using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
 using Xunit;
@@ -63,7 +64,7 @@ public sealed class JobGeneratorTests
     public void Generate_RespectsOverride_Count()
     {
         var config = Fixtures.NomadConfig();
-        config.ServiceOverrides["api"] = new() { Count = 5 };
+        config.ServiceOverrides["api"] = new ServiceOverride { Count = 5 };
         _sut.Generate(Fixtures.SimpleManifest(), config)
             .Single(j => j.Name == "api").Count.ShouldBe(5);
     }
@@ -72,7 +73,7 @@ public sealed class JobGeneratorTests
     public void Generate_RespectsOverride_ImageTag()
     {
         var config = Fixtures.NomadConfig();
-        config.ServiceOverrides["api"] = new() { ImageTag = "canary" };
+        config.ServiceOverrides["api"] = new ServiceOverride { ImageTag = "canary" };
         _sut.Generate(Fixtures.SimpleManifest(), config)
             .Single(j => j.Name == "api").ImageTag.ShouldBe("canary");
     }

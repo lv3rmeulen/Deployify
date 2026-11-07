@@ -1,4 +1,5 @@
 using System.Linq;
+using Deployify.Core.Models;
 using Shouldly;
 using Xunit;
 
@@ -130,7 +131,7 @@ public sealed class KubernetesManifestGeneratorTests
     public void Generate_RespectsOverride_ImageTag()
     {
         var config = Fixtures.KubernetesConfig();
-        config.ServiceOverrides["api"] = new() { ImageTag = "canary" };
+        config.ServiceOverrides["api"] = new ServiceOverride { ImageTag = "canary" };
         var svcs = _sut.Generate(Fixtures.SimpleManifest(), config, DefaultKubernetesConfig());
         svcs.Single(s => s.ServiceName == "api").ImageTag.ShouldBe("canary");
     }
@@ -139,7 +140,7 @@ public sealed class KubernetesManifestGeneratorTests
     public void Generate_RespectsOverride_Count()
     {
         var config = Fixtures.KubernetesConfig();
-        config.ServiceOverrides["api"] = new() { Count = 3 };
+        config.ServiceOverrides["api"] = new ServiceOverride { Count = 3 };
         var svcs = _sut.Generate(Fixtures.SimpleManifest(), config, DefaultKubernetesConfig());
         svcs.Single(s => s.ServiceName == "api").Replicas.ShouldBe(3);
     }

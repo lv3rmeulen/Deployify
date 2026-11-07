@@ -57,20 +57,20 @@ internal static class EcsFixtures
             {
                 Type = "project.v0",
                 Path = "Api/Api.csproj",
-                Env = new() { ["ASPNETCORE_ENVIRONMENT"] = "Production" },
-                Bindings = new() { ["http"] = new() { ContainerPort = 8080, Protocol = "http" } }
+                Env = new Dictionary<string, string> { ["ASPNETCORE_ENVIRONMENT"] = "Pro Dictionary<string, string>ction" },
+                Bindings = new Dictionary<string, AspireBinding> { ["http"] = new() { ContainerPort = 8080, Protocol = "http" } }
             },
             ["worker"] = new()
             {
                 Type = "project.v0",
                 Path = "Worker/Worker.csproj",
-                References = [new() { Name = "api" }]
+                References = [new AspireReference { Name = "api" }]
             },
             ["redis"] = new()
             {
                 Type = "container.v0",
                 Image = "redis:7",
-                Bindings = new() { ["tcp"] = new() { ContainerPort = 6379, Protocol = "tcp" } }
+                Bindings = new Dictionary<string, AspireBinding> { ["tcp"] = new() { ContainerPort = 6379, Protocol = "tcp" } }
             }
         }
     };
@@ -84,7 +84,7 @@ internal static class EcsFixtures
             {
                 Type = type,
                 Image = type.StartsWith("container") ? "nginx:latest" : null,
-                Bindings = new() { ["http"] = new() { ContainerPort = port, Protocol = "http" } }
+                Bindings = new Dictionary<string, AspireBinding> { ["http"] = new() { ContainerPort = port, Protocol = "http" } }
             }
         }
     };
