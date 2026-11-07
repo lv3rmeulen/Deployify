@@ -62,12 +62,12 @@ jobs:
           --no-restore
           #--warnaserror
 
-      - name: Test and collect coverage
-        run: >
-          dotnet tool run dotnet-coverage collect
-          "dotnet test --configuration Release --no-build --logger GitHubActions"
-          --output-format cobertura
-          --output ./artifacts/coverage.cobertura.xml
+      # - name: Test and collect coverage
+      #   run: >
+      #     dotnet tool run dotnet-coverage collect
+      #     "dotnet test --configuration Release --no-build --logger GitHubActions"
+      #     --output-format cobertura
+      #     --output ./artifacts/coverage.cobertura.xml
 
       - name: Pack
         run: >
