@@ -9,13 +9,13 @@ namespace Deployify.Integration.Tests;
 /// against real files on disk but a fake deployment target.
 ///
 /// Strategy: we can't swap out DependencyInjection.ResolveAsync (it's static)
-/// so instead we test the command handler behaviour by verifying:
+/// so instead we test the command handler behavior by verifying:
 ///   - exit codes based on real file presence / absence
 ///   - state file mutations written to disk
 ///   - that operations called on the mock happened (via NSubstitute)
 ///
 /// For commands that call IDeploymentTarget methods we pass a real state file
-/// and manifest.json on disk; the commands call the real Nomad/K8s/Compose
+/// and manifest.json on disk; the commands call the real Nomad/Kubernetes/Compose
 /// target implementations but only through their pure "generate" paths
 /// (no network calls) — or we test the path where the state file is missing
 /// to verify failure exit codes.

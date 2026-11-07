@@ -1,15 +1,19 @@
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
-using Shouldly;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
+using Shouldly;
 using Xunit;
-using Deployify.Core.Interfaces;
 
 namespace Deployify.Target.AwsEcs.Tests;
 
 public sealed class EcsDeploymentTargetTests
 {
-    private static EcsDeploymentTarget Target() => new(Substitute.For<IPublisher>(), NullLogger<EcsDeploymentTarget>.Instance);
+    private static EcsDeploymentTarget Target()
+        => new(Substitute.For<IPublisher>(), NullLogger<EcsDeploymentTarget>.Instance);
 
     [Fact]
     public void TargetType_IsAwsEcs()
@@ -31,13 +35,12 @@ public sealed class EcsDeploymentTargetTests
         using var dir = new EcsFixtures.TempDir();
         var config = EcsFixtures.EcsConfig();
 
-        var paths = await Target().GenerateAsync(EcsFixtures.SimpleManifest(), config, dir.Path);
+        var paths = await Target().GenerateAsync(EcsFixtures.SimpleManifest(), config, dir.Path, TestContext.Current.CancellationToken);
 
         paths.Count.ShouldBe(3);
         foreach (var p in paths)
-
         {
-	        File.Exists(p).ShouldBeTrue();
+            File.Exists(p).ShouldBeTrue();
         }
     }
 
@@ -47,7 +50,7 @@ public sealed class EcsDeploymentTargetTests
         using var dir = new EcsFixtures.TempDir();
         var config = EcsFixtures.EcsConfig();
 
-        await Target().GenerateAsync(EcsFixtures.SimpleManifest(), config, dir.Path);
+        await Target().GenerateAsync(EcsFixtures.SimpleManifest(), config, dir.Path, TestContext.Current.CancellationToken);
 
         Directory.GetFiles(dir.Path, "*.taskdef.json").Length.ShouldBe(3);
     }
@@ -60,7 +63,7 @@ public sealed class EcsDeploymentTargetTests
         using var dir = new EcsFixtures.TempDir();
         var config = EcsFixtures.EcsConfig();
 
-        var results = await Target().ValidateAsync(EcsFixtures.SimpleManifest(), config, dir.Path);
+        var results = await Target().ValidateAsync(EcsFixtures.SimpleManifest(), config, dir.Path, TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3);
     }
@@ -71,13 +74,11 @@ public sealed class EcsDeploymentTargetTests
         using var dir = new EcsFixtures.TempDir();
         var config = EcsFixtures.EcsConfig();
 
-        var results = await Target().ValidateAsync(EcsFixtures.SimpleManifest(), config, dir.Path);
+        var results = await Target().ValidateAsync(EcsFixtures.SimpleManifest(), config, dir.Path, TestContext.Current.CancellationToken);
 
         foreach (var r in results)
-
-
         {
-	        r.IsValid.ShouldBeTrue();
+            r.IsValid.ShouldBeTrue();
         }
     }
 
@@ -90,8 +91,14 @@ public sealed class EcsDeploymentTargetTests
         var config = EcsFixtures.EcsConfig();
 
         // Plan will fail to reach AWS but files should be written first
-        try { await Target().PlanAsync(EcsFixtures.SimpleManifest(), config, dir.Path); }
-        catch { /* cluster unreachable in CI */ }
+        try
+        {
+            await Target().PlanAsync(EcsFixtures.SimpleManifest(), config, dir.Path, TestContext.Current.CancellationToken);
+        }
+        catch
+        {
+            /* cluster unreachable in CI */
+        }
 
         Directory.GetFiles(dir.Path, "*.taskdef.json").Length.ShouldBe(3);
     }

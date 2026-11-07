@@ -1,4 +1,6 @@
-using Deployify.Core.Models;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
 using Shouldly;
 using Xunit;
 
@@ -10,13 +12,12 @@ public sealed class ComposeFileGeneratorTests
 
     private static ComposeTargetConfig Cfg(
         string project = "testproject", bool profiles = false,
-        bool envFile = false, bool merged = true) =>
-	    new()
-	    {
-	        ProjectName = project, RestartPolicy = "unless-stopped",
-	        GenerateProfiles = profiles, GenerateEnvFile = envFile,
-	        GenerateMergedFile = merged, GenerateHealthChecks = true
-	    };
+        bool envFile = false, bool merged = true) => new()
+    {
+        ProjectName = project, RestartPolicy = "unless-stopped",
+        GenerateProfiles = profiles, GenerateEnvFile = envFile,
+        GenerateMergedFile = merged, GenerateHealthChecks = true
+    };
 
     // Generate (model) ---------------------------------------------------
 
@@ -46,7 +47,8 @@ public sealed class ComposeFileGeneratorTests
     [Fact]
     public void Generate_SetsImageTag_FromConfig()
     {
-        var config = Fixtures.ComposeConfig(); config.ImageTag = "sha-abc";
+        var config = Fixtures.ComposeConfig();
+        config.ImageTag = "sha-abc";
         var svcs = _sut.Generate(Fixtures.SingleService(), config, Cfg());
         svcs[0].ImageTag.ShouldBe("sha-abc");
     }
@@ -55,7 +57,7 @@ public sealed class ComposeFileGeneratorTests
     public void Generate_RespectsServiceOverride_ImageTag()
     {
         var config = Fixtures.ComposeConfig();
-        config.ServiceOverrides["myapp"] = new ServiceOverride { ImageTag = "canary" };
+        config.ServiceOverrides["myapp"] = new() { ImageTag = "canary" };
         var svcs = _sut.Generate(Fixtures.SingleService("myapp"), config, Cfg());
         svcs[0].ImageTag.ShouldBe("canary");
     }
@@ -64,7 +66,7 @@ public sealed class ComposeFileGeneratorTests
     public void Generate_RespectsServiceOverride_Count()
     {
         var config = Fixtures.ComposeConfig();
-        config.ServiceOverrides["myapp"] = new ServiceOverride { Count = 3 };
+        config.ServiceOverrides["myapp"] = new() { Count = 3 };
         var svcs = _sut.Generate(Fixtures.SingleService("myapp"), config, Cfg());
         svcs[0].Replicas.ShouldBe(3);
     }
@@ -117,7 +119,8 @@ public sealed class ComposeFileGeneratorTests
     [Fact]
     public void Generate_SetsRestartPolicy()
     {
-        var cfg = Cfg(); cfg.RestartPolicy = "on-failure";
+        var cfg = Cfg();
+        cfg.RestartPolicy = "on-failure";
         var svcs = _sut.Generate(Fixtures.SingleService(), Fixtures.ComposeConfig(), cfg);
         svcs[0].RestartPolicy.ShouldBe("on-failure");
     }
@@ -145,7 +148,7 @@ public sealed class ComposeFileGeneratorTests
         using var dir = new TempDir();
         var cfg = Cfg();
         var svcs = _sut.Generate(Fixtures.SingleService("api"), Fixtures.ComposeConfig(), cfg);
-        var path = await _sut.WriteServiceFileAsync(svcs[0], dir.Path, cfg);
+        var path = await _sut.WriteServiceFileAsync(svcs[0], dir.Path, cfg, TestContext.Current.CancellationToken);
         File.Exists(path).ShouldBeTrue();
         path.ShouldEndWith("compose.yml");
     }
@@ -156,8 +159,8 @@ public sealed class ComposeFileGeneratorTests
         using var dir = new TempDir();
         var cfg = Cfg();
         var svcs = _sut.Generate(Fixtures.SingleService("myservice"), Fixtures.ComposeConfig(), cfg);
-        var path = await _sut.WriteServiceFileAsync(svcs[0], dir.Path, cfg);
-        (await File.ReadAllTextAsync(path)).ShouldContain("myservice:");
+        var path = await _sut.WriteServiceFileAsync(svcs[0], dir.Path, cfg, TestContext.Current.CancellationToken);
+        (await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken)).ShouldContain("myservice:");
     }
 
     [Fact]
@@ -165,10 +168,11 @@ public sealed class ComposeFileGeneratorTests
     {
         using var dir = new TempDir();
         var cfg = Cfg();
-        var config = Fixtures.ComposeConfig(); config.ContainerRegistry = "reg.example.com/app";
+        var config = Fixtures.ComposeConfig();
+        config.ContainerRegistry = "reg.example.com/app";
         var svcs = _sut.Generate(Fixtures.SingleService("api"), config, cfg);
-        var path = await _sut.WriteServiceFileAsync(svcs[0], dir.Path, cfg);
-        (await File.ReadAllTextAsync(path)).ShouldContain("reg.example.com/app/api");
+        var path = await _sut.WriteServiceFileAsync(svcs[0], dir.Path, cfg, TestContext.Current.CancellationToken);
+        (await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken)).ShouldContain("reg.example.com/app/api");
     }
 
     [Fact]
@@ -177,18 +181,20 @@ public sealed class ComposeFileGeneratorTests
         using var dir = new TempDir();
         var cfg = Cfg();
         var svcs = _sut.Generate(Fixtures.SingleService("api", "project.v0", 8080), Fixtures.ComposeConfig(), cfg);
-        var path = await _sut.WriteServiceFileAsync(svcs[0], dir.Path, cfg);
-        (await File.ReadAllTextAsync(path)).ShouldContain("8080");
+        var path = await _sut.WriteServiceFileAsync(svcs[0], dir.Path, cfg, TestContext.Current.CancellationToken);
+        (await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken)).ShouldContain("8080");
     }
 
     [Fact]
-    public async Task WriteServiceFile_ContainsHealthCheck_ForHttpService()
+    public async Task WriteServiceFile_NoHealthCheck_ByDefault()
     {
+        // Aspire images ship without curl/wget, so a generated healthcheck would mark
+        // every service unhealthy. Healthchecks are opt-in.
         using var dir = new TempDir();
         var cfg = Cfg();
         var svcs = _sut.Generate(Fixtures.SingleService("api", "project.v0", 8080), Fixtures.ComposeConfig(), cfg);
-        var path = await _sut.WriteServiceFileAsync(svcs[0], dir.Path, cfg);
-        (await File.ReadAllTextAsync(path)).ShouldContain("healthcheck:");
+        var path = await _sut.WriteServiceFileAsync(svcs[0], dir.Path, cfg, TestContext.Current.CancellationToken);
+        (await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken)).ShouldNotContain("healthcheck:");
     }
 
     [Fact]
@@ -198,8 +204,8 @@ public sealed class ComposeFileGeneratorTests
         var cfg = Cfg();
         var svcs = _sut.Generate(Fixtures.SimpleManifest(), Fixtures.ComposeConfig(), cfg);
         var worker = svcs.Single(s => s.Name == "worker");
-        var path = await _sut.WriteServiceFileAsync(worker, dir.Path, cfg);
-        (await File.ReadAllTextAsync(path)).ShouldContain("depends_on:");
+        var path = await _sut.WriteServiceFileAsync(worker, dir.Path, cfg, TestContext.Current.CancellationToken);
+        (await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken)).ShouldContain("depends_on:");
     }
 
     [Fact]
@@ -209,7 +215,7 @@ public sealed class ComposeFileGeneratorTests
         var cfg = Cfg(envFile: true);
         var svcs = _sut.Generate(Fixtures.SimpleManifest(), Fixtures.ComposeConfig(envFile: true), cfg);
         var api = svcs.Single(s => s.Name == "api");
-        await _sut.WriteServiceFileAsync(api, dir.Path, cfg);
+        await _sut.WriteServiceFileAsync(api, dir.Path, cfg, TestContext.Current.CancellationToken);
         File.Exists(Path.Combine(dir.Path, "api", ".env")).ShouldBeTrue();
     }
 
@@ -220,7 +226,7 @@ public sealed class ComposeFileGeneratorTests
         var cfg = Cfg(envFile: false);
         var svcs = _sut.Generate(Fixtures.SimpleManifest(), Fixtures.ComposeConfig(envFile: false), cfg);
         var api = svcs.Single(s => s.Name == "api");
-        await _sut.WriteServiceFileAsync(api, dir.Path, cfg);
+        await _sut.WriteServiceFileAsync(api, dir.Path, cfg, TestContext.Current.CancellationToken);
         File.Exists(Path.Combine(dir.Path, "api", ".env")).ShouldBeFalse();
     }
 
@@ -230,7 +236,7 @@ public sealed class ComposeFileGeneratorTests
         using var dir = new TempDir();
         var cfg = Cfg();
         var svcs = _sut.Generate(Fixtures.SingleService("myapp"), Fixtures.ComposeConfig(), cfg);
-        await _sut.WriteServiceFileAsync(svcs[0], dir.Path, cfg);
+        await _sut.WriteServiceFileAsync(svcs[0], dir.Path, cfg, TestContext.Current.CancellationToken);
         Directory.Exists(Path.Combine(dir.Path, "myapp")).ShouldBeTrue();
     }
 
@@ -242,7 +248,7 @@ public sealed class ComposeFileGeneratorTests
         using var dir = new TempDir();
         var cfg = Cfg();
         var svcs = _sut.Generate(Fixtures.SimpleManifest(), Fixtures.ComposeConfig(), cfg);
-        var path = await _sut.WriteMergedFileAsync(svcs, dir.Path, cfg);
+        var path = await _sut.WriteMergedFileAsync(svcs, dir.Path, cfg, TestContext.Current.CancellationToken);
         path.ShouldBe(Path.Combine(dir.Path, "compose.yml"));
         File.Exists(path).ShouldBeTrue();
     }
@@ -253,8 +259,8 @@ public sealed class ComposeFileGeneratorTests
         using var dir = new TempDir();
         var cfg = Cfg();
         var svcs = _sut.Generate(Fixtures.SimpleManifest(), Fixtures.ComposeConfig(), cfg);
-        var path = await _sut.WriteMergedFileAsync(svcs, dir.Path, cfg);
-        var yaml = await File.ReadAllTextAsync(path);
+        var path = await _sut.WriteMergedFileAsync(svcs, dir.Path, cfg, TestContext.Current.CancellationToken);
+        var yaml = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
         yaml.ShouldContain("api:");
         yaml.ShouldContain("worker:");
         yaml.ShouldContain("redis:");
@@ -266,8 +272,8 @@ public sealed class ComposeFileGeneratorTests
         using var dir = new TempDir();
         var cfg = Cfg("mynet");
         var svcs = _sut.Generate(Fixtures.SimpleManifest(), Fixtures.ComposeConfig("mynet"), cfg);
-        var path = await _sut.WriteMergedFileAsync(svcs, dir.Path, cfg);
-        (await File.ReadAllTextAsync(path)).ShouldContain("mynet:");
+        var path = await _sut.WriteMergedFileAsync(svcs, dir.Path, cfg, TestContext.Current.CancellationToken);
+        (await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken)).ShouldContain("mynet:");
     }
 
     [Fact]
@@ -278,7 +284,7 @@ public sealed class ComposeFileGeneratorTests
         var svcs = _sut.Generate(Fixtures.SimpleManifest(), Fixtures.ComposeConfig(), cfg);
         foreach (var svc in svcs)
         {
-	        await _sut.WriteServiceFileAsync(svc, dir.Path, cfg);
+            await _sut.WriteServiceFileAsync(svc, dir.Path, cfg, TestContext.Current.CancellationToken);
         }
 
         Directory.GetDirectories(dir.Path).Length.ShouldBe(3);
@@ -288,10 +294,11 @@ public sealed class ComposeFileGeneratorTests
     public async Task WriteServiceFile_ContainsRestartPolicy()
     {
         using var dir = new TempDir();
-        var cfg = Cfg(); cfg.RestartPolicy = "always";
+        var cfg = Cfg();
+        cfg.RestartPolicy = "always";
         var svcs = _sut.Generate(Fixtures.SingleService("api"), Fixtures.ComposeConfig(), cfg);
-        var path = await _sut.WriteServiceFileAsync(svcs[0], dir.Path, cfg);
-        (await File.ReadAllTextAsync(path)).ShouldContain("restart: always");
+        var path = await _sut.WriteServiceFileAsync(svcs[0], dir.Path, cfg, TestContext.Current.CancellationToken);
+        (await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken)).ShouldContain("restart: always");
     }
 
     [Fact]
@@ -300,7 +307,7 @@ public sealed class ComposeFileGeneratorTests
         using var dir = new TempDir();
         var cfg = Cfg("myproj");
         var svcs = _sut.Generate(Fixtures.SingleService("api"), Fixtures.ComposeConfig("myproj"), cfg);
-        var path = await _sut.WriteServiceFileAsync(svcs[0], dir.Path, cfg);
-        (await File.ReadAllTextAsync(path)).ShouldContain("myproj");
+        var path = await _sut.WriteServiceFileAsync(svcs[0], dir.Path, cfg, TestContext.Current.CancellationToken);
+        (await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken)).ShouldContain("myproj");
     }
 }

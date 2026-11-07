@@ -1,4 +1,10 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using Deployify.Core.Models;
 
 namespace Deployify.Target.Kubernetes;
@@ -12,109 +18,124 @@ public sealed class KubernetesManifestGenerator
     public IReadOnlyList<KubernetesServiceManifest> Generate(
         AspireManifest manifest,
         EnvironmentConfig config,
-        KubernetesTargetConfig k8SConfig)
+        KubernetesTargetConfig kubernetesConfig)
     {
         var results = new List<KubernetesServiceManifest>();
+        var ports = ServicePorts.Assign(manifest, kubernetesConfig.BasePort);
+
+        // Every service lives in its own namespace, so peers are addressed as
+        // <service>.<namespace> — a bare service name only resolves inside one namespace.
+        var resolver = new PlaceholderResolver(manifest, ports, new EndpointStrategy
+        {
+            Host = res => $"{res}.{NamespaceFor(kubernetesConfig, res)}"
+        });
 
         foreach (var (name, resource) in manifest.Resources)
         {
-            if (resource.Type is "value.v0" or "parameter.v0" or "dapr.v0" or "dapr.component.v0")
+            if (!resource.IsDeployable)
             {
-	            continue;
+                continue;
             }
 
             config.ServiceOverrides.TryGetValue(name, out var overrides);
 
-            var ns = $"{k8SConfig.NamespacePrefix}-{name}";
-
             var svc = new KubernetesServiceManifest
             {
                 ServiceName = name,
-                Namespace = ns,
+                Namespace = NamespaceFor(kubernetesConfig, name),
                 ImageTag = overrides?.ImageTag ?? config.ImageTag,
-                Replicas = overrides?.Count ?? k8SConfig.DefaultReplicas,
-                CpuRequest = k8SConfig.CpuRequest,
-                CpuLimit = k8SConfig.CpuLimit,
-                MemoryRequest = k8SConfig.MemoryRequest,
-                MemoryLimit = k8SConfig.MemoryLimit,
-                IngressClassName = k8SConfig.IngressClassName,
-                Dependencies = resource.References?.Select(r => r.Name).ToList() ?? []
+                Replicas = overrides?.Count ?? kubernetesConfig.DefaultReplicas,
+                CpuRequest = kubernetesConfig.CpuRequest,
+                CpuLimit = kubernetesConfig.CpuLimit,
+                MemoryRequest = kubernetesConfig.MemoryRequest,
+                MemoryLimit = kubernetesConfig.MemoryLimit,
+                IngressClassName = kubernetesConfig.IngressClassName,
+                Dependencies = resource.References?.Select(r => r.Name).ToList() ?? [],
+                HealthCheckType = kubernetesConfig.HealthCheckType.ToLowerInvariant(),
+                HealthCheckPath = kubernetesConfig.HealthCheckPath,
+                Image = resource.Type.StartsWith("project.", StringComparison.Ordinal)
+                    ? config.ContainerRegistry is not null
+                        ? $"{config.ContainerRegistry.TrimEnd('/')}/{name}"
+                        : name
+                    : resource.Image
             };
 
-            // Resolve image
-            if (resource.Type.StartsWith("container.v"))
+            foreach (var (k, v) in resolver.ResolveAll(resource.Env))
             {
-	            svc.Image = resource.Image;
-            }
-            else if (resource.Type.StartsWith("project.v"))
-            {
-	            svc.Image = config.ContainerRegistry is not null
-		            ? $"{config.ContainerRegistry.TrimEnd('/')}/{name}"
-		            : name;
-            }
-
-            // Env vars
-            if (resource.Env is not null)
-            {
-	            foreach (var (k, v) in resource.Env)
-	            {
-		            svc.Env[k] = v;
-	            }
+                svc.Env[k] = v;
             }
 
             if (overrides?.Env is not null)
             {
-	            foreach (var (k, v) in overrides.Env)
-	            {
-		            svc.Env[k] = v;
-	            }
+                foreach (var (k, v) in overrides.Env)
+                {
+                    svc.Env[k] = v;
+                }
             }
 
-            // Ports
             if (resource.Bindings is not null)
             {
                 foreach (var (label, binding) in resource.Bindings)
                 {
                     svc.Ports.Add(new KubernetesPort
                     {
-                        Name = label,
-                        ContainerPort = binding.ContainerPort ?? 80,
-                        Protocol = binding.Protocol?.ToUpperInvariant() == "UDP" ? "UDP" : "TCP"
+                        Name = PortName(label),
+                        ContainerPort = ports[(name, label)],
+                        Protocol = binding.Protocol?.ToUpperInvariant() == "UDP" ? "UDP" : "TCP",
+                        IsHttp = binding.IsHttp
                     });
                 }
             }
 
-            // Ingress — only if there's an HTTP port and a base domain is configured
-            var httpPort = svc.Ports.FirstOrDefault(p => p.IsHttp);
-            if (k8SConfig.GenerateIngress && httpPort is not null && k8SConfig.IngressBaseDomain is not null)
+            // Ingress — only for an external HTTP binding when a base domain is configured
+            var externalHttp = resource.Bindings?.Any(b => b.Value.IsHttp && b.Value.IsExternal) == true;
+            if (kubernetesConfig.GenerateIngress && externalHttp && kubernetesConfig.IngressBaseDomain is not null)
             {
                 svc.HasIngress = true;
-                svc.IngressHost = $"{name}.{k8SConfig.IngressBaseDomain}";
+                svc.IngressHost = $"{name}.{kubernetesConfig.IngressBaseDomain}";
             }
 
-            // Dapr — read annotations from resource (injected by WithDaprIfEnabled or set by Aspire)
             if (resource.HasDaprSidecar)
             {
                 svc.DaprEnabled = true;
                 svc.DaprAppId = resource.DaprAppId ?? name;
-                svc.DaprAppPort = resource.DaprAppPort;
+                svc.DaprAppPort = resource.HttpBinding is { } http ? ports[(name, http.Key)] : resource.DaprAppPort;
                 if (resource.Annotations!.TryGetValue(DaprConstants.HttpPortAnnotation, out var hp)
                     && int.TryParse(hp, out var httpP))
                 {
-	                svc.DaprHttpPort = httpP;
+                    svc.DaprHttpPort = httpP;
                 }
 
                 if (resource.Annotations!.TryGetValue(DaprConstants.GrpcPortAnnotation, out var gp)
                     && int.TryParse(gp, out var grpcP))
                 {
-	                svc.DaprGrpcPort = grpcP;
+                    svc.DaprGrpcPort = grpcP;
                 }
             }
 
             results.Add(svc);
         }
 
+        Unresolved = [.. resolver.Unresolved];
         return results;
+    }
+
+    /// <summary>Placeholders from the last <see cref="Generate"/> call that could not be resolved.</summary>
+    public IReadOnlyList<string> Unresolved { get; private set; } = [];
+
+    private static string NamespaceFor(KubernetesTargetConfig cfg, string service)
+        => $"{cfg.NamespacePrefix}-{service}";
+
+    /// <summary>Kubernetes port names: max 15 chars, lowercase alphanumerics and '-'.</summary>
+    private static string PortName(string label)
+    {
+        var name = new string(label.ToLowerInvariant().Select(c => char.IsAsciiLetterOrDigit(c) ? c : '-').ToArray()).Trim('-');
+        if (name.Length > 15)
+        {
+            name = name[..15].TrimEnd('-');
+        }
+
+        return name.Length == 0 ? "port" : name;
     }
 
     public async Task<List<string>> WriteYamlAsync(
@@ -125,27 +146,27 @@ public sealed class KubernetesManifestGenerator
         var dir = Path.Combine(outputDirectory, svc.ServiceName);
         Directory.CreateDirectory(dir);
 
-        var files = new List<string> { await Write(dir, "namespace.yaml", RenderNamespace(svc), ct) };
+        var files = new List<string> { await WriteAsync(dir, "namespace.yaml", RenderNamespace(svc), ct) };
 
         if (svc.HasConfigMap)
         {
-	        files.Add(await Write(dir, "configmap.yaml", RenderConfigMap(svc), ct));
+            files.Add(await WriteAsync(dir, "configmap.yaml", RenderConfigMap(svc), ct));
         }
 
-        files.Add(await Write(dir, "deployment.yaml", RenderDeployment(svc), ct));
+        files.Add(await WriteAsync(dir, "deployment.yaml", RenderDeployment(svc), ct));
         if (svc.HasService)
         {
-	        files.Add(await Write(dir, "service.yaml", RenderService(svc), ct));
+            files.Add(await WriteAsync(dir, "service.yaml", RenderService(svc), ct));
         }
 
         if (svc.HasIngress)
         {
-	        files.Add(await Write(dir, "ingress.yaml", RenderIngress(svc), ct));
+            files.Add(await WriteAsync(dir, "ingress.yaml", RenderIngress(svc), ct));
         }
 
         if (svc.HasPvc)
         {
-	        files.Add(await Write(dir, "pvc.yaml", RenderPvc(svc), ct));
+            files.Add(await WriteAsync(dir, "pvc.yaml", RenderPvc(svc), ct));
         }
 
         svc.GeneratedFiles = files;
@@ -180,7 +201,7 @@ data:
 """);
         foreach (var (k, v) in svc.Env)
         {
-	        sb.AppendLine($"  {k}: {QuoteYaml(v)}");
+            sb.AppendLine($"  {k}: {QuoteYaml(v)}");
         }
 
         return sb.ToString();
@@ -211,14 +232,14 @@ spec:
 
         if (svc.DaprEnabled)
         {
+            // The Dapr sidecar injector only reads dapr.io/* annotations. The sidecar's own
+            // HTTP/gRPC ports are fixed by Dapr on Kubernetes (3500/50001).
             sb.AppendLine("    annotations:");
-            sb.AppendLine($"      {DaprConstants.EnabledAnnotation}: \"true\"");
-            sb.AppendLine($"      {DaprConstants.AppIdAnnotation}: \"{svc.DaprAppId ?? svc.ServiceName}\"");
-            sb.AppendLine($"      {DaprConstants.HttpPortAnnotation}: \"{svc.DaprHttpPort}\"");
-            sb.AppendLine($"      {DaprConstants.GrpcPortAnnotation}: \"{svc.DaprGrpcPort}\"");
+            sb.AppendLine("      dapr.io/enabled: \"true\"");
+            sb.AppendLine($"      dapr.io/app-id: {QuoteYaml(svc.DaprAppId ?? svc.ServiceName)}");
             if (svc.DaprAppPort.HasValue)
             {
-	            sb.AppendLine($"      {DaprConstants.AppPortAnnotation}: \"{svc.DaprAppPort}\"");
+                sb.AppendLine($"      dapr.io/app-port: \"{svc.DaprAppPort}\"");
             }
         }
 
@@ -226,7 +247,7 @@ spec:
     spec:
       containers:
         - name: {svc.ServiceName}
-          image: {svc.Image}:{svc.ImageTag}
+          image: {QuoteYaml(ImageReference.Format(svc.Image!, svc.ImageTag))}
           imagePullPolicy: Always
 """);
 
@@ -235,11 +256,11 @@ spec:
             sb.AppendLine("          ports:");
             foreach (var p in svc.Ports)
             {
-	            sb.AppendLine($"""
-	                                       - name: {p.Name}
-	                                         containerPort: {p.ContainerPort}
-	                                         protocol: {p.Protocol}
-	                           """);
+                sb.AppendLine($"""
+            - name: {p.Name}
+              containerPort: {p.ContainerPort}
+              protocol: {p.Protocol}
+""");
             }
         }
 
@@ -258,19 +279,32 @@ spec:
             limits:
               cpu: {svc.CpuLimit}
               memory: {svc.MemoryLimit}
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: {(svc.Ports.FirstOrDefault(p => p.IsHttp)?.Name ?? svc.Ports.FirstOrDefault()?.Name ?? "http")}
-            initialDelaySeconds: 10
-            periodSeconds: 15
-          readinessProbe:
-            httpGet:
-              path: /health/ready
-              port: {(svc.Ports.FirstOrDefault(p => p.IsHttp)?.Name ?? svc.Ports.FirstOrDefault()?.Name ?? "http")}
-            initialDelaySeconds: 5
-            periodSeconds: 10
 """);
+
+        // Probes: TCP by default; HTTP only on an HTTP port when explicitly configured.
+        var probePort = svc.Ports.FirstOrDefault(p => p.IsHttp) ?? svc.Ports.FirstOrDefault();
+        if (probePort is not null && svc.HealthCheckType != "none")
+        {
+            var useHttp = svc.HealthCheckType == "http" && probePort.IsHttp;
+            foreach (var (probe, delay, period) in new[] { ("livenessProbe", 15, 20), ("readinessProbe", 5, 10) })
+            {
+                sb.AppendLine($"          {probe}:");
+                if (useHttp)
+                {
+                    sb.AppendLine("            httpGet:");
+                    sb.AppendLine($"              path: {QuoteYaml(svc.HealthCheckPath)}");
+                    sb.AppendLine($"              port: {probePort.Name}");
+                }
+                else
+                {
+                    sb.AppendLine("            tcpSocket:");
+                    sb.AppendLine($"              port: {probePort.Name}");
+                }
+
+                sb.AppendLine($"            initialDelaySeconds: {delay}");
+                sb.AppendLine($"            periodSeconds: {period}");
+            }
+        }
 
         return sb.ToString();
     }
@@ -294,12 +328,12 @@ spec:
 """);
         foreach (var p in svc.Ports)
         {
-	        sb.AppendLine($"""
-	                           - name: {p.Name}
-	                             port: {p.ContainerPort}
-	                             targetPort: {p.Name}
-	                             protocol: {p.Protocol}
-	                       """);
+            sb.AppendLine($"""
+    - name: {p.Name}
+      port: {p.ContainerPort}
+      targetPort: {p.Name}
+      protocol: {p.Protocol}
+""");
         }
 
         sb.AppendLine("  type: ClusterIP");
@@ -355,19 +389,23 @@ spec:
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private static Task<string> Write(string dir, string filename, string content, CancellationToken ct)
+    /// <summary>
+    /// Writes a manifest with LF line endings. The YAML templates are raw string literals,
+    /// which take their line endings from the source file, so normalizing here keeps the
+    /// output identical however the repository is checked out.
+    /// </summary>
+    private static async Task<string> WriteAsync(string dir, string filename, string content, CancellationToken ct)
     {
         var path = Path.Combine(dir, filename);
-        return File.WriteAllTextAsync(path, content, ct).ContinueWith(_ => path, ct);
+        await File.WriteAllTextAsync(path, content.ReplaceLineEndings("\n"), new UTF8Encoding(false), ct);
+        return path;
     }
 
-    private static string QuoteYaml(string value)
-    {
-        if (value.Contains(':') || value.Contains('#') || value.Contains('"') || value.StartsWith('{'))
-        {
-	        return $"\"{value.Replace("\"", "\\\"")}\"";
-        }
-
-        return value;
-    }
+    /// <summary>
+    /// Always emits a double-quoted YAML scalar. Unquoted values such as <c>true</c>,
+    /// <c>8080</c> or an empty string would be typed as bool/int/null, which kubectl
+    /// rejects in a ConfigMap. A JSON string literal is a valid YAML double-quoted scalar.
+    /// </summary>
+    internal static string QuoteYaml(string? value)
+        => System.Text.Json.JsonSerializer.Serialize(value ?? string.Empty);
 }

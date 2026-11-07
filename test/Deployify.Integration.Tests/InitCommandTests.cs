@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.Threading.Tasks;
 using Deployify.Commands;
 using Deployify.Core.Models;
 using Deployify.Core.Services;
@@ -20,7 +21,7 @@ public sealed class InitCommandTests
         var code = await Root().InvokeAsync(
             $"init --non-interactive --project-path {dir.Path} " +
             $"--env-name local --target Nomad " +
-            $"--nomad-address http://localhost:4646 --nomad-namespace default --nomad-datacenter dc1");
+            $"--nomad-address http://localhost:4646 --nomad-namespace default --nomad-datacenter dc1", TestContext.Current.CancellationToken);
         code.ShouldBe(0);
         new StateManager().Exists(dir.Path).ShouldBeTrue();
     }
@@ -32,7 +33,7 @@ public sealed class InitCommandTests
         var code = await Root().InvokeAsync(
             $"init --non-interactive --project-path {dir.Path} " +
             $"--env-name prod --target Kubernetes " +
-            $"--k8s-namespace-prefix myapp --k8s-ingress-domain example.com");
+            $"--kubernetes-namespace-prefix myapp --kubernetes-ingress-domain example.com", TestContext.Current.CancellationToken);
         code.ShouldBe(0);
         new StateManager().Exists(dir.Path).ShouldBeTrue();
     }
@@ -44,7 +45,7 @@ public sealed class InitCommandTests
         var code = await Root().InvokeAsync(
             $"init --non-interactive --project-path {dir.Path} " +
             $"--env-name dev --target Compose " +
-            $"--compose-project myapp --compose-restart unless-stopped");
+            $"--compose-project myapp --compose-restart unless-stopped", TestContext.Current.CancellationToken);
         code.ShouldBe(0);
         new StateManager().Exists(dir.Path).ShouldBeTrue();
     }
@@ -57,8 +58,8 @@ public sealed class InitCommandTests
         using var dir = new TempDir();
         await Root().InvokeAsync(
             $"init --non-interactive --project-path {dir.Path} " +
-            $"--env-name staging --target Nomad");
-        var sf = await new StateManager().LoadFileAsync(dir.Path);
+            $"--env-name staging --target Nomad", TestContext.Current.CancellationToken);
+        var sf = await new StateManager().LoadFileAsync(dir.Path, TestContext.Current.CancellationToken);
         sf.ActiveEnvironment.ShouldBe("staging");
     }
 
@@ -67,8 +68,8 @@ public sealed class InitCommandTests
     {
         using var dir = new TempDir();
         await Root().InvokeAsync(
-            $"init --non-interactive --project-path {dir.Path} --target Nomad");
-        var sf = await new StateManager().LoadFileAsync(dir.Path);
+            $"init --non-interactive --project-path {dir.Path} --target Nomad", TestContext.Current.CancellationToken);
+        var sf = await new StateManager().LoadFileAsync(dir.Path, TestContext.Current.CancellationToken);
         sf.ActiveEnvironment.ShouldBe("local");
     }
 
@@ -80,8 +81,8 @@ public sealed class InitCommandTests
         using var dir = new TempDir();
         await Root().InvokeAsync(
             $"init --non-interactive --project-path {dir.Path} " +
-            $"--target Nomad --nomad-address http://nomad.prod:4646");
-        var sf = await new StateManager().LoadFileAsync(dir.Path);
+            $"--target Nomad --nomad-address http://nomad.prod:4646", TestContext.Current.CancellationToken);
+        var sf = await new StateManager().LoadFileAsync(dir.Path, TestContext.Current.CancellationToken);
         var cfg = sf.Environments["local"];
         cfg.TargetConfig.ShouldContainKey("nomad");
     }
@@ -92,8 +93,8 @@ public sealed class InitCommandTests
         using var dir = new TempDir();
         await Root().InvokeAsync(
             $"init --non-interactive --project-path {dir.Path} " +
-            $"--target Nomad --nomad-namespace production");
-        var sf = await new StateManager().LoadFileAsync(dir.Path);
+            $"--target Nomad --nomad-namespace production", TestContext.Current.CancellationToken);
+        var sf = await new StateManager().LoadFileAsync(dir.Path, TestContext.Current.CancellationToken);
         var raw = sf.Environments["local"].TargetConfig["nomad"]!.ToString()!;
         raw.ShouldContain("production");
     }
@@ -104,8 +105,8 @@ public sealed class InitCommandTests
         using var dir = new TempDir();
         await Root().InvokeAsync(
             $"init --non-interactive --project-path {dir.Path} " +
-            $"--target Nomad --nomad-datacenter us-east-1");
-        var sf = await new StateManager().LoadFileAsync(dir.Path);
+            $"--target Nomad --nomad-datacenter us-east-1", TestContext.Current.CancellationToken);
+        var sf = await new StateManager().LoadFileAsync(dir.Path, TestContext.Current.CancellationToken);
         var raw = sf.Environments["local"].TargetConfig["nomad"]!.ToString()!;
         raw.ShouldContain("us-east-1");
     }
@@ -116,8 +117,8 @@ public sealed class InitCommandTests
         using var dir = new TempDir();
         await Root().InvokeAsync(
             $"init --non-interactive --project-path {dir.Path} " +
-            $"--target Kubernetes --k8s-namespace-prefix myprefix");
-        var sf = await new StateManager().LoadFileAsync(dir.Path);
+            $"--target Kubernetes --kubernetes-namespace-prefix myprefix", TestContext.Current.CancellationToken);
+        var sf = await new StateManager().LoadFileAsync(dir.Path, TestContext.Current.CancellationToken);
         var raw = sf.Environments["local"].TargetConfig["kubernetes"]!.ToString()!;
         raw.ShouldContain("myprefix");
     }
@@ -128,8 +129,8 @@ public sealed class InitCommandTests
         using var dir = new TempDir();
         await Root().InvokeAsync(
             $"init --non-interactive --project-path {dir.Path} " +
-            $"--target Kubernetes --k8s-ingress-domain apps.example.com");
-        var sf = await new StateManager().LoadFileAsync(dir.Path);
+            $"--target Kubernetes --kubernetes-ingress-domain apps.example.com", TestContext.Current.CancellationToken);
+        var sf = await new StateManager().LoadFileAsync(dir.Path, TestContext.Current.CancellationToken);
         var raw = sf.Environments["local"].TargetConfig["kubernetes"]!.ToString()!;
         raw.ShouldContain("apps.example.com");
     }
@@ -140,8 +141,8 @@ public sealed class InitCommandTests
         using var dir = new TempDir();
         await Root().InvokeAsync(
             $"init --non-interactive --project-path {dir.Path} " +
-            $"--target Compose --compose-project mycoolapp");
-        var sf = await new StateManager().LoadFileAsync(dir.Path);
+            $"--target Compose --compose-project mycoolapp", TestContext.Current.CancellationToken);
+        var sf = await new StateManager().LoadFileAsync(dir.Path, TestContext.Current.CancellationToken);
         var raw = sf.Environments["local"].TargetConfig["compose"]!.ToString()!;
         raw.ShouldContain("mycoolapp");
     }
@@ -154,8 +155,8 @@ public sealed class InitCommandTests
         using var dir = new TempDir();
         await Root().InvokeAsync(
             $"init --non-interactive --project-path {dir.Path} " +
-            $"--target Nomad --container-registry reg.example.com/myapp");
-        var sf = await new StateManager().LoadFileAsync(dir.Path);
+            $"--target Nomad --container-registry reg.example.com/myapp", TestContext.Current.CancellationToken);
+        var sf = await new StateManager().LoadFileAsync(dir.Path, TestContext.Current.CancellationToken);
         sf.Environments["local"].ContainerRegistry.ShouldBe("reg.example.com/myapp");
     }
 
@@ -165,8 +166,8 @@ public sealed class InitCommandTests
         using var dir = new TempDir();
         await Root().InvokeAsync(
             $"init --non-interactive --project-path {dir.Path} " +
-            $"--target Nomad --image-tag v2.3.0");
-        var sf = await new StateManager().LoadFileAsync(dir.Path);
+            $"--target Nomad --image-tag v2.3.0", TestContext.Current.CancellationToken);
+        var sf = await new StateManager().LoadFileAsync(dir.Path, TestContext.Current.CancellationToken);
         sf.Environments["local"].ImageTag.ShouldBe("v2.3.0");
     }
 
@@ -175,8 +176,8 @@ public sealed class InitCommandTests
     {
         using var dir = new TempDir();
         await Root().InvokeAsync(
-            $"init --non-interactive --project-path {dir.Path} --target Nomad");
-        var sf = await new StateManager().LoadFileAsync(dir.Path);
+            $"init --non-interactive --project-path {dir.Path} --target Nomad", TestContext.Current.CancellationToken);
+        var sf = await new StateManager().LoadFileAsync(dir.Path, TestContext.Current.CancellationToken);
         sf.Environments["local"].ImageTag.ShouldBe("latest");
     }
 
@@ -188,8 +189,8 @@ public sealed class InitCommandTests
         using var dir = new TempDir();
         await Root().InvokeAsync(
             $"init --non-interactive --project-path {dir.Path} " +
-            $"--target Nomad --output-path my-output");
-        var sf = await new StateManager().LoadFileAsync(dir.Path);
+            $"--target Nomad --output-path my-output", TestContext.Current.CancellationToken);
+        var sf = await new StateManager().LoadFileAsync(dir.Path, TestContext.Current.CancellationToken);
         sf.Environments["local"].OutputPath.ShouldBe("my-output");
     }
 
@@ -201,10 +202,10 @@ public sealed class InitCommandTests
         using var dir = new TempDir();
         var root = Root();
         await root.InvokeAsync(
-            $"init --non-interactive --project-path {dir.Path} --env-name v1 --target Nomad");
+            $"init --non-interactive --project-path {dir.Path} --env-name v1 --target Nomad", TestContext.Current.CancellationToken);
         await root.InvokeAsync(
-            $"init --non-interactive --project-path {dir.Path} --env-name v2 --target Compose");
-        var sf = await new StateManager().LoadFileAsync(dir.Path);
+            $"init --non-interactive --project-path {dir.Path} --env-name v2 --target Compose", TestContext.Current.CancellationToken);
+        var sf = await new StateManager().LoadFileAsync(dir.Path, TestContext.Current.CancellationToken);
         sf.ActiveEnvironment.ShouldBe("v2");
     }
 
@@ -218,8 +219,8 @@ public sealed class InitCommandTests
     {
         using var dir = new TempDir();
         await Root().InvokeAsync(
-            $"init --non-interactive --project-path {dir.Path} --target {targetStr}");
-        var sf = await new StateManager().LoadFileAsync(dir.Path);
+            $"init --non-interactive --project-path {dir.Path} --target {targetStr}", TestContext.Current.CancellationToken);
+        var sf = await new StateManager().LoadFileAsync(dir.Path, TestContext.Current.CancellationToken);
         sf.Environments["local"].Target.ShouldBe(expected);
     }
 }

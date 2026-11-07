@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Deployify.Core.Models;
 
 namespace Deployify.Target.Nomad;
@@ -13,10 +14,15 @@ public sealed class NomadJob
     public List<NomadPort> Ports { get; set; } = [];
     public List<string> Dependencies { get; set; } = [];
 
+    /// <summary>Container arguments from the manifest (placeholders already resolved).</summary>
+    public List<string> Args { get; set; } = [];
+
+    /// <summary>True for Aspire project resources (built by deployify publish).</summary>
+    public bool IsProject { get; set; }
+
     /// <summary>
-    /// When true the task uses host networking (network_mode = "host") so ports
-    /// are bound directly on all interfaces without NAT. Used for services that
-    /// need to be reachable from outside the host, such as the Aspire Dashboard.
+    /// When true the task uses host networking (network_mode = "host"): ports are bound
+    /// directly on the host and services reach each other on localhost.
     /// </summary>
     public bool UseHostNetwork { get; set; }
 
@@ -48,9 +54,9 @@ public sealed class NomadPort
     public int? Static { get; set; }
     public int? To { get; set; }
 
-    /// <summary>
-    /// When true the port is bound to all interfaces (0.0.0.0) so it is
-    /// reachable from outside the host. When false Nomad binds to 127.0.0.1.
-    /// </summary>
+    /// <summary>Aspire marked the binding external (meant to be reached from outside).</summary>
     public bool IsExternal { get; set; }
+
+    /// <summary>The binding carries HTTP traffic (decides the health check type).</summary>
+    public bool IsHttp { get; set; }
 }

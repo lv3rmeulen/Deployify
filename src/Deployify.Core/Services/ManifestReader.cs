@@ -1,5 +1,9 @@
+using System;
 using System.Diagnostics;
+using System.IO;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
 using Microsoft.Extensions.Logging;
@@ -8,7 +12,7 @@ namespace Deployify.Core.Services;
 
 public sealed class ManifestReader(ILogger<ManifestReader> logger) : IManifestReader
 {
-    private static readonly JsonSerializerOptions s_jsonOptions = new JsonSerializerOptions
+    private static readonly JsonSerializerOptions s_jsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
         AllowTrailingCommas = true,
@@ -19,7 +23,7 @@ public sealed class ManifestReader(ILogger<ManifestReader> logger) : IManifestRe
     {
         if (!File.Exists(manifestPath))
         {
-	        throw new FileNotFoundException($"Manifest not found at '{manifestPath}'.");
+            throw new FileNotFoundException($"Manifest not found at '{manifestPath}'.");
         }
 
         await using var stream = File.OpenRead(manifestPath);
@@ -36,9 +40,9 @@ public sealed class ManifestReader(ILogger<ManifestReader> logger) : IManifestRe
             var projs = Directory.GetFiles(appHostPath, "*.csproj", SearchOption.TopDirectoryOnly);
             if (projs.Length == 0)
             {
-	            throw new FileNotFoundException(
-		            $"No .csproj found in '{appHostPath}'. " +
-		            "Run 'deployify generate' or pre-generate a manifest.json in the output directory.");
+                throw new FileNotFoundException(
+                    $"No .csproj found in '{appHostPath}'. " +
+                    "Run 'deployify generate' or pre-generate a manifest.json in the output directory.");
             }
 
             resolvedProject = projs[0];
@@ -63,12 +67,30 @@ public sealed class ManifestReader(ILogger<ManifestReader> logger) : IManifestRe
         var stdoutTask = proc.StandardOutput.ReadToEndAsync(ct);
         var stderrTask = proc.StandardError.ReadToEndAsync(ct);
 
-        await proc.WaitForExitAsync(ct);
-        await Task.WhenAll(stdoutTask, stderrTask);
+        try
+        {
+            await proc.WaitForExitAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                proc.Kill(entireProcessTree: true);
+            }
+            catch
+            {
+                /* already exited */
+            }
+
+            throw;
+        }
+
+        await stdoutTask;
+        var stderr = await stderrTask;
 
         if (proc.ExitCode != 0)
         {
-	        throw new InvalidOperationException($"Manifest generation failed: {stderrTask.Result}");
+            throw new InvalidOperationException($"Manifest generation failed: {stderr}");
         }
 
         return manifestFile;

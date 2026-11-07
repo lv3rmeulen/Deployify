@@ -1,3 +1,6 @@
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using Deployify.Core.Models;
 
 namespace Deployify.Core.Interfaces;
@@ -22,7 +25,7 @@ public interface IDeploymentTarget
     Task<(bool Ok, string? Error)> PingAsync(EnvironmentConfig config, CancellationToken ct = default);
 
     /// <summary>
-    /// Generates all output artefacts (e.g. HCL files, k8s manifests, compose.yml)
+    /// Generates all output artifacts (e.g. HCL files, Kubernetes manifests, compose.yml)
     /// from the Aspire manifest. Does not deploy anything.
     /// Returns the paths of all generated files.
     /// </summary>
@@ -33,8 +36,8 @@ public interface IDeploymentTarget
         CancellationToken ct = default);
 
     /// <summary>
-    /// Validates generated artefacts against the target.
-    /// Returns a list of (artefactName, errors) tuples.
+    /// Validates generated artifacts against the target.
+    /// Returns a list of (ArtifactName, errors) tuples.
     /// </summary>
     Task<IReadOnlyList<ValidationResult>> ValidateAsync(
         AspireManifest manifest,
@@ -53,7 +56,7 @@ public interface IDeploymentTarget
         CancellationToken ct = default);
 
     /// <summary>
-    /// Deploys all generated artefacts to the target.
+    /// Deploys all generated artifacts to the target.
     /// Returns a list of (serviceName, deploymentId) tuples.
     /// </summary>
     Task<IReadOnlyList<DeploymentResult>> ApplyAsync(
@@ -86,7 +89,7 @@ public interface IDeploymentTarget
         EnvironmentConfig config);
 
     /// <summary>
-    /// Compares the live state of the target against the local artefacts.
+    /// Compares the live state of the target against the local artifacts.
     /// </summary>
     Task<IReadOnlyList<DiffEntry>> DiffAsync(
         AspireManifest manifest,
@@ -99,7 +102,7 @@ public interface IDeploymentTarget
 
 public sealed class ValidationResult
 {
-    public string ArtefactName { get; init; } = string.Empty;
+    public string ArtifactName { get; init; } = string.Empty;
     public IReadOnlyList<string> Errors { get; init; } = [];
     public bool IsValid => Errors.Count == 0;
 }

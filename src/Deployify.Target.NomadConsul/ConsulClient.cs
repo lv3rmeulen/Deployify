@@ -1,5 +1,11 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 
 namespace Deployify.Target.NomadConsul;
@@ -20,7 +26,7 @@ public sealed class ConsulClient : IDisposable
         _http = new HttpClient { BaseAddress = new Uri(address.TrimEnd('/') + "/") };
         if (!string.IsNullOrWhiteSpace(token))
         {
-	        _http.DefaultRequestHeaders.Add("X-Consul-Token", token);
+            _http.DefaultRequestHeaders.Add("X-Consul-Token", token);
         }
     }
 
@@ -53,7 +59,7 @@ public sealed class ConsulClient : IDisposable
             var url = "v1/catalog/services";
             if (!string.IsNullOrWhiteSpace(consulNamespace))
             {
-	            url += $"?ns={Uri.EscapeDataString(consulNamespace)}";
+                url += $"?ns={Uri.EscapeDataString(consulNamespace)}";
             }
 
             var resp = await _http.GetFromJsonAsync<Dictionary<string, string[]>>(url, ct);

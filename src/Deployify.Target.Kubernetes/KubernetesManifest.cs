@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+
 namespace Deployify.Target.Kubernetes;
 
 /// <summary>
@@ -39,6 +42,12 @@ public sealed class KubernetesServiceManifest
     public int? DaprAppPort { get; set; }
     public int DaprHttpPort { get; set; } = 3500;
     public int DaprGrpcPort { get; set; } = 50001;
+
+    // ── Health probes ─────────────────────────────────────────────────────────
+    /// <summary>"tcp" (default), "http" or "none". See KubernetesTargetConfig.HealthCheckType.</summary>
+    public string HealthCheckType { get; set; } = "tcp";
+
+    public string HealthCheckPath { get; set; } = "/health";
 }
 
 public sealed class KubernetesPort
@@ -46,5 +55,17 @@ public sealed class KubernetesPort
     public string Name { get; set; } = string.Empty;
     public int ContainerPort { get; set; }
     public string Protocol { get; set; } = "TCP";
-    public bool IsHttp => Name.Contains("http", StringComparison.OrdinalIgnoreCase) || ContainerPort is 80 or 443 or 8080 or 8443;
+
+    /// <summary>
+    /// True when the port serves HTTP. Set from the Aspire binding's scheme; when not set
+    /// explicitly, falls back to guessing from the port name and number.
+    /// </summary>
+    public bool IsHttp
+    {
+        get => _isHttp ?? (Name.Contains("http", StringComparison.OrdinalIgnoreCase)
+                           || ContainerPort is 80 or 443 or 8080 or 8443);
+        set => _isHttp = value;
+    }
+
+    private bool? _isHttp;
 }

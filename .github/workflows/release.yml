@@ -1,0 +1,161 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  release:
+    types: [published]
+
+concurrency:
+  group: nuget-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'release' }}
+
+jobs:
+  build:
+    name: Build, test, and pack
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: >-
+            ${{ runner.os }}-nuget-
+            ${{ hashFiles(
+              'global.json',
+              'NuGet.config',
+              'Directory.Build.props',
+              'Directory.Packages.props',
+              '.config/dotnet-tools.json',
+              '**/*.csproj'
+            ) }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore tools
+        run: dotnet tool restore
+
+      - name: Restore packages
+        run: dotnet restore
+
+      - name: Verify formatting
+        run: dotnet format --verify-no-changes --no-restore
+
+      - name: Build
+        run: >
+          dotnet build
+          --configuration Release
+          --no-restore
+          #--warnaserror
+
+      - name: Test and collect coverage
+        run: >
+          dotnet tool run dotnet-coverage collect
+          "dotnet test --configuration Release --no-build --logger GitHubActions"
+          --output-format cobertura
+          --output ./artifacts/coverage.cobertura.xml
+
+      - name: Pack
+        run: >
+          dotnet pack
+          ./src/Deployify/Deployify.csproj
+          --configuration Release
+          --no-build
+          --output ./artifacts/packages
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: ./artifacts/coverage.cobertura.xml
+          if-no-files-found: error
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: nuget-packages
+          path: |
+            ./artifacts/packages/*.nupkg
+            ./artifacts/packages/*.snupkg
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Validate release metadata
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_IS_PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Unsupported release tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+
+          release_commit="$(git rev-parse "$RELEASE_TAG^{commit}")"
+          head_commit="$(git rev-parse HEAD)"
+
+          if [[ "$release_commit" != "$head_commit" ]]; then
+            echo "The release tag does not point to the checked-out commit." >&2
+            exit 1
+          fi
+
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            test "$RELEASE_IS_PRERELEASE" = "true"
+          else
+            test "$RELEASE_IS_PRERELEASE" = "false"
+          fi
+
+      - name: Download packages
+        uses: actions/download-artifact@v8
+        with:
+          name: nuget-packages
+          path: ./artifacts
+
+      - name: Login to NuGet.org
+        id: nuget-login
+        uses: nuget/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Publish to NuGet.org
+        run: >
+          dotnet nuget push
+          "./artifacts/*.nupkg"
+          --source https://api.nuget.org/v3/index.json
+          --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}"
+          --skip-duplicate
+
+      - name: Attach packages to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            ./artifacts/*.nupkg \
+            ./artifacts/*.snupkg \
+            --repo "${{ github.repository }}"

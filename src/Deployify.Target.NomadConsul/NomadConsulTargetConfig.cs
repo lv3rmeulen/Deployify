@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace Deployify.Target.NomadConsul;
 
 /// <summary>
@@ -14,7 +16,7 @@ public sealed class NomadConsulTargetConfig
     /// <summary>Nomad API address, e.g. http://localhost:4646</summary>
     public string NomadAddress { get; set; } = "http://localhost:4646";
 
-    /// <summary>Optional Nomad ACL token.</summary>
+    /// <summary>Nomad ACL token. Prefer "env:VAR_NAME"; when unset, NOMAD_TOKEN is used.</summary>
     public string? NomadToken { get; set; }
 
     /// <summary>Nomad namespace for all jobs.</summary>
@@ -28,7 +30,7 @@ public sealed class NomadConsulTargetConfig
     /// <summary>Consul HTTP API address, e.g. http://localhost:8500</summary>
     public string ConsulAddress { get; set; } = "http://localhost:8500";
 
-    /// <summary>Optional Consul ACL token.</summary>
+    /// <summary>Consul ACL token. Prefer "env:VAR_NAME"; when unset, CONSUL_HTTP_TOKEN is used.</summary>
     public string? ConsulToken { get; set; }
 
     /// <summary>
@@ -42,7 +44,7 @@ public sealed class NomadConsulTargetConfig
     /// </summary>
     public string? ConsulNamespace { get; set; }
 
-    // ── Mesh behaviour ────────────────────────────────────────────────────────
+    // ── Mesh behavior ────────────────────────────────────────────────────────
 
     /// <summary>
     /// Base port for Consul Connect upstream listeners inside the task group.
@@ -78,7 +80,10 @@ public sealed class NomadConsulTargetConfig
     /// </summary>
     public string? RegistryUsername { get; set; }
 
-    /// <summary>Docker registry password or access token.</summary>
+    /// <summary>
+    /// Docker registry password or access token. Prefer "env:VAR_NAME"; when unset,
+    /// DEPLOYIFY_REGISTRY_PASSWORD is used.
+    /// </summary>
     public string? RegistryPassword { get; set; }
 
     /// <summary>Docker registry server address override.</summary>
@@ -89,7 +94,19 @@ public sealed class NomadConsulTargetConfig
     /// <summary>When true, emits a service {} block for each task. Defaults to true.</summary>
     public bool RegisterServices { get; set; } = true;
 
-    /// <summary>HTTP path for health checks. Defaults to "/health".</summary>
+    /// <summary>
+    /// Health check type: "tcp" (default), "http" (calls <see cref="HealthCheckPath"/>) or
+    /// "none". Non-HTTP services always get a TCP check. TCP is the default because
+    /// Aspire's ServiceDefaults only map /health in the Development environment.
+    /// </summary>
+    public string HealthCheckType { get; set; } = "tcp";
+
+    /// <summary>
+    /// Base port for services whose Aspire bindings carry no port. Defaults to 8080.
+    /// </summary>
+    public int BasePort { get; set; } = 8080;
+
+    /// <summary>HTTP path used when <see cref="HealthCheckType"/> is "http".</summary>
     public string HealthCheckPath { get; set; } = "/health";
 
     /// <summary>Health check interval. Defaults to "10s".</summary>

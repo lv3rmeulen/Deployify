@@ -1,4 +1,10 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
 using Deployify.Target.Nomad;
@@ -22,306 +28,353 @@ namespace Deployify.Target.NomadConsul;
 /// through Nomad's built-in Consul integration.
 /// </summary>
 public sealed class NomadConsulDeploymentTarget(
-	IPublisher publisher,
-	ILogger<NomadConsulDeploymentTarget> logger,
-	ILoggerFactory loggerFactory) : IDeploymentTarget
+    IPublisher publisher,
+    ILogger<NomadConsulDeploymentTarget> logger,
+    ILoggerFactory loggerFactory) : IDeploymentTarget
 {
-	private readonly Lazy<ConsulJobGenerator> _generator = new Lazy<ConsulJobGenerator>(() => new ConsulJobGenerator(loggerFactory.CreateLogger<ConsulJobGenerator>()));
+    private readonly Lazy<ConsulJobGenerator> _generator = new(
+        () => new ConsulJobGenerator(loggerFactory.CreateLogger<ConsulJobGenerator>()));
 
-	private ConsulJobGenerator Generator => _generator.Value;
+    private ConsulJobGenerator Generator => _generator.Value;
 
-	public DeploymentTargetType TargetType => DeploymentTargetType.NomadConsul;
-	public string DisplayName => "HashiCorp Nomad + Consul Connect";
+    public DeploymentTargetType TargetType => DeploymentTargetType.NomadConsul;
+    public string DisplayName => "HashiCorp Nomad + Consul Connect";
 
-	// ── Ping ─────────────────────────────────────────────────────────────────
+    // ── Ping ─────────────────────────────────────────────────────────────────
 
-	public async Task<(bool Ok, string? Error)> PingAsync(
-		EnvironmentConfig config, CancellationToken ct = default)
-	{
-		var cfg = GetConfig(config);
+    public async Task<(bool Ok, string? Error)> PingAsync(
+        EnvironmentConfig config, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
 
-		// Check Nomad
-		using var nomadClient = BuildNomadClient(cfg);
-		if (!await nomadClient.PingAsync(ct))
-		{
-			return (false, $"Cannot reach Nomad at {cfg.NomadAddress}.");
-		}
+        // Check Nomad
+        using var nomadClient = BuildNomadClient(cfg);
+        if (!await nomadClient.PingAsync(ct))
+        {
+            return (false, $"Cannot reach Nomad at {cfg.NomadAddress}.");
+        }
 
-		// Check Consul
-		using var consulClient = BuildConsulClient(cfg);
-		if (!await consulClient.PingAsync(ct))
-		{
-			return (false, $"Cannot reach Consul at {cfg.ConsulAddress}.");
-		}
+        // Check Consul
+        using var consulClient = BuildConsulClient(cfg);
+        if (!await consulClient.PingAsync(ct))
+        {
+            return (false, $"Cannot reach Consul at {cfg.ConsulAddress}.");
+        }
 
-		return (true, null);
-	}
+        return (true, null);
+    }
 
-	// ── Generate ──────────────────────────────────────────────────────────────
+    // ── Generate ──────────────────────────────────────────────────────────────
 
-	public async Task<IReadOnlyList<string>> GenerateAsync(
-		AspireManifest manifest,
-		EnvironmentConfig config,
-		string outputDirectory,
-		CancellationToken ct = default)
-	{
-		var cfg = GetConfig(config);
-		var jobs = Generator.Generate(manifest, config, cfg);
-		var paths = new List<string>();
-		foreach (var job in jobs)
-		{
-			paths.Add(await Generator.WriteHclAsync(job, config, cfg, outputDirectory, ct));
-		}
+    public async Task<IReadOnlyList<string>> GenerateAsync(
+        AspireManifest manifest,
+        EnvironmentConfig config,
+        string outputDirectory,
+        CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var jobs = Generator.Generate(manifest, config, cfg);
+        var paths = new List<string>();
+        foreach (var job in jobs)
+        {
+            paths.Add(await Generator.WriteHclAsync(job, config, cfg, outputDirectory, ct));
+        }
 
-		return paths;
-	}
+        return paths;
+    }
 
-	// ── Validate ─────────────────────────────────────────────────────────────
+    // ── Validate ─────────────────────────────────────────────────────────────
 
-	public async Task<IReadOnlyList<ValidationResult>> ValidateAsync(
-		AspireManifest manifest,
-		EnvironmentConfig config,
-		string outputDirectory,
-		CancellationToken ct = default)
-	{
-		var cfg = GetConfig(config);
-		var jobs = Generator.Generate(manifest, config, cfg);
-		var results = new List<ValidationResult>();
-		using var nomadClient = BuildNomadClient(cfg);
+    public async Task<IReadOnlyList<ValidationResult>> ValidateAsync(
+        AspireManifest manifest,
+        EnvironmentConfig config,
+        string outputDirectory,
+        CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var jobs = Generator.Generate(manifest, config, cfg);
+        var results = new List<ValidationResult>();
+        using var nomadClient = BuildNomadClient(cfg);
 
-		foreach (var job in jobs)
-		{
-			var hclPath = await Generator.WriteHclAsync(job, config, cfg, outputDirectory, ct);
-			IReadOnlyList<string> errors;
-			try { errors = await nomadClient.ValidateJobAsync(hclPath, ct); }
-			catch { errors = []; } // Nomad unreachable — skip live validation
+        foreach (var job in jobs)
+        {
+            var hclPath = await Generator.WriteHclAsync(job, config, cfg, outputDirectory, ct);
+            IReadOnlyList<string> errors;
+            try
+            {
+                errors = await nomadClient.ValidateJobAsync(hclPath, ct);
+            }
+            catch
+            {
+                errors = [];
+            } // Nomad unreachable — skip live validation
 
-			results.Add(new ValidationResult { ArtefactName = hclPath, Errors = errors });
-		}
+            results.Add(new ValidationResult { ArtifactName = hclPath, Errors = errors });
+        }
 
-		return results;
-	}
+        return results;
+    }
 
-	// ── Plan ─────────────────────────────────────────────────────────────────
+    // ── Plan ─────────────────────────────────────────────────────────────────
 
-	public async Task<PlanResult> PlanAsync(
-		AspireManifest manifest,
-		EnvironmentConfig config,
-		string outputDirectory,
-		CancellationToken ct = default)
-	{
-		var cfg = GetConfig(config);
-		var jobs = Generator.Generate(manifest, config, cfg);
+    public async Task<PlanResult> PlanAsync(
+        AspireManifest manifest,
+        EnvironmentConfig config,
+        string outputDirectory,
+        CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var jobs = Generator.Generate(manifest, config, cfg);
 
-		// Write HCL artefacts first — apply reads these
-		foreach (var job in jobs)
-		{
-			await Generator.WriteHclAsync(job, config, cfg, outputDirectory, ct);
-		}
+        // Write HCL artifacts first — apply reads these
+        var paths = new Dictionary<string, string>();
+        foreach (var job in jobs)
+        {
+            paths[job.Name] = await Generator.WriteHclAsync(job, config, cfg, outputDirectory, ct);
+        }
 
-		var desired = jobs.Select(j => j.Name).ToHashSet();
+        using var nomadClient = BuildNomadClient(cfg);
+        HashSet<string> running, managed;
+        try
+        {
+            running = [.. await nomadClient.GetRunningJobNamesAsync(ct: ct)];
+            managed = [.. await nomadClient.GetRunningJobNamesAsync(managedOnly: true, ct)];
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                "Could not reach Nomad at {Address} — assuming all services are new. ({Msg})",
+                cfg.NomadAddress, ex.Message);
+            running = [];
+            managed = [];
+        }
 
-		HashSet<string> running;
-		try
-		{
-			using var nomadClient = BuildNomadClient(cfg);
-			running = (await nomadClient.GetRunningJobNamesAsync(ct)).ToHashSet();
-		}
-		catch (Exception ex)
-		{
-			logger.LogWarning(
-				"Could not reach Nomad at {Address} — assuming all services are new. ({Msg})",
-				cfg.NomadAddress, ex.Message);
-			running = [];
-		}
+        var result = new PlanResult();
+        foreach (var job in jobs)
+        {
+            if (!running.Contains(job.Name))
+            {
+                result.ToCreate.Add(job.Name);
+                continue;
+            }
 
-		return new PlanResult
-		{
-			ToCreate = desired.Except(running).Select(n => (object)n).ToList(),
-			ToUpdate = desired.Intersect(running).Select(n => (object)n).ToList(),
-			ToDelete = running.Except(desired).ToList(),
-			Unchanged = []
-		};
-	}
+            if (await TryPlanAsync(nomadClient, paths[job.Name], ct) is "None")
+            {
+                result.Unchanged.Add(job.Name);
+            }
+            else
+            {
+                result.ToUpdate.Add(job.Name);
+            }
+        }
 
-	// ── Apply ─────────────────────────────────────────────────────────────────
+        foreach (var name in managed.Except(jobs.Select(j => j.Name)))
+        {
+            result.ToDelete.Add(name);
+        }
 
-	public async Task<IReadOnlyList<DeploymentResult>> ApplyAsync(
-		AspireManifest manifest,
-		EnvironmentConfig config,
-		string outputDirectory,
-		CancellationToken ct = default)
-	{
-		var cfg = GetConfig(config);
-		var jobs = Generator.Generate(manifest, config, cfg);
-		var results = new List<DeploymentResult>();
-		using var nomadClient = BuildNomadClient(cfg);
+        return result;
+    }
 
-		foreach (var job in jobs)
-		{
-			var hclPath = Path.Combine(outputDirectory, $"{job.Name}.job.hcl");
-			if (!File.Exists(hclPath))
-			{
-				results.Add(new DeploymentResult
-				{
-					ServiceName = job.Name,
-					Success = false,
-					Error = $"Artefact not found: {hclPath}. Run 'deployify plan' first."
-				});
-				continue;
-			}
+    private async Task<string> TryPlanAsync(NomadClient client, string hclPath, CancellationToken ct)
+    {
+        try
+        {
+            return await client.PlanJobAsync(hclPath, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning("Could not plan {Path}: {Message}", Path.GetFileName(hclPath), ex.Message);
+            return "Edited";
+        }
+    }
 
-			try
-			{
-				var evalId = await nomadClient.SubmitJobAsync(hclPath, ct);
-				logger.LogInformation(
-					"Submitted Consul Connect job '{Name}', evalId={EvalId}", job.Name, evalId);
-				results.Add(new DeploymentResult
-				{
-					ServiceName = job.Name,
-					DeploymentId = evalId,
-					Success = true
-				});
-			}
-			catch (Exception ex)
-			{
-				logger.LogError(ex, "Failed to submit job '{Name}'.", job.Name);
-				results.Add(new DeploymentResult
-				{
-					ServiceName = job.Name,
-					Success = false,
-					Error = ex.Message
-				});
-			}
-		}
+    // ── Apply ─────────────────────────────────────────────────────────────────
 
-		return results;
-	}
+    public async Task<IReadOnlyList<DeploymentResult>> ApplyAsync(
+        AspireManifest manifest,
+        EnvironmentConfig config,
+        string outputDirectory,
+        CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var jobs = Generator.Generate(manifest, config, cfg);
+        var results = new List<DeploymentResult>();
+        using var nomadClient = BuildNomadClient(cfg);
 
-	// ── Publish ───────────────────────────────────────────────────────────────
+        foreach (var job in jobs)
+        {
+            var hclPath = Path.Combine(outputDirectory, $"{job.Name}.job.hcl");
+            if (!File.Exists(hclPath))
+            {
+                results.Add(new DeploymentResult
+                {
+                    ServiceName = job.Name,
+                    Success = false,
+                    Error = $"Artifact not found: {hclPath}. Run 'deployify plan' first."
+                });
+                continue;
+            }
 
-	public async Task PublishAsync(
-		AspireManifest manifest,
-		EnvironmentConfig config,
-		string appHostDirectory,
-		CancellationToken ct = default) =>
-		await publisher.PublishAsync(manifest, config, appHostDirectory, ct);
+            try
+            {
+                var evalId = await nomadClient.SubmitJobAsync(hclPath, ct);
+                logger.LogInformation(
+                    "Submitted Consul Connect job '{Name}', evalId={EvalId}", job.Name, evalId);
+                results.Add(new DeploymentResult
+                {
+                    ServiceName = job.Name,
+                    DeploymentId = evalId,
+                    Success = true
+                });
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to submit job '{Name}'.", job.Name);
+                results.Add(new DeploymentResult
+                {
+                    ServiceName = job.Name,
+                    Success = false,
+                    Error = ex.Message
+                });
+            }
+        }
 
-	// ── Explain ───────────────────────────────────────────────────────────────
+        return results;
+    }
 
-	public IReadOnlyList<ServiceExplanation> Explain(
-		AspireManifest manifest, EnvironmentConfig config)
-	{
-		var cfg = GetConfig(config);
-		return Generator.Generate(manifest, config, cfg).Select(job => new ServiceExplanation
-		{
-			Name = job.Name,
-			Image = job.Image,
-			ImageTag = job.ImageTag,
-			Count = job.Count,
-			Env = job.Env,
-			Ports = job.Ports.Select(p => $"{p.Label}:{p.ContainerPort}/{p.Protocol}").ToList(),
-			Dependencies = job.Dependencies,
-			AdditionalInfo = new Dictionary<string, string>
-			{
-				["nomadNamespace"] = cfg.NomadNamespace,
-				["datacenters"] = string.Join(", ", cfg.Datacenters),
-				["consulAddress"] = cfg.ConsulAddress,
-				["networkMode"] = "bridge (Consul Connect)",
-				["upstreams"] = job.Upstreams.Count == 0
-					? "none"
-					: string.Join(", ", job.Upstreams.Select(u =>
-						$"{u.DestinationName}→localhost:{u.LocalBindPort}")),
-				["ingressGateway"] = job.ExposeViaIngressGateway
-					? cfg.IngressGatewayName : "disabled"
-			}
-		}).ToList();
-	}
+    // ── Publish ───────────────────────────────────────────────────────────────
 
-	// ── GetDependencies ───────────────────────────────────────────────────────
+    public async Task PublishAsync(
+        AspireManifest manifest,
+        EnvironmentConfig config,
+        string appHostDirectory,
+        CancellationToken ct = default)
+        => await publisher.PublishAsync(manifest, config, appHostDirectory, ct);
 
-	public IReadOnlyList<ServiceDependency> GetDependencies(
-		AspireManifest manifest, EnvironmentConfig config)
-	{
-		var cfg = GetConfig(config);
-		return Generator.Generate(manifest, config, cfg)
-			.SelectMany(job => job.Dependencies.Select(dep =>
-				new ServiceDependency { From = dep, To = job.Name }))
-			.ToList();
-	}
+    // ── Explain ───────────────────────────────────────────────────────────────
 
-	// ── Diff ──────────────────────────────────────────────────────────────────
+    public IReadOnlyList<ServiceExplanation> Explain(
+        AspireManifest manifest, EnvironmentConfig config)
+    {
+        var cfg = GetConfig(config);
+        return
+        [
+            .. Generator.Generate(manifest, config, cfg).Select(job => new ServiceExplanation
+            {
+                Name = job.Name,
+                Image = job.Image,
+                ImageTag = job.ImageTag,
+                Count = job.Count,
+                Env = job.Env,
+                Ports = [.. job.Ports.Select(p => $"{p.Label}:{p.ContainerPort}/{p.Protocol}")],
+                Dependencies = job.Dependencies,
+                AdditionalInfo = new Dictionary<string, string>
+                {
+                    ["nomadNamespace"] = cfg.NomadNamespace,
+                    ["datacenters"] = string.Join(", ", cfg.Datacenters),
+                    ["consulAddress"] = cfg.ConsulAddress,
+                    ["networkMode"] = "bridge (Consul Connect)",
+                    ["upstreams"] = job.Upstreams.Count == 0
+                        ? "none"
+                        : string.Join(", ", job.Upstreams.Select(u =>
+                            $"{u.DestinationName}→localhost:{u.LocalBindPort}")),
+                    ["ingressGateway"] = job.ExposeViaIngressGateway
+                        ? cfg.IngressGatewayName
+                        : "disabled"
+                }
+            })
+        ];
+    }
 
-	public async Task<IReadOnlyList<DiffEntry>> DiffAsync(
-		AspireManifest manifest,
-		EnvironmentConfig config,
-		string outputDirectory,
-		CancellationToken ct = default)
-	{
-		var cfg = GetConfig(config);
-		var jobs = Generator.Generate(manifest, config, cfg).ToDictionary(j => j.Name);
-		var entries = new List<DiffEntry>();
+    // ── GetDependencies ───────────────────────────────────────────────────────
 
-		using var nomadClient = BuildNomadClient(cfg);
-		HashSet<string> running;
-		try
-		{
-			running = (await nomadClient.GetRunningJobNamesAsync(ct)).ToHashSet();
-		}
-		catch
-		{
-			// Nomad unreachable — treat every desired service as Added
-			return jobs.Keys
-				.Select(n => new DiffEntry { ServiceName = n, Kind = DiffKind.Added })
-				.ToList();
-		}
+    public IReadOnlyList<ServiceDependency> GetDependencies(
+        AspireManifest manifest, EnvironmentConfig config)
+    {
+        var cfg = GetConfig(config);
+        return
+        [
+            .. Generator.Generate(manifest, config, cfg)
+                .SelectMany(job => job.Dependencies.Select(dep =>
+                    new ServiceDependency { From = dep, To = job.Name }))
+        ];
+    }
 
-		foreach (var (name, job) in jobs)
-		{
-			if (!running.Contains(name))
-			{
-				entries.Add(new DiffEntry { ServiceName = name, Kind = DiffKind.Added });
-				continue;
-			}
+    // ── Diff ──────────────────────────────────────────────────────────────────
 
-			var remoteHcl = await nomadClient.GetJobHclAsync(name, ct);
-			var localPath = await Generator.WriteHclAsync(job, config, cfg, outputDirectory, ct);
-			var localHcl = await File.ReadAllTextAsync(localPath, ct);
-			var kind = remoteHcl is null || Normalize(remoteHcl) != Normalize(localHcl)
-				? DiffKind.Changed : DiffKind.Unchanged;
+    public async Task<IReadOnlyList<DiffEntry>> DiffAsync(
+        AspireManifest manifest,
+        EnvironmentConfig config,
+        string outputDirectory,
+        CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var jobs = Generator.Generate(manifest, config, cfg).ToDictionary(j => j.Name);
+        var entries = new List<DiffEntry>();
 
-			entries.Add(new DiffEntry
-			{
-				ServiceName = name,
-				Kind = kind,
-				Field = kind == DiffKind.Changed ? "job spec" : null
-			});
-		}
+        using var nomadClient = BuildNomadClient(cfg);
+        HashSet<string> running, managed;
+        try
+        {
+            running = [.. await nomadClient.GetRunningJobNamesAsync(ct: ct)];
+            managed = [.. await nomadClient.GetRunningJobNamesAsync(managedOnly: true, ct)];
+        }
+        catch
+        {
+            // Nomad unreachable — treat every desired service as Added
+            return
+            [
+                .. jobs.Keys
+                    .Select(n => new DiffEntry { ServiceName = n, Kind = DiffKind.Added })
+            ];
+        }
 
-		foreach (var name in running.Except(jobs.Keys))
-		{
-			entries.Add(new DiffEntry { ServiceName = name, Kind = DiffKind.Removed });
-		}
+        foreach (var (name, job) in jobs)
+        {
+            if (!running.Contains(name))
+            {
+                entries.Add(new DiffEntry { ServiceName = name, Kind = DiffKind.Added });
+                continue;
+            }
 
-		return entries;
-	}
+            var localPath = await Generator.WriteHclAsync(job, config, cfg, outputDirectory, ct);
+            var kind = await TryPlanAsync(nomadClient, localPath, ct) is "None"
+                ? DiffKind.Unchanged : DiffKind.Changed;
 
-	// ── Helpers ───────────────────────────────────────────────────────────────
+            entries.Add(new DiffEntry
+            {
+                ServiceName = name,
+                Kind = kind,
+                Field = kind == DiffKind.Changed ? "job spec" : null
+            });
+        }
 
-	private static NomadConsulTargetConfig GetConfig(EnvironmentConfig config)
-	{
-		if (config.TargetConfig.TryGetValue("nomadconsul", out var raw) && raw is JsonElement el)
-		{
-			return el.Deserialize<NomadConsulTargetConfig>(TargetConfigJsonOptions.Default) ?? new NomadConsulTargetConfig();
-		}
+        foreach (var name in managed.Except(jobs.Keys))
+        {
+            entries.Add(new DiffEntry { ServiceName = name, Kind = DiffKind.Removed });
+        }
 
-		return new NomadConsulTargetConfig();
-	}
+        return entries;
+    }
 
-	private NomadClient BuildNomadClient(NomadConsulTargetConfig cfg) => new NomadClient(cfg.NomadAddress, cfg.NomadToken, loggerFactory.CreateLogger<NomadClient>());
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
-	private ConsulClient BuildConsulClient(NomadConsulTargetConfig cfg) => new ConsulClient(cfg.ConsulAddress, cfg.ConsulToken, logger);
+    private static NomadConsulTargetConfig GetConfig(EnvironmentConfig config)
+    {
+        if (config.TargetConfig.TryGetValue("nomadconsul", out var raw) && raw is JsonElement el)
+        {
+            return el.Deserialize<NomadConsulTargetConfig>(TargetConfigJsonOptions.Default) ?? new NomadConsulTargetConfig();
+        }
 
-	private static string Normalize(string hcl) =>
-		string.Concat(hcl.Split('\n').Select(l => l.Trim())).ToLowerInvariant();
+        return new NomadConsulTargetConfig();
+    }
+
+    private NomadClient BuildNomadClient(NomadConsulTargetConfig cfg)
+        => new(cfg.NomadAddress, Secrets.Resolve(cfg.NomadToken, "NOMAD_TOKEN"),
+            loggerFactory.CreateLogger<NomadClient>(), cfg.NomadNamespace,
+            Secrets.Resolve(cfg.RegistryPassword, "DEPLOYIFY_REGISTRY_PASSWORD"));
+
+    private ConsulClient BuildConsulClient(NomadConsulTargetConfig cfg)
+        => new(cfg.ConsulAddress, Secrets.Resolve(cfg.ConsulToken, "CONSUL_HTTP_TOKEN"), logger);
 }

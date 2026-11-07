@@ -18,4 +18,4 @@ var root = new RootCommand("deployify – deploy .NET Aspire AppHost projects to
     DiffCommand.Build(),
 };
 
-return await root.InvokeAsync(args);
+return await root.Parse(args).InvokeAsync();

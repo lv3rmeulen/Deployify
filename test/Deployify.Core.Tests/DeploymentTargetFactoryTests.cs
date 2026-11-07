@@ -1,8 +1,9 @@
+using System;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
 using Deployify.Core.Services;
-using Shouldly;
 using NSubstitute;
+using Shouldly;
 using Xunit;
 
 namespace Deployify.Core.Tests;

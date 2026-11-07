@@ -1,4 +1,10 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using Deployify.Core.Models;
 
 namespace Deployify.Target.Compose;
@@ -15,25 +21,24 @@ namespace Deployify.Target.Compose;
 /// </summary>
 public sealed class ComposeFileGenerator
 {
-    // Track host port allocation to avoid collisions across services
-    private readonly Dictionary<int, string> _allocatedPorts = [];
-    private int _nextHostPort = 8000;
+    private static readonly UTF8Encoding s_utf8NoBom = new(false);
 
     public IReadOnlyList<ComposeService> Generate(
         AspireManifest manifest,
         EnvironmentConfig config,
         ComposeTargetConfig composeConfig)
     {
-        _allocatedPorts.Clear();
-        _nextHostPort = 8000;
-
         var services = new List<ComposeService>();
+        var ports = ServicePorts.Assign(manifest, composeConfig.BasePort);
+
+        // Services share one Compose network and reach each other by service name.
+        var resolver = new PlaceholderResolver(manifest, ports, new EndpointStrategy());
 
         foreach (var (name, resource) in manifest.Resources)
         {
-            if (resource.Type is "value.v0" or "parameter.v0" or "dapr.v0" or "dapr.component.v0")
+            if (!resource.IsDeployable)
             {
-	            continue;
+                continue;
             }
 
             config.ServiceOverrides.TryGetValue(name, out var overrides);
@@ -44,108 +49,92 @@ public sealed class ComposeFileGenerator
                 ImageTag = overrides?.ImageTag ?? config.ImageTag,
                 Replicas = overrides?.Count ?? 1,
                 RestartPolicy = composeConfig.RestartPolicy,
-                IsProjectService = resource.Type.StartsWith("project.v")
+                IsProjectService = resource.Type.StartsWith("project.", StringComparison.Ordinal)
             };
 
-            // Image
-            if (resource.Type.StartsWith("container.v"))
-            {
-	            svc.Image = resource.Image;
-            }
-            else if (resource.Type.StartsWith("project.v"))
-            {
-	            svc.Image = config.ContainerRegistry is not null
-		            ? $"{config.ContainerRegistry.TrimEnd('/')}/{name}"
-		            : name;
-            }
+            svc.Image = svc.IsProjectService
+                ? config.ContainerRegistry is not null
+                    ? $"{config.ContainerRegistry.TrimEnd('/')}/{name}"
+                    : name
+                : resource.Image;
 
-            // Env vars
-            if (resource.Env is not null)
+            foreach (var (k, v) in resolver.ResolveAll(resource.Env))
             {
-	            foreach (var (k, v) in resource.Env)
-	            {
-		            svc.Env[k] = v;
-	            }
+                svc.Env[k] = v;
             }
 
             if (overrides?.Env is not null)
             {
-	            foreach (var (k, v) in overrides.Env)
-	            {
-		            svc.Env[k] = v;
-	            }
+                foreach (var (k, v) in overrides.Env)
+                {
+                    svc.Env[k] = v;
+                }
             }
 
-            // Ports — allocate host ports sequentially
+            // Ports — each binding has a unique port, published on the same host port.
             if (resource.Bindings is not null)
             {
-                foreach (var (_, binding) in resource.Bindings)
+                foreach (var (label, binding) in resource.Bindings)
                 {
-                    var containerPort = binding.ContainerPort ?? 80;
-                    var hostPort = AllocateHostPort(containerPort, name);
+                    var port = ports[(name, label)];
                     svc.Ports.Add(new ComposePort
                     {
-                        HostPort = hostPort,
-                        ContainerPort = containerPort,
-                        Protocol = binding.Protocol?.ToLowerInvariant() == "udp" ? "udp" : "tcp"
+                        HostPort = port,
+                        ContainerPort = port,
+                        Protocol = binding.Protocol?.ToLowerInvariant() == "udp" ? "udp" : "tcp",
+                        IsHttp = binding.IsHttp
                     });
                 }
             }
 
-            // Dependencies
-            svc.DependsOn = resource.References?.Select(r => r.Name).ToList() ?? [];
+            svc.DependsOn = resource.References?.Select(r => r.Name)
+                .Where(d => manifest.Resources.TryGetValue(d, out var dep) && dep.IsDeployable)
+                .ToList() ?? [];
 
-            // Dapr
             if (resource.HasDaprSidecar)
             {
                 svc.DaprEnabled = true;
                 svc.DaprAppId = resource.DaprAppId ?? name;
-                svc.DaprAppPort = resource.DaprAppPort;
+                svc.DaprAppPort = resource.HttpBinding is { } http ? ports[(name, http.Key)] : resource.DaprAppPort;
                 if (resource.Annotations!.TryGetValue(DaprConstants.HttpPortAnnotation, out var hp)
                     && int.TryParse(hp, out var httpP))
                 {
-	                svc.DaprHttpPort = httpP;
+                    svc.DaprHttpPort = httpP;
                 }
 
                 if (resource.Annotations!.TryGetValue(DaprConstants.GrpcPortAnnotation, out var gp)
                     && int.TryParse(gp, out var grpcP))
                 {
-	                svc.DaprGrpcPort = grpcP;
+                    svc.DaprGrpcPort = grpcP;
                 }
 
                 svc.DaprVersion = config.Dapr.DaprVersion;
             }
 
-            // Named volumes from config
             if (composeConfig.Volumes.Count > 0)
             {
-	            svc.NamedVolumes.AddRange(composeConfig.Volumes.Keys.Select(v => $"{v}:/data/{v}"));
+                svc.NamedVolumes.AddRange(composeConfig.Volumes.Keys.Select(v => $"{v}:/data/{v}"));
             }
 
-            // Bind mounts from config
             if (composeConfig.BindMounts.TryGetValue(name, out var mounts))
             {
-	            svc.BindMounts.AddRange(mounts);
+                svc.BindMounts.AddRange(mounts);
             }
 
-            // Profiles
             if (composeConfig.GenerateProfiles)
             {
-                if (svc.IsProjectService)
-                {
-	                svc.Profiles = ["prod"];
-                }
-                else
-                {
-	                svc.Profiles = ["dev", "prod"];
-                }
+                svc.Profiles = svc.IsProjectService ? ["prod"] : ["dev", "prod"];
             }
 
             services.Add(svc);
         }
 
+        Unresolved = [.. resolver.Unresolved];
         return services;
     }
+
+    /// <summary>Placeholders from the last <see cref="Generate"/> call that could not be resolved.</summary>
+    public IReadOnlyList<string> Unresolved { get; private set; } = [];
 
     public async Task<string> WriteServiceFileAsync(
         ComposeService svc,
@@ -158,7 +147,7 @@ public sealed class ComposeFileGenerator
 
         var yaml = RenderServiceFile(svc, composeConfig);
         var path = Path.Combine(dir, "compose.yml");
-        await File.WriteAllTextAsync(path, yaml, Encoding.UTF8, ct);
+        await File.WriteAllTextAsync(path, yaml, s_utf8NoBom, ct);
         svc.ComposeFilePath = path;
 
         if (composeConfig.GenerateEnvFile && svc.Env.Count > 0)
@@ -179,7 +168,7 @@ public sealed class ComposeFileGenerator
     {
         var yaml = RenderMergedFile(services, composeConfig);
         var path = Path.Combine(outputDirectory, "compose.yml");
-        await File.WriteAllTextAsync(path, yaml, Encoding.UTF8, ct);
+        await File.WriteAllTextAsync(path, yaml, s_utf8NoBom, ct);
         return path;
     }
 
@@ -192,7 +181,11 @@ public sealed class ComposeFileGenerator
         sb.AppendLine("# Do not edit manually. Re-run 'deployify generate' to update.");
         sb.AppendLine();
         sb.AppendLine("services:");
-        AppendService(sb, svc, cfg, indent: 2);
+        AppendService(sb, svc, cfg, indent: 2, envFileRef: "./.env");
+        if (svc.DaprEnabled)
+        {
+            AppendDaprSidecar(sb, svc, cfg, indent: 2);
+        }
 
         // Declare any named volumes used by this service
         var usedVolumes = svc.NamedVolumes
@@ -210,7 +203,7 @@ public sealed class ComposeFileGenerator
                 sb.AppendLine($"  {vol}:");
                 if (driver is not null)
                 {
-	                sb.AppendLine($"    driver: {driver}");
+                    sb.AppendLine($"    driver: {driver}");
                 }
             }
         }
@@ -234,10 +227,10 @@ public sealed class ComposeFileGenerator
 
         foreach (var svc in services)
         {
-            AppendService(sb, svc, cfg, indent: 2);
+            AppendService(sb, svc, cfg, indent: 2, envFileRef: $"./{svc.Name}/.env");
             if (svc.DaprEnabled)
             {
-	            AppendDaprSidecar(sb, svc, cfg, indent: 2);
+                AppendDaprSidecar(sb, svc, cfg, indent: 2);
             }
         }
 
@@ -251,7 +244,7 @@ public sealed class ComposeFileGenerator
                 sb.AppendLine($"  {vol}:");
                 if (driver is not null)
                 {
-	                sb.AppendLine($"    driver: {driver}");
+                    sb.AppendLine($"    driver: {driver}");
                 }
             }
         }
@@ -265,14 +258,14 @@ public sealed class ComposeFileGenerator
     }
 
     private static void AppendService(
-        StringBuilder sb, ComposeService svc, ComposeTargetConfig cfg, int indent)
+        StringBuilder sb, ComposeService svc, ComposeTargetConfig cfg, int indent, string envFileRef)
     {
         var pad = new string(' ', indent);
         var pad2 = new string(' ', indent + 2);
         var pad3 = new string(' ', indent + 4);
 
         sb.AppendLine($"{pad}{svc.Name}:");
-        sb.AppendLine($"{pad2}image: {svc.Image}:{svc.ImageTag}");
+        sb.AppendLine($"{pad2}image: {QuoteYaml(ImageReference.Format(svc.Image!, svc.ImageTag))}");
         sb.AppendLine($"{pad2}restart: {svc.RestartPolicy}");
 
         // Profiles
@@ -281,7 +274,7 @@ public sealed class ComposeFileGenerator
             sb.AppendLine($"{pad2}profiles:");
             foreach (var p in svc.Profiles)
             {
-	            sb.AppendLine($"{pad3}- {p}");
+                sb.AppendLine($"{pad3}- {p}");
             }
         }
 
@@ -291,7 +284,7 @@ public sealed class ComposeFileGenerator
             sb.AppendLine($"{pad2}ports:");
             foreach (var p in svc.Ports)
             {
-	            sb.AppendLine($"{pad3}- \"{p.HostPort}:{p.ContainerPort}/{p.Protocol}\"");
+                sb.AppendLine($"{pad3}- \"{p.HostPort}:{p.ContainerPort}/{p.Protocol}\"");
             }
         }
 
@@ -301,14 +294,14 @@ public sealed class ComposeFileGenerator
             if (cfg.GenerateEnvFile)
             {
                 sb.AppendLine($"{pad2}env_file:");
-                sb.AppendLine($"{pad3}- ./{svc.Name}/.env");
+                sb.AppendLine($"{pad3}- {envFileRef}");
             }
             else
             {
                 sb.AppendLine($"{pad2}environment:");
                 foreach (var (k, v) in svc.Env)
                 {
-	                sb.AppendLine($"{pad3}{k}: {QuoteYaml(v)}");
+                    sb.AppendLine($"{pad3}{QuoteYaml(k)}: {QuoteYaml(EscapeInterpolation(v))}");
                 }
             }
         }
@@ -319,12 +312,12 @@ public sealed class ComposeFileGenerator
             sb.AppendLine($"{pad2}volumes:");
             foreach (var v in svc.NamedVolumes)
             {
-	            sb.AppendLine($"{pad3}- {v}");
+                sb.AppendLine($"{pad3}- {v}");
             }
 
             foreach (var m in svc.BindMounts)
             {
-	            sb.AppendLine($"{pad3}- {m}");
+                sb.AppendLine($"{pad3}- {m}");
             }
         }
 
@@ -332,37 +325,16 @@ public sealed class ComposeFileGenerator
         sb.AppendLine($"{pad2}networks:");
         sb.AppendLine($"{pad3}- {cfg.ProjectName}");
 
-        // Dependencies
+        // Dependencies — wait for the container to start. (A service_healthy condition would
+        // need an in-container healthcheck command, which most images can't run.)
         if (svc.DependsOn.Count > 0)
         {
             sb.AppendLine($"{pad2}depends_on:");
             foreach (var dep in svc.DependsOn)
             {
                 sb.AppendLine($"{pad3}{dep}:");
-                sb.AppendLine($"{new string(' ', indent + 6)}condition: service_healthy");
+                sb.AppendLine($"{new string(' ', indent + 6)}condition: service_started");
             }
-        }
-
-        // Health check — HTTP services get an httpGet-style check, others a TCP check
-        var httpPort = svc.Ports.FirstOrDefault(p => p.IsHttp);
-        if (httpPort is not null)
-        {
-            sb.AppendLine($"{pad2}healthcheck:");
-            sb.AppendLine($"{pad3}test: [\"CMD\", \"wget\", \"-qO-\", \"http://localhost:{httpPort.ContainerPort}/health\"]");
-            sb.AppendLine($"{pad3}interval: 15s");
-            sb.AppendLine($"{pad3}timeout: 5s");
-            sb.AppendLine($"{pad3}retries: 3");
-            sb.AppendLine($"{pad3}start_period: 10s");
-        }
-        else if (svc.Ports.Count > 0)
-        {
-            var firstPort = svc.Ports[0];
-            sb.AppendLine($"{pad2}healthcheck:");
-            sb.AppendLine($"{pad3}test: [\"CMD\", \"nc\", \"-z\", \"localhost\", \"{firstPort.ContainerPort}\"]");
-            sb.AppendLine($"{pad3}interval: 15s");
-            sb.AppendLine($"{pad3}timeout: 5s");
-            sb.AppendLine($"{pad3}retries: 3");
-            sb.AppendLine($"{pad3}start_period: 10s");
         }
 
         sb.AppendLine();
@@ -377,41 +349,37 @@ public sealed class ComposeFileGenerator
         sb.AppendLine();
         foreach (var (k, v) in svc.Env)
         {
-	        sb.AppendLine($"{k}={EscapeEnvValue(v)}");
+            sb.AppendLine($"{k}={EscapeEnvValue(v)}");
         }
 
-        await File.WriteAllTextAsync(path, sb.ToString(), Encoding.UTF8, ct);
+        await File.WriteAllTextAsync(path, sb.ToString(), s_utf8NoBom, ct);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private int AllocateHostPort(int containerPort, string serviceName)
+    /// <summary>
+    /// Always a double-quoted YAML scalar, so values like <c>true</c>, <c>8080</c> or an
+    /// empty string stay strings. A JSON string literal is valid YAML.
+    /// </summary>
+    private static string QuoteYaml(string value) => System.Text.Json.JsonSerializer.Serialize(value);
+
+    /// <summary>Compose interpolates <c>$</c> in YAML values; <c>$$</c> is a literal dollar.</summary>
+    private static string EscapeInterpolation(string value) => value.Replace("$", "$$");
+
+    /// <summary>
+    /// Formats a .env value. Single quotes are literal in Compose (no interpolation, no
+    /// escapes); values that contain a single quote use double quotes with escaping.
+    /// </summary>
+    private static string EscapeEnvValue(string value)
     {
-        // Prefer the container port itself if it's free and above 1024
-        if (containerPort > 1024 && _allocatedPorts.TryAdd(containerPort, serviceName))
+        if (value.Length > 0 && !value.Contains('\'') && !value.Contains('\n'))
         {
-	        return containerPort;
+            return $"'{value}'";
         }
 
-        // Otherwise find the next free port above 8000
-        while (_allocatedPorts.ContainsKey(_nextHostPort))
-        {
-	        _nextHostPort++;
-        }
-
-        _allocatedPorts[_nextHostPort] = serviceName;
-        return _nextHostPort++;
+        return "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("$", "$$")
+            .Replace("\n", "\\n") + "\"";
     }
-
-    private static string QuoteYaml(string value) =>
-        value.Contains(':') || value.Contains('#') || value.StartsWith('{')
-            ? $"\"{value.Replace("\"", "\\\"")}\""
-            : value;
-
-    private static string EscapeEnvValue(string value) =>
-        value.Contains(' ') || value.Contains('"') || value.Contains('\'')
-            ? $"\"{value.Replace("\"", "\\\"")}\""
-            : value;
 
     private static void AppendDaprSidecar(
         StringBuilder sb, ComposeService svc, ComposeTargetConfig cfg, int indent)
@@ -446,7 +414,7 @@ public sealed class ComposeFileGenerator
             sb.AppendLine($"{pad2}profiles:");
             sb.AppendLine($"{pad4}- prod");
         }
-        
+
         sb.AppendLine();
     }
 }

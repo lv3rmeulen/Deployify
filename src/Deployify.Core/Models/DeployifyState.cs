@@ -1,4 +1,5 @@
-using System.Text.Json;
+using System.Collections.Generic;
+using Deployify.Core.Interfaces;
 
 namespace Deployify.Core.Models;
 
@@ -48,7 +49,7 @@ public sealed class EnvironmentConfig
     public ContainerRuntime ContainerRuntime { get; set; } = ContainerRuntime.Docker;
 
     /// <summary>
-    /// When true, a deployment artefact for the Aspire Dashboard container is generated
+    /// When true, a deployment artifact for the Aspire Dashboard container is generated
     /// alongside the application services. Defaults to false.
     /// </summary>
     public bool DeployDashboard { get; set; } = false;
@@ -57,7 +58,7 @@ public sealed class EnvironmentConfig
     /// Settings for the injected Aspire Dashboard container.
     /// Only used when <see cref="DeployDashboard"/> is true.
     /// </summary>
-    public DashboardConfig Dashboard { get; set; } = new DashboardConfig();
+    public DashboardConfig Dashboard { get; set; } = new();
 
     /// <summary>
     /// Absolute path to the Aspire AppHost project directory.
@@ -88,7 +89,7 @@ public sealed class EnvironmentConfig
     /// Dapr sidecar configuration. Only used when <see cref="DeployDapr"/> is true
     /// or when dapr annotations are present on a resource.
     /// </summary>
-    public DaprConfig Dapr { get; set; } = new DaprConfig();
+    public DaprConfig Dapr { get; set; } = new();
 
     /// <summary>
     /// Target-specific configuration bag.
@@ -123,10 +124,10 @@ public sealed class DashboardConfig
     /// </summary>
     public string? BrowserToken { get; set; }
 
-    /// <summary>CPU reservation passed to the target (e.g. "100m" for k8s, 100 for Nomad MHz).</summary>
+    /// <summary>CPU reservation passed to the target (e.g. "100m" for Kubernetes, 100 for Nomad MHz).</summary>
     public string Cpu { get; set; } = "100m";
 
-    /// <summary>Memory reservation passed to the target (e.g. "128Mi" for k8s, 128 for Nomad MB).</summary>
+    /// <summary>Memory reservation passed to the target (e.g. "128Mi" for Kubernetes, 128 for Nomad MB).</summary>
     public string Memory { get; set; } = "128Mi";
 }
 
@@ -182,7 +183,9 @@ public static class DaprConstants
     public const string GrpcPortAnnotation = "dapr/grpc-port";
 }
 
-/// Targets use these to recognise and handle the dashboard specially if needed.
+/// <summary>
+/// Constants for the injected Aspire Dashboard resource.
+/// Targets use these to recognize and handle the dashboard specially if needed.
 /// </summary>
 public static class AspireDashboard
 {
@@ -216,7 +219,7 @@ public enum ContainerRuntime
     Docker,
 
     /// <summary>
-    /// Use Podman. Passes <c>-p:ContainerRuntimeIdentifier=podman</c> to dotnet publish,
+    /// Use Podman. Passes <c>-p:LocalRegistry=podman</c> to dotnet publish,
     /// and uses <c>podman</c> for any direct container CLI calls (network, volume).
     /// Requires .NET 8+ SDK and Podman 4+ on PATH.
     /// </summary>
@@ -230,7 +233,7 @@ public enum ContainerRuntime
 /// </summary>
 public static class TargetConfigJsonOptions
 {
-    public static readonly JsonSerializerOptions Default = new JsonSerializerOptions
+    public static readonly System.Text.Json.JsonSerializerOptions Default = new()
     {
         PropertyNameCaseInsensitive = true,
         Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }

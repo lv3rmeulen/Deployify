@@ -1,4 +1,10 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
 using Microsoft.Extensions.Logging;
@@ -10,207 +16,245 @@ namespace Deployify.Target.Nomad;
 /// Config is read from environmentConfig.TargetConfig["nomad"].
 /// </summary>
 public sealed class NomadDeploymentTarget(
-	JobGenerator jobGenerator,
-	IPublisher publisher,
-	ILogger<NomadDeploymentTarget> logger,
-	ILoggerFactory loggerFactory) : IDeploymentTarget
+    JobGenerator jobGenerator,
+    IPublisher publisher,
+    ILogger<NomadDeploymentTarget> logger,
+    ILoggerFactory loggerFactory) : IDeploymentTarget
 {
-	public DeploymentTargetType TargetType => DeploymentTargetType.Nomad;
-	public string DisplayName => "HashiCorp Nomad";
+    public DeploymentTargetType TargetType => DeploymentTargetType.Nomad;
+    public string DisplayName => "HashiCorp Nomad";
 
-	public async Task<(bool Ok, string? Error)> PingAsync(EnvironmentConfig config, CancellationToken ct = default)
-	{
-		var cfg = GetConfig(config);
-		using var client = BuildClient(cfg);
-		var ok = await client.PingAsync(ct);
-		return ok ? (true, null) : (false, $"Cannot reach Nomad at {cfg.Address}. Is it running?");
-	}
+    public async Task<(bool Ok, string? Error)> PingAsync(EnvironmentConfig config, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        using var client = BuildClient(cfg);
+        var ok = await client.PingAsync(ct);
+        return ok ? (true, null) : (false, $"Cannot reach Nomad at {cfg.Address}. Is it running?");
+    }
 
-	public async Task<IReadOnlyList<string>> GenerateAsync(
-		AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
-	{
-		var jobs = jobGenerator.Generate(manifest, config);
-		var paths = new List<string>();
-		foreach (var job in jobs)
-		{
-			paths.Add(await jobGenerator.WriteHclAsync(job, config, outputDirectory, ct));
-		}
+    public async Task<IReadOnlyList<string>> GenerateAsync(
+        AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
+    {
+        var jobs = jobGenerator.Generate(manifest, config);
+        var paths = new List<string>();
+        foreach (var job in jobs)
+        {
+            paths.Add(await jobGenerator.WriteHclAsync(job, config, outputDirectory, ct));
+        }
 
-		return paths;
-	}
+        return paths;
+    }
 
-	public async Task<IReadOnlyList<ValidationResult>> ValidateAsync(
-		AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
-	{
-		var cfg = GetConfig(config);
-		var jobs = jobGenerator.Generate(manifest, config);
-		var results = new List<ValidationResult>();
-		using var client = BuildClient(cfg);
-		foreach (var job in jobs)
-		{
-			var hclPath = await jobGenerator.WriteHclAsync(job, config, outputDirectory, ct);
-			var errors = await client.ValidateJobAsync(hclPath, ct);
-			results.Add(new ValidationResult { ArtefactName = hclPath, Errors = errors });
-		}
+    public async Task<IReadOnlyList<ValidationResult>> ValidateAsync(
+        AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var jobs = jobGenerator.Generate(manifest, config);
+        var results = new List<ValidationResult>();
+        using var client = BuildClient(cfg);
+        foreach (var job in jobs)
+        {
+            var hclPath = await jobGenerator.WriteHclAsync(job, config, outputDirectory, ct);
+            var errors = await client.ValidateJobAsync(hclPath, ct);
+            results.Add(new ValidationResult { ArtifactName = hclPath, Errors = errors });
+        }
 
-		return results;
-	}
+        return results;
+    }
 
-	public async Task<PlanResult> PlanAsync(
-		AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
-	{
-		// Generate artefacts to disk first — apply will read these rather than regenerate
-		var jobs = jobGenerator.Generate(manifest, config);
-		foreach (var job in jobs)
-		{
-			await jobGenerator.WriteHclAsync(job, config, outputDirectory, ct);
-		}
+    public async Task<PlanResult> PlanAsync(
+        AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
+    {
+        // Generate artifacts to disk first — apply will read these rather than regenerate
+        var jobs = jobGenerator.Generate(manifest, config);
+        var paths = new Dictionary<string, string>();
+        foreach (var job in jobs)
+        {
+            paths[job.Name] = await jobGenerator.WriteHclAsync(job, config, outputDirectory, ct);
+        }
 
-		var desired = jobs.Select(j => j.Name).ToHashSet();
-		var cfg = GetConfig(config);
-		using var client = BuildClient(cfg);
+        var cfg = GetConfig(config);
+        using var client = BuildClient(cfg);
 
-		HashSet<string> running;
-		try { running = (await client.GetRunningJobNamesAsync(ct)).ToHashSet(); }
-		catch (Exception ex)
-		{
-			logger.LogWarning("Could not reach Nomad at {Address} — assuming all services are new. ({Message})", cfg.Address, ex.Message);
-			running = [];
-		}
+        HashSet<string> running, managed;
+        try
+        {
+            running = [.. await client.GetRunningJobNamesAsync(ct: ct)];
+            managed = [.. await client.GetRunningJobNamesAsync(managedOnly: true, ct)];
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning("Could not reach Nomad at {Address} — assuming all services are new. ({Message})", cfg.Address, ex.Message);
+            running = [];
+            managed = [];
+        }
 
-		return new PlanResult
-		{
-			ToCreate = desired.Except(running).Select(n => (object)new NomadJob { Name = n }).ToList(),
-			ToUpdate = desired.Intersect(running).Select(n => (object)new NomadJob { Name = n }).ToList(),
-			ToDelete = running.Except(desired).ToList(),
-			Unchanged = running.Intersect(desired).Where(n => !desired.Except(running).Contains(n)).ToList()
-		};
-	}
+        var result = new PlanResult();
+        foreach (var job in jobs)
+        {
+            if (!running.Contains(job.Name))
+            {
+                result.ToCreate.Add(job.Name);
+                continue;
+            }
 
-	public async Task<IReadOnlyList<DeploymentResult>> ApplyAsync(
-		AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
-	{
-		var cfg = GetConfig(config);
-		var jobs = jobGenerator.Generate(manifest, config);
-		var results = new List<DeploymentResult>();
-		using var client = BuildClient(cfg);
+            var diffType = await TryPlanAsync(client, paths[job.Name], ct);
+            if (diffType is "None")
+            {
+                result.Unchanged.Add(job.Name);
+            }
+            else
+            {
+                result.ToUpdate.Add(job.Name);
+            }
+        }
 
-		foreach (var job in jobs)
-		{
-			// Read the file plan already wrote — do not regenerate
-			var hclPath = Path.Combine(outputDirectory, $"{job.Name}.job.hcl");
-			if (!File.Exists(hclPath))
-			{
-				results.Add(new DeploymentResult
-				{
-					ServiceName = job.Name,
-					Success = false,
-					Error = $"Artefact not found: {hclPath}. Run 'deployify plan' first."
-				});
-				continue;
-			}
+        // Only jobs Deployify created are candidates for deletion.
+        foreach (var name in managed.Except(jobs.Select(j => j.Name)))
+        {
+            result.ToDelete.Add(name);
+        }
 
-			try
-			{
-				var evalId = await client.SubmitJobAsync(hclPath, ct);
-				results.Add(new DeploymentResult { ServiceName = job.Name, DeploymentId = evalId, Success = true });
-			}
-			catch (Exception ex)
-			{
-				logger.LogError(ex, "Failed to submit job '{Name}'.", job.Name);
-				results.Add(new DeploymentResult { ServiceName = job.Name, Success = false, Error = ex.Message });
-			}
-		}
+        return result;
+    }
 
-		return results;
-	}
+    /// <summary>Returns Nomad's diff type, or "Edited" when the plan call itself fails.</summary>
+    private async Task<string> TryPlanAsync(NomadClient client, string hclPath, CancellationToken ct)
+    {
+        try
+        {
+            return await client.PlanJobAsync(hclPath, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning("Could not plan {Path}: {Message}", Path.GetFileName(hclPath), ex.Message);
+            return "Edited";
+        }
+    }
 
-	public async Task PublishAsync(
-		AspireManifest manifest, EnvironmentConfig config, string appHostDirectory, CancellationToken ct = default) =>
-		await publisher.PublishAsync(manifest, config, appHostDirectory, ct);
+    public async Task<IReadOnlyList<DeploymentResult>> ApplyAsync(
+        AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var jobs = jobGenerator.Generate(manifest, config);
+        var results = new List<DeploymentResult>();
+        using var client = BuildClient(cfg);
 
-	public IReadOnlyList<ServiceExplanation> Explain(AspireManifest manifest, EnvironmentConfig config)
-	{
-		var cfg = GetConfig(config);
-		var jobs = jobGenerator.Generate(manifest, config);
-		return jobs.Select(j => new ServiceExplanation
-		{
-			Name = j.Name,
-			Image = j.Image,
-			ImageTag = j.ImageTag ?? config.ImageTag,
-			Count = j.Count,
-			Env = j.Env,
-			Ports = j.Ports.Select(p => p.To.HasValue ? $"{p.Label}:{p.To}" : p.Label).ToList(),
-			Dependencies = j.Dependencies,
-			AdditionalInfo = new Dictionary<string, string>
-			{
-				["namespace"] = cfg.Namespace,
-				["datacenters"] = string.Join(", ", cfg.Datacenters),
-				["mode"] = cfg.DeploymentMode.ToString()
-			}
-		}).ToList();
-	}
+        foreach (var job in jobs)
+        {
+            // Read the file plan already wrote — do not regenerate
+            var hclPath = Path.Combine(outputDirectory, $"{job.Name}.job.hcl");
+            if (!File.Exists(hclPath))
+            {
+                results.Add(new DeploymentResult
+                {
+                    ServiceName = job.Name, Success = false,
+                    Error = $"Artifact not found: {hclPath}. Run 'deployify plan' first."
+                });
+                continue;
+            }
 
-	public IReadOnlyList<ServiceDependency> GetDependencies(AspireManifest manifest, EnvironmentConfig config) =>
-		jobGenerator.Generate(manifest, config)
-			.SelectMany(j => j.Dependencies.Select(dep => new ServiceDependency { From = dep, To = j.Name }))
-			.ToList();
+            try
+            {
+                var evalId = await client.SubmitJobAsync(hclPath, ct);
+                results.Add(new DeploymentResult { ServiceName = job.Name, DeploymentId = evalId, Success = true });
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to submit job '{Name}'.", job.Name);
+                results.Add(new DeploymentResult { ServiceName = job.Name, Success = false, Error = ex.Message });
+            }
+        }
 
-	public async Task<IReadOnlyList<DiffEntry>> DiffAsync(
-		AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
-	{
-		var cfg = GetConfig(config);
-		var jobs = jobGenerator.Generate(manifest, config).ToDictionary(j => j.Name);
-		var entries = new List<DiffEntry>();
-		using var client = BuildClient(cfg);
-		HashSet<string> running;
-		try
-		{
-			running = (await client.GetRunningJobNamesAsync(ct)).ToHashSet();
-		}
-		catch
-		{
-			return jobs.Keys
-				.Select(n => new DiffEntry { ServiceName = n, Kind = DiffKind.Added })
-				.ToList();
-		}
+        return results;
+    }
 
-		foreach (var (name, job) in jobs)
-		{
-			if (!running.Contains(name))
-			{
-				entries.Add(new DiffEntry { ServiceName = name, Kind = DiffKind.Added });
-				continue;
-			}
+    public async Task PublishAsync(
+        AspireManifest manifest, EnvironmentConfig config, string appHostDirectory, CancellationToken ct = default)
+        => await publisher.PublishAsync(manifest, config, appHostDirectory, ct);
 
-			var remoteHcl = await client.GetJobHclAsync(name, ct);
-			var localPath = await jobGenerator.WriteHclAsync(job, config, outputDirectory, ct);
-			var localHcl = await File.ReadAllTextAsync(localPath, ct);
-			var kind = (remoteHcl is null || Normalize(remoteHcl) != Normalize(localHcl))
-				? DiffKind.Changed : DiffKind.Unchanged;
-			entries.Add(new DiffEntry { ServiceName = name, Kind = kind, Field = kind == DiffKind.Changed ? "job spec" : null });
-		}
+    public IReadOnlyList<ServiceExplanation> Explain(AspireManifest manifest, EnvironmentConfig config)
+    {
+        var cfg = GetConfig(config);
+        var jobs = jobGenerator.Generate(manifest, config);
+        return
+        [
+            .. jobs.Select(j => new ServiceExplanation
+            {
+                Name = j.Name,
+                Image = j.Image,
+                ImageTag = j.ImageTag ?? config.ImageTag,
+                Count = j.Count,
+                Env = j.Env,
+                Ports = [.. j.Ports.Select(p => p.To.HasValue ? $"{p.Label}:{p.To}" : p.Label)],
+                Dependencies = j.Dependencies,
+                AdditionalInfo = new Dictionary<string, string> { ["namespace"] = cfg.Namespace, ["datacenters"] = string.Join(", ", cfg.Datacenters), ["mode"] = cfg.DeploymentMode.ToString() }
+            })
+        ];
+    }
 
-		foreach (var name in running.Except(jobs.Keys))
-		{
-			entries.Add(new DiffEntry { ServiceName = name, Kind = DiffKind.Removed });
-		}
+    public IReadOnlyList<ServiceDependency> GetDependencies(AspireManifest manifest, EnvironmentConfig config)
+        =>
+        [
+            .. jobGenerator.Generate(manifest, config)
+                .SelectMany(j => j.Dependencies.Select(dep => new ServiceDependency { From = dep, To = j.Name }))
+        ];
 
-		return entries;
-	}
+    public async Task<IReadOnlyList<DiffEntry>> DiffAsync(
+        AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var jobs = jobGenerator.Generate(manifest, config).ToDictionary(j => j.Name);
+        var entries = new List<DiffEntry>();
+        using var client = BuildClient(cfg);
+        HashSet<string> running, managed;
+        try
+        {
+            running = [.. await client.GetRunningJobNamesAsync(ct: ct)];
+            managed = [.. await client.GetRunningJobNamesAsync(managedOnly: true, ct)];
+        }
+        catch
+        {
+            return
+            [
+                .. jobs.Keys
+                    .Select(n => new DiffEntry { ServiceName = n, Kind = DiffKind.Added })
+            ];
+        }
 
-	private static NomadTargetConfig GetConfig(EnvironmentConfig config)
-	{
-		if (config.TargetConfig.TryGetValue("nomad", out var raw) && raw is JsonElement el)
-		{
-			return el.Deserialize<NomadTargetConfig>(TargetConfigJsonOptions.Default) ?? new NomadTargetConfig();
-		}
+        foreach (var (name, job) in jobs)
+        {
+            if (!running.Contains(name))
+            {
+                entries.Add(new DiffEntry { ServiceName = name, Kind = DiffKind.Added });
+                continue;
+            }
 
-		return new NomadTargetConfig();
-	}
+            var localPath = await jobGenerator.WriteHclAsync(job, config, outputDirectory, ct);
+            var kind = await TryPlanAsync(client, localPath, ct) is "None" ? DiffKind.Unchanged : DiffKind.Changed;
+            entries.Add(new DiffEntry { ServiceName = name, Kind = kind, Field = kind == DiffKind.Changed ? "job spec" : null });
+        }
 
-	private NomadClient BuildClient(NomadTargetConfig cfg) => new NomadClient(cfg.Address, cfg.Token, loggerFactory.CreateLogger<NomadClient>());
+        foreach (var name in managed.Except(jobs.Keys))
+        {
+            entries.Add(new DiffEntry { ServiceName = name, Kind = DiffKind.Removed });
+        }
 
-	private static string Normalize(string hcl) =>
-		string.Concat(hcl.Split('\n').Select(l => l.Trim())).ToLowerInvariant();
+        return entries;
+    }
+
+    private static NomadTargetConfig GetConfig(EnvironmentConfig config)
+    {
+        if (config.TargetConfig.TryGetValue("nomad", out var raw) && raw is JsonElement el)
+        {
+            return el.Deserialize<NomadTargetConfig>(TargetConfigJsonOptions.Default) ?? new NomadTargetConfig();
+        }
+
+        return new NomadTargetConfig();
+    }
+
+    private NomadClient BuildClient(NomadTargetConfig cfg)
+        => new(cfg.Address, Secrets.Resolve(cfg.Token, "NOMAD_TOKEN"),
+            loggerFactory.CreateLogger<NomadClient>(), cfg.Namespace,
+            Secrets.Resolve(cfg.RegistryPassword, "DEPLOYIFY_REGISTRY_PASSWORD"));
 }

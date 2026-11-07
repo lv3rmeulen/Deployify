@@ -1,8 +1,11 @@
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
-using Shouldly;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
+using Shouldly;
 using Xunit;
 
 namespace Deployify.Target.AzureContainerApps.Tests;
@@ -11,7 +14,8 @@ namespace Deployify.Target.AzureContainerApps.Tests;
 
 public sealed class AcaCliClientValidationTests
 {
-    private AcaCliClient Client(string rg = "test-rg") => new(new AcaTargetConfig { ResourceGroup = rg, Location = "eastus" }, NullLogger.Instance);
+    private AcaCliClient Client(string rg = "test-rg")
+        => new(new AcaTargetConfig { ResourceGroup = rg, Location = "eastus" }, NullLogger.Instance);
 
     [Fact]
     public async Task ValidateAppSpec_ReturnsNoErrors_ForValidSpec()
@@ -21,9 +25,9 @@ public sealed class AcaCliClientValidationTests
         var config = AcaFixtures.AcaConfig();
         var acaCfg = new AcaTargetConfig { Location = "eastus", SubscriptionId = "sub-123", EnvironmentName = "env" };
         var apps = generator.Generate(AcaFixtures.SingleService("api"), config, acaCfg);
-        var path = await generator.WriteAppSpecAsync(apps[0], config, acaCfg, dir.Path);
+        var path = await generator.WriteAppSpecAsync(apps[0], config, acaCfg, dir.Path, TestContext.Current.CancellationToken);
 
-        var errors = await Client().ValidateAppSpecAsync(path);
+        var errors = await Client().ValidateAppSpecAsync(path, TestContext.Current.CancellationToken);
 
         errors.ShouldBeEmpty();
     }
@@ -33,9 +37,9 @@ public sealed class AcaCliClientValidationTests
     {
         using var dir = new AcaFixtures.TempDir();
         var path = Path.Combine(dir.Path, "bad.containerapp.json");
-        await File.WriteAllTextAsync(path, """{"location":"eastus","type":"Microsoft.App/containerApps","properties":{"environmentId":"x","template":{"containers":[]}}}""");
+        await File.WriteAllTextAsync(path, """{"location":"eastus","type":"Microsoft.App/containerApps","properties":{"environmentId":"x","template":{"containers":[]}}}""", TestContext.Current.CancellationToken);
 
-        var errors = await Client().ValidateAppSpecAsync(path);
+        var errors = await Client().ValidateAppSpecAsync(path, TestContext.Current.CancellationToken);
 
         errors.ShouldContain(e => e.Contains("name"));
     }
@@ -45,9 +49,9 @@ public sealed class AcaCliClientValidationTests
     {
         using var dir = new AcaFixtures.TempDir();
         var path = Path.Combine(dir.Path, "bad.containerapp.json");
-        await File.WriteAllTextAsync(path, """{"name":"api","properties":{"environmentId":"x","template":{"containers":[]}}}""");
+        await File.WriteAllTextAsync(path, """{"name":"api","properties":{"environmentId":"x","template":{"containers":[]}}}""", TestContext.Current.CancellationToken);
 
-        var errors = await Client().ValidateAppSpecAsync(path);
+        var errors = await Client().ValidateAppSpecAsync(path, TestContext.Current.CancellationToken);
 
         errors.ShouldContain(e => e.Contains("location"));
     }
@@ -57,9 +61,9 @@ public sealed class AcaCliClientValidationTests
     {
         using var dir = new AcaFixtures.TempDir();
         var path = Path.Combine(dir.Path, "bad.containerapp.json");
-        await File.WriteAllTextAsync(path, """{"name":"api","location":"eastus"}""");
+        await File.WriteAllTextAsync(path, """{"name":"api","location":"eastus"}""", TestContext.Current.CancellationToken);
 
-        var errors = await Client().ValidateAppSpecAsync(path);
+        var errors = await Client().ValidateAppSpecAsync(path, TestContext.Current.CancellationToken);
 
         errors.ShouldContain(e => e.Contains("properties"));
     }
@@ -69,9 +73,9 @@ public sealed class AcaCliClientValidationTests
     {
         using var dir = new AcaFixtures.TempDir();
         var path = Path.Combine(dir.Path, "bad.containerapp.json");
-        await File.WriteAllTextAsync(path, """{"name":"api","location":"eastus","properties":{"template":{"containers":[]}}}""");
+        await File.WriteAllTextAsync(path, """{"name":"api","location":"eastus","properties":{"template":{"containers":[]}}}""", TestContext.Current.CancellationToken);
 
-        var errors = await Client().ValidateAppSpecAsync(path);
+        var errors = await Client().ValidateAppSpecAsync(path, TestContext.Current.CancellationToken);
 
         errors.ShouldContain(e => e.Contains("environmentId"));
     }
@@ -81,9 +85,9 @@ public sealed class AcaCliClientValidationTests
     {
         using var dir = new AcaFixtures.TempDir();
         var path = Path.Combine(dir.Path, "bad.containerapp.json");
-        await File.WriteAllTextAsync(path, "{ not : valid : json");
+        await File.WriteAllTextAsync(path, "{ not : valid : json", TestContext.Current.CancellationToken);
 
-        var errors = await Client().ValidateAppSpecAsync(path);
+        var errors = await Client().ValidateAppSpecAsync(path, TestContext.Current.CancellationToken);
 
         errors.ShouldContain(e => e.Contains("JSON") || e.Contains("Invalid"));
     }
@@ -93,7 +97,8 @@ public sealed class AcaCliClientValidationTests
 
 public sealed class AcaDeploymentTargetTests
 {
-    private static AcaDeploymentTarget Target() => new(Substitute.For<IPublisher>(), NullLogger<AcaDeploymentTarget>.Instance);
+    private static AcaDeploymentTarget Target()
+        => new(Substitute.For<IPublisher>(), NullLogger<AcaDeploymentTarget>.Instance);
 
     [Fact]
     public void TargetType_IsAzureContainerApps()
@@ -115,13 +120,12 @@ public sealed class AcaDeploymentTargetTests
         using var dir = new AcaFixtures.TempDir();
         var config = AcaFixtures.AcaConfig();
 
-        var paths = await Target().GenerateAsync(AcaFixtures.SimpleManifest(), config, dir.Path);
+        var paths = await Target().GenerateAsync(AcaFixtures.SimpleManifest(), config, dir.Path, TestContext.Current.CancellationToken);
 
         paths.Count.ShouldBe(3);
         foreach (var p in paths)
-
         {
-	        File.Exists(p).ShouldBeTrue();
+            File.Exists(p).ShouldBeTrue();
         }
     }
 
@@ -131,7 +135,7 @@ public sealed class AcaDeploymentTargetTests
         using var dir = new AcaFixtures.TempDir();
         var config = AcaFixtures.AcaConfig();
 
-        await Target().GenerateAsync(AcaFixtures.SimpleManifest(), config, dir.Path);
+        await Target().GenerateAsync(AcaFixtures.SimpleManifest(), config, dir.Path, TestContext.Current.CancellationToken);
 
         Directory.GetFiles(dir.Path, "*.containerapp.json").Length.ShouldBe(3);
     }
@@ -144,7 +148,7 @@ public sealed class AcaDeploymentTargetTests
         using var dir = new AcaFixtures.TempDir();
         var config = AcaFixtures.AcaConfig();
 
-        var results = await Target().ValidateAsync(AcaFixtures.SimpleManifest(), config, dir.Path);
+        var results = await Target().ValidateAsync(AcaFixtures.SimpleManifest(), config, dir.Path, TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3);
     }
@@ -155,13 +159,11 @@ public sealed class AcaDeploymentTargetTests
         using var dir = new AcaFixtures.TempDir();
         var config = AcaFixtures.AcaConfig();
 
-        var results = await Target().ValidateAsync(AcaFixtures.SimpleManifest(), config, dir.Path);
+        var results = await Target().ValidateAsync(AcaFixtures.SimpleManifest(), config, dir.Path, TestContext.Current.CancellationToken);
 
         foreach (var r in results)
-
-
         {
-	        r.IsValid.ShouldBeTrue();
+            r.IsValid.ShouldBeTrue();
         }
     }
 
@@ -173,8 +175,14 @@ public sealed class AcaDeploymentTargetTests
         using var dir = new AcaFixtures.TempDir();
         var config = AcaFixtures.AcaConfig();
 
-        try { await Target().PlanAsync(AcaFixtures.SimpleManifest(), config, dir.Path, TestContext.Current.CancellationToken); }
-        catch { /* az CLI not available in CI */ }
+        try
+        {
+            await Target().PlanAsync(AcaFixtures.SimpleManifest(), config, dir.Path, TestContext.Current.CancellationToken);
+        }
+        catch
+        {
+            /* az CLI not available in CI */
+        }
 
         Directory.GetFiles(dir.Path, "*.containerapp.json").Length.ShouldBe(3);
     }

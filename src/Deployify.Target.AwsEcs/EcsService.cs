@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace Deployify.Target.AwsEcs;
 
 /// <summary>

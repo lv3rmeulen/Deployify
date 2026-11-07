@@ -1,4 +1,6 @@
 using System.CommandLine;
+using System.IO;
+using System.Threading.Tasks;
 using Shouldly;
 using Xunit;
 
@@ -14,15 +16,15 @@ public sealed class DaprIntegrationTests
     public async Task Plan_Nomad_NoDaprSidecar_ByDefault()
     {
         using var dir = new TempDir();
-        await Harness.WriteNomadStateAsync(dir.Path);
-        await Harness.WriteManifestAsync(dir.Path);
+        await Harness.WriteNomadStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
+        await Harness.WriteManifestAsync(dir.Path, ct: TestContext.Current.CancellationToken);
 
-        await Root().InvokeAsync(["plan", "--project-path", dir.Path]);
+        await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         var outputDir = Path.Combine(dir.Path, "deployify-output");
         foreach (var file in Directory.GetFiles(outputDir, "*.job.hcl"))
         {
-	        (await File.ReadAllTextAsync(file)).ShouldNotContain("daprio/daprd");
+            (await File.ReadAllTextAsync(file, TestContext.Current.CancellationToken)).ShouldNotContain("daprio/daprd");
         }
     }
 
@@ -32,13 +34,13 @@ public sealed class DaprIntegrationTests
     public async Task Plan_Nomad_WritesDaprSidecarTask_WhenEnabled()
     {
         using var dir = new TempDir();
-        await Harness.WriteNomadStateAsync(dir.Path, deployDapr: true);
-        await Harness.WriteManifestAsync(dir.Path);
+        await Harness.WriteNomadStateAsync(dir.Path, deployDapr: true, ct: TestContext.Current.CancellationToken);
+        await Harness.WriteManifestAsync(dir.Path, ct: TestContext.Current.CancellationToken);
 
-        await Root().InvokeAsync(["plan", "--project-path", dir.Path]);
+        await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         var apiHcl = await File.ReadAllTextAsync(
-            Path.Combine(dir.Path, "deployify-output", "api.job.hcl"));
+            Path.Combine(dir.Path, "deployify-output", "api.job.hcl"), TestContext.Current.CancellationToken);
         apiHcl.ShouldContain("daprio/daprd");
         apiHcl.ShouldContain("api-dapr");
         apiHcl.ShouldContain("lifecycle");
@@ -49,13 +51,13 @@ public sealed class DaprIntegrationTests
     public async Task Plan_Nomad_DaprSidecar_ContainsDaprHttpPort()
     {
         using var dir = new TempDir();
-        await Harness.WriteNomadStateAsync(dir.Path, deployDapr: true);
-        await Harness.WriteManifestAsync(dir.Path);
+        await Harness.WriteNomadStateAsync(dir.Path, deployDapr: true, ct: TestContext.Current.CancellationToken);
+        await Harness.WriteManifestAsync(dir.Path, ct: TestContext.Current.CancellationToken);
 
-        await Root().InvokeAsync(["plan", "--project-path", dir.Path]);
+        await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         var apiHcl = await File.ReadAllTextAsync(
-            Path.Combine(dir.Path, "deployify-output", "api.job.hcl"));
+            Path.Combine(dir.Path, "deployify-output", "api.job.hcl"), TestContext.Current.CancellationToken);
         apiHcl.ShouldContain("--dapr-http-port");
     }
 
@@ -63,13 +65,13 @@ public sealed class DaprIntegrationTests
     public async Task Plan_Nomad_DaprSidecar_ContainsAppId()
     {
         using var dir = new TempDir();
-        await Harness.WriteNomadStateAsync(dir.Path, deployDapr: true);
-        await Harness.WriteManifestAsync(dir.Path);
+        await Harness.WriteNomadStateAsync(dir.Path, deployDapr: true, ct: TestContext.Current.CancellationToken);
+        await Harness.WriteManifestAsync(dir.Path, ct: TestContext.Current.CancellationToken);
 
-        await Root().InvokeAsync(["plan", "--project-path", dir.Path]);
+        await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         var apiHcl = await File.ReadAllTextAsync(
-            Path.Combine(dir.Path, "deployify-output", "api.job.hcl"));
+            Path.Combine(dir.Path, "deployify-output", "api.job.hcl"), TestContext.Current.CancellationToken);
         apiHcl.ShouldContain("--app-id");
         apiHcl.ShouldContain("\"api\"");
     }
@@ -78,10 +80,10 @@ public sealed class DaprIntegrationTests
     public async Task Plan_Nomad_DaprEnabled_StillProducesCorrectFileCount()
     {
         using var dir = new TempDir();
-        await Harness.WriteNomadStateAsync(dir.Path, deployDapr: true);
-        await Harness.WriteManifestAsync(dir.Path);
+        await Harness.WriteNomadStateAsync(dir.Path, deployDapr: true, ct: TestContext.Current.CancellationToken);
+        await Harness.WriteManifestAsync(dir.Path, ct: TestContext.Current.CancellationToken);
 
-        await Root().InvokeAsync(["plan", "--project-path", dir.Path]);
+        await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         Directory.GetFiles(Path.Combine(dir.Path, "deployify-output"), "*.job.hcl")
             .Length.ShouldBe(3); // Still 3 files — sidecar is a task inside the same job
@@ -93,13 +95,13 @@ public sealed class DaprIntegrationTests
     public async Task Plan_NomadConsul_WritesDaprSidecarTask_WhenEnabled()
     {
         using var dir = new TempDir();
-        await Harness.WriteNomadConsulStateAsync(dir.Path, deployDapr: true);
-        await Harness.WriteManifestAsync(dir.Path);
+        await Harness.WriteNomadConsulStateAsync(dir.Path, deployDapr: true, ct: TestContext.Current.CancellationToken);
+        await Harness.WriteManifestAsync(dir.Path, ct: TestContext.Current.CancellationToken);
 
-        await Root().InvokeAsync(["plan", "--project-path", dir.Path]);
+        await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         var apiHcl = await File.ReadAllTextAsync(
-            Path.Combine(dir.Path, "deployify-output", "api.job.hcl"));
+            Path.Combine(dir.Path, "deployify-output", "api.job.hcl"), TestContext.Current.CancellationToken);
         apiHcl.ShouldContain("daprio/daprd");
         apiHcl.ShouldContain("sidecar = true");
     }
@@ -110,13 +112,13 @@ public sealed class DaprIntegrationTests
     public async Task Plan_Compose_WritesDaprSidecarService_WhenEnabled()
     {
         using var dir = new TempDir();
-        await Harness.WriteComposeStateAsync(dir.Path, deployDapr: true);
-        await Harness.WriteManifestAsync(dir.Path);
+        await Harness.WriteComposeStateAsync(dir.Path, deployDapr: true, ct: TestContext.Current.CancellationToken);
+        await Harness.WriteManifestAsync(dir.Path, ct: TestContext.Current.CancellationToken);
 
-        await Root().InvokeAsync(["plan", "--project-path", dir.Path]);
+        await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         var yml = await File.ReadAllTextAsync(
-            Path.Combine(dir.Path, "deployify-output", "compose.yml"));
+            Path.Combine(dir.Path, "deployify-output", "compose.yml"), TestContext.Current.CancellationToken);
         yml.ShouldContain("daprio/daprd");
         yml.ShouldContain("api-dapr");
     }
@@ -125,13 +127,13 @@ public sealed class DaprIntegrationTests
     public async Task Plan_Compose_DaprSidecar_UsesNetworkModeService()
     {
         using var dir = new TempDir();
-        await Harness.WriteComposeStateAsync(dir.Path, deployDapr: true);
-        await Harness.WriteManifestAsync(dir.Path);
+        await Harness.WriteComposeStateAsync(dir.Path, deployDapr: true, ct: TestContext.Current.CancellationToken);
+        await Harness.WriteManifestAsync(dir.Path, ct: TestContext.Current.CancellationToken);
 
-        await Root().InvokeAsync(["plan", "--project-path", dir.Path]);
+        await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         var yml = await File.ReadAllTextAsync(
-            Path.Combine(dir.Path, "deployify-output", "compose.yml"));
+            Path.Combine(dir.Path, "deployify-output", "compose.yml"), TestContext.Current.CancellationToken);
         yml.ShouldContain("network_mode: service:api");
     }
 
@@ -142,12 +144,12 @@ public sealed class DaprIntegrationTests
     {
         using var dir = new TempDir();
         await Root().InvokeAsync([
-	        "init", "--project-path", dir.Path, "--non-interactive",
+            "init", "--project-path", dir.Path, "--non-interactive",
             "--target", "Nomad", "--deploy-dapr"
-        ]);
+        ], TestContext.Current.CancellationToken);
 
         var json = await File.ReadAllTextAsync(
-            Path.Combine(dir.Path, "deployify-state.json"));
+            Path.Combine(dir.Path, "deployify-state.json"), TestContext.Current.CancellationToken);
         json.ShouldContain("deployDapr");
     }
 
@@ -156,12 +158,12 @@ public sealed class DaprIntegrationTests
     {
         using var dir = new TempDir();
         await Root().InvokeAsync([
-	        "init", "--project-path", dir.Path, "--non-interactive",
+            "init", "--project-path", dir.Path, "--non-interactive",
             "--target", "Nomad", "--deploy-dapr", "--dapr-version", "1.13"
-        ]);
+        ], TestContext.Current.CancellationToken);
 
         var json = await File.ReadAllTextAsync(
-            Path.Combine(dir.Path, "deployify-state.json"));
+            Path.Combine(dir.Path, "deployify-state.json"), TestContext.Current.CancellationToken);
         json.ShouldContain("1.13");
     }
 
@@ -183,11 +185,11 @@ public sealed class DaprIntegrationTests
                 }
               },
             }
-            """);
+            """, TestContext.Current.CancellationToken);
 
-        await Harness.WriteNomadStateAsync(dir.Path);
+        await Harness.WriteNomadStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
         var code = await Root().InvokeAsync(
-	        ["plan", "--project-path", dir.Path]);
+            ["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         code.ShouldBe(0);
     }
@@ -210,11 +212,11 @@ public sealed class DaprIntegrationTests
                 }
               }
             }
-            """);
+            """, TestContext.Current.CancellationToken);
 
-        await Harness.WriteNomadStateAsync(dir.Path);
+        await Harness.WriteNomadStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
         var code = await Root().InvokeAsync(
-	        ["plan", "--project-path", dir.Path]);
+            ["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         code.ShouldBe(0);
     }

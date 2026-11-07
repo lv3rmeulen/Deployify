@@ -1,0 +1,13 @@
+# Check every text file out with CRLF line endings, on every OS.
+* text=auto eol=crlf
+
+# Binary files: never touch their bytes.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.zip binary
+*.dll binary
+*.exe binary
+*.pdb binary
+*.snk binary

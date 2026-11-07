@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace Deployify.Core.Models;
 
 public sealed class PlanResult

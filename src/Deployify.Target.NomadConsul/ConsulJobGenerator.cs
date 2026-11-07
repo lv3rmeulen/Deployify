@@ -1,5 +1,13 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Text;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Deployify.Core.Models;
+using Deployify.Target.Nomad;
 using Microsoft.Extensions.Logging;
 
 namespace Deployify.Target.NomadConsul;
@@ -9,373 +17,476 @@ namespace Deployify.Target.NomadConsul;
 /// service mesh for all inter-service communication.
 ///
 /// Key conventions:
-/// - Every job uses <c>network { mode = "bridge" }</c>(required by Connect).
-/// - Ports are NOT exposed on the host. Instead the container port is registered
-///   with the Consul sidecar via <c>port</c> labels inside <c>network {}</c> and
-///   the <c>service { port = ... }</c> reference.
-/// - Dependencies are rendered as <c>upstreams { ... }</c> inside
-///   <c>sidecar_service {}</c>, each bound to an incrementing loopback port.
-/// - Upstream loopback ports are injected as env vars so the application can
-///   discover its dependencies at runtime without hardcoded port numbers:
-///   e.g. <c>NOMAD_UPSTREAM_ADDR_redis = "localhost:20000"</c>.
-/// - When <see cref="NomadConsulTargetConfig.EnableIngressGateway"/> is true,
-///   services with HTTP bindings receive an additional
-///   <c>connect { gateway { ingress { ... } } }</c> stanza.
+/// - Every job uses <c>network { mode = "bridge" }</c> (required by Connect).
+/// - Each service registers one port with Consul (its HTTP binding when it has one).
+/// - Dependencies become <c>upstreams</c> inside <c>sidecar_service</c>, each bound to
+///   an incrementing loopback port, and Aspire placeholders such as
+///   <c>{api.bindings.http.url}</c> resolve to <c>http://localhost:&lt;upstream port&gt;</c>.
+/// - Upstream addresses are also injected as <c>NOMAD_UPSTREAM_ADDR_&lt;NAME&gt;</c>.
+/// - When <see cref="NomadConsulTargetConfig.EnableIngressGateway"/> is true, one extra
+///   job runs a Consul ingress gateway with a listener per exposed HTTP service.
 /// </summary>
 public sealed class ConsulJobGenerator(ILogger<ConsulJobGenerator> logger)
 {
-	// ── Model generation ──────────────────────────────────────────────────────
+    /// <summary>Name of the synthetic ingress gateway job.</summary>
+    /// <summary>Default name of the synthetic ingress gateway job (see <see cref="NomadConsulTargetConfig.IngressGatewayName"/>).</summary>
+    public const string IngressJobName = "ingress-gateway";
 
-	public IReadOnlyList<ConsulJob> Generate(
-		AspireManifest manifest,
-		EnvironmentConfig config,
-		NomadConsulTargetConfig consulCfg)
-	{
-		var jobs = new List<ConsulJob>();
+    // ── Model generation ──────────────────────────────────────────────────────
 
-		foreach (var (name, resource) in manifest.Resources)
-		{
-			if (resource.Type is "value.v0" or "parameter.v0" or "dapr.v0" or "dapr.component.v0")
-			{
-				continue;
-			}
+    public IReadOnlyList<ConsulJob> Generate(
+        AspireManifest manifest,
+        EnvironmentConfig config,
+        NomadConsulTargetConfig consulCfg)
+    {
+        var ports = ServicePorts.Assign(manifest, consulCfg.BasePort);
+        var jobs = new List<ConsulJob>();
+        var unresolved = new HashSet<string>();
 
-			config.ServiceOverrides.TryGetValue(name, out var overrides);
+        foreach (var (name, resource) in manifest.Resources)
+        {
+            if (!resource.IsDeployable)
+            {
+                continue;
+            }
 
-			var job = new ConsulJob
-			{
-				Name = name,
-				ImageTag = overrides?.ImageTag ?? config.ImageTag,
-				Count = overrides?.Count ?? 1,
-				Dependencies = resource.References?.Select(r => r.Name).ToList() ?? [],
-				IsProjectService = resource.Type.StartsWith("project.v"),
-				ExposeViaIngressGateway = consulCfg.EnableIngressGateway && resource.Bindings?.Values.Any(b => b.Protocol is "http" or "https") == true,
-				Image = resource.Type.StartsWith("container.v")
-					? resource.Image
-					: config.ContainerRegistry is not null
-						? $"{config.ContainerRegistry.TrimEnd('/')}/{name}"
-						: name
-			};
+            config.ServiceOverrides.TryGetValue(name, out var overrides);
 
-			if (resource.Env is not null)
-			{
-				foreach (var (k, v) in resource.Env)
-				{
-					job.Env[k] = v;
-				}
-			}
+            var job = new ConsulJob
+            {
+                Name = name,
+                ImageTag = overrides?.ImageTag ?? config.ImageTag,
+                Count = overrides?.Count ?? 1,
+                Dependencies = resource.References?.Select(r => r.Name)
+                    .Where(d => manifest.Resources.TryGetValue(d, out var dep) && dep.IsDeployable)
+                    .ToList() ?? [],
+                IsProjectService = resource.Type.StartsWith("project.", StringComparison.Ordinal),
+                ExposeViaIngressGateway = consulCfg.EnableIngressGateway &&
+                    resource.Bindings?.Values.Any(b => b is { IsHttp: true, IsExternal: true }) == true
+            };
 
-			if (overrides?.Env is not null)
-			{
-				foreach (var (k, v) in overrides.Env)
-				{
-					job.Env[k] = v;
-				}
-			}
+            job.Image = job.IsProjectService
+                ? config.ContainerRegistry is not null
+                    ? $"{config.ContainerRegistry.TrimEnd('/')}/{name}"
+                    : name
+                : resource.Image;
 
-			if (resource.Bindings is not null)
-			{
-				foreach (var (label, binding) in resource.Bindings)
-				{
-					job.Ports.Add(new ConsulPort
-					{
-						Label = label,
-						ContainerPort = binding.ContainerPort ?? -1, //TODO: 0 or -1 for auto-assign? Nomad requires a port number for the service registration, but we could use a dynamic port and then register that with Consul. For now, let's assume the user provides a container port.
-						Protocol = binding.Protocol ?? "tcp"
-					});
-				}
-			}
+            // Ports: the service's HTTP binding first, since that's the one Consul registers.
+            if (resource.Bindings is not null)
+            {
+                foreach (var (label, binding) in resource.Bindings.OrderBy(b => b.Value.IsHttp ? 0 : 1))
+                {
+                    job.Ports.Add(new ConsulPort
+                    {
+                        Label = SanitizeLabel(label),
+                        ContainerPort = ports[(name, label)],
+                        Protocol = binding.IsHttp ? "http" : binding.Protocol ?? "tcp",
+                        IsHttp = binding.IsHttp
+                    });
+                }
+            }
 
-			// Dapr
-			if (resource.HasDaprSidecar)
-			{
-				job.DaprEnabled = true;
-				job.DaprAppId = resource.DaprAppId ?? name;
-				job.DaprAppPort = resource.DaprAppPort;
-				if (resource.Annotations!.TryGetValue(DaprConstants.HttpPortAnnotation, out var hp)
-					&& int.TryParse(hp, out var httpP))
-				{
-					job.DaprHttpPort = httpP;
-				}
+            // Upstreams: one loopback listener per dependency.
+            var localPort = consulCfg.UpstreamBasePort;
+            foreach (var dep in job.Dependencies)
+            {
+                job.Upstreams.Add(new ConsulUpstream { DestinationName = dep, LocalBindPort = localPort });
+                job.Env[$"NOMAD_UPSTREAM_ADDR_{dep.ToUpperInvariant().Replace('-', '_')}"] = $"localhost:{localPort}";
+                localPort++;
+            }
 
-				if (resource.Annotations!.TryGetValue(DaprConstants.GrpcPortAnnotation, out var gp)
-				    && int.TryParse(gp, out var grpcP))
-				{
-					job.DaprGrpcPort = grpcP;
-				}
+            // Placeholders: our own bindings are local; dependencies go through their upstream.
+            var upstreamPorts = job.Upstreams.ToDictionary(u => u.DestinationName, u => u.LocalBindPort);
+            var resolver = new PlaceholderResolver(manifest, ports, new EndpointStrategy
+            {
+                Host = _ => "localhost",
+                Port = (res, _, containerPort) =>
+                    res != name && upstreamPorts.TryGetValue(res, out var up) ? up : containerPort,
+                // Envoy hands the upstream to the app as plain HTTP on loopback; mTLS is
+                // handled by the mesh, so an https placeholder still becomes http://.
+                Url = (res, binding, scheme, containerPort) =>
+                    res != name && upstreamPorts.TryGetValue(res, out var up)
+                        ? $"{(scheme is "http" or "https" ? "http" : scheme)}://localhost:{up}"
+                        : null
+            });
 
-				job.DaprVersion = config.Dapr.DaprVersion;
-			}
+            foreach (var (k, v) in resolver.ResolveAll(resource.Env))
+            {
+                job.Env[k] = v;
+            }
 
-			jobs.Add(job);
-		}
+            if (overrides?.Env is not null)
+            {
+                foreach (var (k, v) in overrides.Env)
+                {
+                    job.Env[k] = v;
+                }
+            }
 
-		// Resolve upstreams — assign a loopback port to each dependency.
-		// We do this in a second pass so every job is known before we wire them.
-		ResolveUpstreams(jobs, consulCfg);
+            job.Args = [.. ReadArgs(resource).Select(resolver.Resolve)];
+            unresolved.UnionWith(resolver.Unresolved);
 
-		return jobs;
-	}
+            if (resource.HasDaprSidecar)
+            {
+                job.DaprEnabled = true;
+                job.DaprAppId = resource.DaprAppId ?? name;
+                job.DaprAppPort = job.Ports.FirstOrDefault(p => p.IsHttp)?.ContainerPort ?? resource.DaprAppPort;
+                if (resource.Annotations!.TryGetValue(DaprConstants.HttpPortAnnotation, out var hp)
+                    && int.TryParse(hp, out var httpP))
+                {
+                    job.DaprHttpPort = httpP;
+                }
 
-	private static void ResolveUpstreams(List<ConsulJob> jobs, NomadConsulTargetConfig cfg)
-	{
-		// Map: service name → first port label (used as the Consul service port)
-		var servicePort = jobs.ToDictionary(
-			j => j.Name,
-			j => j.Ports.FirstOrDefault()?.ContainerPort ?? 80);
+                if (resource.Annotations!.TryGetValue(DaprConstants.GrpcPortAnnotation, out var gp)
+                    && int.TryParse(gp, out var grpcP))
+                {
+                    job.DaprGrpcPort = grpcP;
+                }
 
-		foreach (var job in jobs)
-		{
-			var localPort = cfg.UpstreamBasePort;
-			foreach (var dep in job.Dependencies)
-			{
-				job.Upstreams.Add(new ConsulUpstream
-				{
-					DestinationName = dep,
-					LocalBindPort = localPort
-				});
+                job.DaprVersion = config.Dapr.DaprVersion;
+            }
 
-				// Inject discovery env var so the app doesn't hardcode ports
-				job.Env[$"NOMAD_UPSTREAM_ADDR_{dep.ToUpperInvariant().Replace('-', '_')}"] =
-					$"localhost:{localPort}";
+            jobs.Add(job);
+        }
 
-				localPort++;
-			}
-		}
-	}
+        // One ingress gateway job for every exposed service.
+        var exposed = jobs.Where(jj => jj is { ExposeViaIngressGateway: true, Ports.Count: > 0 }).ToList();
+        if (exposed.Count > 0)
+        {
+            jobs.Add(new ConsulJob
+            {
+                Name = string.IsNullOrWhiteSpace(consulCfg.IngressGatewayName)
+                    ? IngressJobName : consulCfg.IngressGatewayName,
+                IsIngressGateway = true,
+                IngressListeners =
+                [
+                    .. exposed
+                        .Select(j => new IngressListener { ServiceName = j.Name, Port = j.Ports[0].ContainerPort })
+                ]
+            });
+        }
 
-	// ── HCL writing ───────────────────────────────────────────────────────────
+        foreach (var placeholder in unresolved)
+        {
+            logger.LogWarning(
+                "Could not resolve {Placeholder}; it is passed to the job unchanged. " +
+                "Set the value with a serviceOverrides env entry.", placeholder);
+        }
 
-	public async Task<string> WriteHclAsync(
-		ConsulJob job,
-		EnvironmentConfig config,
-		NomadConsulTargetConfig consulCfg,
-		string outputDirectory,
-		CancellationToken ct = default)
-	{
-		Directory.CreateDirectory(outputDirectory);
-		var filePath = Path.Combine(outputDirectory, $"{job.Name}.job.hcl");
-		await File.WriteAllTextAsync(filePath, RenderHcl(job, config, consulCfg), Encoding.UTF8, ct);
-		job.HclPath = filePath;
-		logger.LogDebug("Written Consul Connect HCL to '{FilePath}'.", filePath);
-		return filePath;
-	}
+        return jobs;
+    }
 
-	// ── HCL renderer ──────────────────────────────────────────────────────────
+    // ── HCL writing ───────────────────────────────────────────────────────────
 
-	internal static string RenderHcl(ConsulJob job, EnvironmentConfig config, NomadConsulTargetConfig cfg)
-	{
-		var sb = new StringBuilder();
-		var dc = string.Join(", ", cfg.Datacenters.Select(d => $"\"{d}\""));
-		var driver = config.ContainerRuntime == ContainerRuntime.Podman ? "podman" : "docker";
+    public async Task<string> WriteHclAsync(
+        ConsulJob job,
+        EnvironmentConfig config,
+        NomadConsulTargetConfig consulCfg,
+        string outputDirectory,
+        CancellationToken ct = default)
+    {
+        Directory.CreateDirectory(outputDirectory);
+        var filePath = Path.Combine(outputDirectory, $"{job.Name}.job.hcl");
+        await File.WriteAllTextAsync(filePath, RenderHcl(job, config, consulCfg), new UTF8Encoding(false), ct);
+        job.HclPath = filePath;
+        logger.LogDebug("Written Consul Connect HCL to '{FilePath}'.", filePath);
+        return filePath;
+    }
 
-		sb.AppendLine($"job \"{job.Name}\" {{");
-		sb.AppendLine($"  namespace = \"{cfg.NomadNamespace}\"");
-		sb.AppendLine($"  datacenters = [{dc}]");
-		sb.AppendLine("  type = \"service\"");
-		sb.AppendLine();
+    // ── HCL renderer ──────────────────────────────────────────────────────────
 
-		sb.AppendLine($"  group \"{job.Name}\" {{");
-		sb.AppendLine($"    count = {job.Count}");
-		sb.AppendLine();
+    internal static string RenderHcl(ConsulJob job, EnvironmentConfig config, NomadConsulTargetConfig cfg)
+    {
+        var sb = new StringBuilder();
+        var dcs = string.Join(", ", cfg.Datacenters.Select(Hcl.Quote));
+        var driver = config.ContainerRuntime == ContainerRuntime.Podman ? "podman" : "docker";
 
-		// ── network (bridge mode required for Connect) ─────────────────────
-		sb.AppendLine("    network {");
-		sb.AppendLine("      mode = \"bridge\"");
-		foreach (var port in job.Ports)
-		{
-			sb.AppendLine($"      port \"{port.Label}\" {{ to = {port.ContainerPort} }}");
-		}
+        sb.AppendLine($"job {Hcl.Quote(job.Name)} {{");
+        sb.AppendLine($"  namespace = {Hcl.Quote(cfg.NomadNamespace)}");
+        sb.AppendLine($"  datacenters = [{dcs}]");
+        sb.AppendLine("  type = \"service\"");
+        sb.AppendLine();
+        sb.AppendLine("  meta = {");
+        sb.AppendLine($"    {Hcl.Quote(NomadClient.ManagedMetaKey)} = \"true\"");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine($"  group {Hcl.Quote(job.Name)} {{");
+        sb.AppendLine($"    count = {job.Count}");
+        sb.AppendLine();
 
-		sb.AppendLine("    }");
-		sb.AppendLine();
+        if (job.IsIngressGateway)
+        {
+            RenderIngressGateway(sb, job);
+        }
+        else
+        {
+            RenderService(sb, job, config, cfg, driver);
+        }
 
-		// ── Consul service + Connect sidecar ──────────────────────────────
-		if (job.Ports.Count > 0 || job.Upstreams.Count > 0)
-		{
-			sb.AppendLine("    service {{");
-			sb.AppendLine($"      name = \"{job.Name}\"");
-			if (job.Ports.Count > 0)
-			{
-				sb.AppendLine($"      port = \"{job.Ports[0].Label}\"");
-			}
+        sb.AppendLine("  }");
+        sb.AppendLine("}");
+        return sb.ToString();
+    }
 
-			sb.AppendLine();
+    private static void RenderService(
+        StringBuilder sb, ConsulJob job, EnvironmentConfig config, NomadConsulTargetConfig cfg, string driver)
+    {
+        sb.AppendLine("    update {");
+        sb.AppendLine("      min_healthy_time = \"30s\"");
+        sb.AppendLine("      healthy_deadline = \"10m\"");
+        sb.AppendLine("      progress_deadline = \"15m\"");
+        sb.AppendLine("    }");
+        sb.AppendLine();
 
-			// ── Health check ──────────────────────────────────────────────
-			if (cfg.RegisterServices && job.Ports.Count > 0)
-			{
-				sb.AppendLine("      check {");
-				sb.AppendLine("        type     = \"http\"");
-				sb.AppendLine($"        path     = \"{cfg.HealthCheckPath}\"");
-				sb.AppendLine($"        interval = \"{cfg.HealthCheckInterval}\"");
-				sb.AppendLine($"        timeout  = \"{cfg.HealthCheckTimeout}\"");
-				sb.AppendLine("      }");
-				sb.AppendLine();
-				sb.AppendLine("      check_restart {");
-				sb.AppendLine("        limit = 3");
-				sb.AppendLine("        grace = \"30s\"");
-				sb.AppendLine("      }");
-				sb.AppendLine();
-			}
+        // ── network (bridge mode required for Connect) ─────────────────────
+        sb.AppendLine("    network {");
+        sb.AppendLine("      mode = \"bridge\"");
+        foreach (var port in job.Ports)
+        {
+            sb.AppendLine($"      port {Hcl.Quote(port.Label)} {{ to = {port.ContainerPort} }}");
+        }
 
-			sb.AppendLine("      connect {");
-			sb.AppendLine("        sidecar_service {");
+        sb.AppendLine("    }");
+        sb.AppendLine();
 
-			if (job.Upstreams.Count > 0)
-			{
-				sb.AppendLine("          proxy {");
-				foreach (var up in job.Upstreams)
-				{
-					sb.AppendLine("            upstreams {");
-					sb.AppendLine($"              destination_name = \"{up.DestinationName}\"");
-					sb.AppendLine($"              local_bind_port = {up.LocalBindPort}");
-					sb.AppendLine("            }");
-				}
+        // ── Consul service + Connect sidecar (one block per service) ───────
+        if (job.Ports.Count > 0 || job.Upstreams.Count > 0)
+        {
+            sb.AppendLine("    service {");
+            sb.AppendLine($"      name = {Hcl.Quote(job.Name)}");
+            if (job.Ports.Count > 0)
+            {
+                // Connect proxies to the container port, so register the number itself.
+                sb.AppendLine($"      port = {Hcl.Quote(job.Ports[0].ContainerPort.ToString())}");
+            }
 
-				sb.AppendLine("          }");
-			}
+            if (cfg.RegisterServices && job.Ports.Count > 0)
+            {
+                var servicePort = job.Ports[0];
+                var checkType = !servicePort.IsHttp ? "tcp" : cfg.HealthCheckType.ToLowerInvariant();
+                if (checkType != "none")
+                {
+                    sb.AppendLine();
+                    sb.AppendLine("      check {");
+                    sb.AppendLine($"        type = {Hcl.Quote(checkType == "http" ? "http" : "tcp")}");
+                    if (checkType == "http")
+                    {
+                        sb.AppendLine($"        path = {Hcl.Quote(cfg.HealthCheckPath)}");
+                        // Route the check through the sidecar so it works in bridge mode.
+                        sb.AppendLine("        expose = true");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"        port = {Hcl.Quote(servicePort.Label)}");
+                    }
 
-			sb.AppendLine("        }");
-			sb.AppendLine("      }");
-			sb.AppendLine("    }");
-			sb.AppendLine();
-		}
+                    sb.AppendLine($"        interval = {Hcl.Quote(cfg.HealthCheckInterval)}");
+                    sb.AppendLine($"        timeout = {Hcl.Quote(cfg.HealthCheckTimeout)}");
+                    sb.AppendLine();
+                    sb.AppendLine("        check_restart {");
+                    sb.AppendLine("          limit = 3");
+                    sb.AppendLine("          grace = \"30s\"");
+                    sb.AppendLine("        }");
+                    sb.AppendLine("      }");
+                }
+            }
 
-		// ── Ingress Gateway service (optional) ────────────────────────────
-		if (job is { ExposeViaIngressGateway: true, Ports.Count: > 0 })
-		{
-			var httpPort = job.Ports.FirstOrDefault(p =>
-				p.Protocol is "http" or "https") ?? job.Ports[0];
+            sb.AppendLine();
+            sb.AppendLine("      connect {");
+            sb.AppendLine("        sidecar_service {");
+            if (job.Upstreams.Count > 0)
+            {
+                sb.AppendLine("          proxy {");
+                foreach (var up in job.Upstreams)
+                {
+                    sb.AppendLine("            upstreams {");
+                    sb.AppendLine($"              destination_name = {Hcl.Quote(up.DestinationName)}");
+                    sb.AppendLine($"              local_bind_port = {up.LocalBindPort}");
+                    sb.AppendLine("            }");
+                }
 
-			sb.AppendLine("    service {{");
-			sb.AppendLine($"      name = \"{cfg.IngressGatewayName}\"");
-			sb.AppendLine();
-			sb.AppendLine("      connect {");
-			sb.AppendLine("        gateway {");
-			sb.AppendLine("          ingress {");
-			sb.AppendLine("            listener {{");
-			sb.AppendLine($"              port = {httpPort.ContainerPort}");
-			sb.AppendLine($"              protocol = \"{httpPort.Protocol}\"");
-			sb.AppendLine("              services {{");
-			sb.AppendLine($"                name = \"{job.Name}\"");
-			sb.AppendLine("              }");
-			sb.AppendLine("            }");
-			sb.AppendLine("          }");
-			sb.AppendLine("        }");
-			sb.AppendLine("      }");
-			sb.AppendLine("    }");
-			sb.AppendLine();
-		}
+                sb.AppendLine("          }");
+            }
 
-		// ── task ──────────────────────────────────────────────────────────
-		sb.AppendLine($"    task \"{job.Name}\" {{");
-		sb.AppendLine($"      driver = \"{driver}\"");
-		sb.AppendLine();
-		sb.AppendLine("      config {");
-		sb.AppendLine($"        image = \"{FormatImage(job.Image!, job.ImageTag)}\"");
-		if (cfg.RegistryUsername is not null && cfg.RegistryPassword is not null && !IsPublicRegistry(job.Image!))
-		{
-			var serverAddress = cfg.RegistryServer ?? DeriveServerAddress(job.Image!, config.ContainerRegistry);
-			sb.AppendLine("        auth {");
-			sb.AppendLine($"          username       = \"{cfg.RegistryUsername}\"");
-			sb.AppendLine($"          password       = \"{cfg.RegistryPassword}\"");
-			sb.AppendLine($"          server_address = \"{serverAddress}\"");
-			sb.AppendLine("        }");
-		}
+            sb.AppendLine("        }");
+            sb.AppendLine("      }");
+            sb.AppendLine("    }");
+            sb.AppendLine();
+        }
 
-		if (job.Ports.Count > 0)
-		{
-			sb.AppendLine("        ports = [" +
-			              string.Join(", ", job.Ports.Select(p => $"\"{p.Label}\"")) + "]");
-		}
+        // ── task ──────────────────────────────────────────────────────────
+        sb.AppendLine($"    task {Hcl.Quote(job.Name)} {{");
+        sb.AppendLine($"      driver = {Hcl.Quote(driver)}");
+        sb.AppendLine();
+        sb.AppendLine("      config {");
+        sb.AppendLine($"        image = {Hcl.Quote(ImageReference.Format(job.Image!, job.ImageTag))}");
+        if (job.Args.Count > 0)
+        {
+            sb.AppendLine($"        args = [{string.Join(", ", job.Args.Select(Hcl.Quote))}]");
+        }
 
-		sb.AppendLine("      }");
+        var registryPassword = Secrets.Resolve(cfg.RegistryPassword, "DEPLOYIFY_REGISTRY_PASSWORD");
+        if (cfg.RegistryUsername is not null && registryPassword is not null && !IsPublicRegistry(job.Image!))
+        {
+            var serverAddress = cfg.RegistryServer ?? DeriveServerAddress(job.Image!, config.ContainerRegistry);
+            sb.AppendLine("        auth {");
+            sb.AppendLine($"          username = {Hcl.Quote(cfg.RegistryUsername)}");
+            sb.AppendLine($"          password = {Hcl.Quote(Hcl.RegistryPasswordPlaceholder)}");
+            sb.AppendLine($"          server_address = {Hcl.Quote(serverAddress)}");
+            sb.AppendLine("        }");
+        }
 
-		if (job.Env.Count > 0)
-		{
-			sb.AppendLine();
-			sb.AppendLine("      env {");
-			foreach (var (k, v) in job.Env)
-			{
-				sb.AppendLine($"        {k} = \"{v.Replace("\"", "\\\"")}\"");
-			}
+        if (job.Ports.Count > 0)
+        {
+            sb.AppendLine($"        ports = [{string.Join(", ", job.Ports.Select(p => Hcl.Quote(p.Label)))}]");
+        }
 
-			sb.AppendLine("      }");
-		}
+        sb.AppendLine("      }");
 
-		sb.AppendLine();
-		sb.AppendLine("      resources {");
-		sb.AppendLine($"        cpu = {cfg.DefaultCpu}");
-		sb.AppendLine($"        memory = {cfg.DefaultMemory}");
-		sb.AppendLine("      }");
+        if (job.Env.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("      env = {");
+            foreach (var (k, v) in job.Env)
+            {
+                sb.AppendLine($"        {Hcl.Quote(k)} = {Hcl.Quote(v)}");
+            }
 
-		sb.AppendLine("    }");
+            sb.AppendLine("      }");
+        }
 
-		// ── Dapr sidecar task (bridge network — reaches app via localhost) ──
-		if (job.DaprEnabled)
-		{
-			sb.AppendLine();
-			sb.AppendLine($"    task \"{job.Name}-dapr\" {{");
-			sb.AppendLine($"      driver = \"{driver}\"");
-			sb.AppendLine("      config {");
-			sb.AppendLine($"        image = \"{DaprConstants.SidecarImage}:{job.DaprVersion}\"");
-			sb.AppendLine("        args  = [");
-			sb.AppendLine("          \"./daprd\",");
-			sb.AppendLine($"          \"--app-id\", \"{job.DaprAppId ?? job.Name}\",");
-			sb.AppendLine($"          \"--dapr-http-port\", \"{job.DaprHttpPort}\",");
-			sb.AppendLine($"          \"--dapr-grpc-port\", \"{job.DaprGrpcPort}\",");
-			sb.Append($"          \"--log-level\", \"{config.Dapr.LogLevel}\"");
-			if (job.DaprAppPort.HasValue)
-			{
-				sb.AppendLine($",{Environment.NewLine}          \"--app-port\", \"{job.DaprAppPort}\"");
-			}
-			else
-			{
-				sb.AppendLine();
-			}
+        sb.AppendLine();
+        sb.AppendLine("      resources {");
+        sb.AppendLine($"        cpu = {cfg.DefaultCpu}");
+        sb.AppendLine($"        memory = {cfg.DefaultMemory}");
+        sb.AppendLine("      }");
+        sb.AppendLine("    }");
 
-			sb.AppendLine("        ]");
-			sb.AppendLine("      }");
-			sb.AppendLine("      resources {");
-			sb.AppendLine("        cpu    = 50");
-			sb.AppendLine("        memory = 64");
-			sb.AppendLine("      }");
-			sb.AppendLine("      lifecycle {");
-			sb.AppendLine("        hook    = \"prestart\"");
-			sb.AppendLine("        sidecar = true");
-			sb.AppendLine("      }");
-			sb.AppendLine("    }");
-		}
+        // ── Dapr sidecar task (bridge network — reaches app via localhost) ──
+        if (job.DaprEnabled)
+        {
+            var daprArgs = new List<string>
+            {
+                "./daprd",
+                "--app-id", job.DaprAppId ?? job.Name,
+                "--dapr-http-port", job.DaprHttpPort.ToString(),
+                "--dapr-grpc-port", job.DaprGrpcPort.ToString(),
+                "--log-level", config.Dapr.LogLevel
+            };
+            if (job.DaprAppPort.HasValue)
+            {
+                daprArgs.AddRange(["--app-port", job.DaprAppPort.Value.ToString()]);
+            }
 
-		sb.AppendLine("  }");
-		sb.AppendLine("}");
+            if (config.Dapr.ComponentsPath is not null)
+            {
+                daprArgs.AddRange(["--resources-path", config.Dapr.ComponentsPath]);
+            }
 
-		return sb.ToString();
-	}
+            if (config.Dapr.ConfigPath is not null)
+            {
+                daprArgs.AddRange(["--config", config.Dapr.ConfigPath]);
+            }
 
-	private static string FormatImage(string image, string? tag) =>
-		image.Contains(':') ? image : $"{image}:{tag}";
+            sb.AppendLine();
+            sb.AppendLine($"    task {Hcl.Quote($"{job.Name}-dapr")} {{");
+            sb.AppendLine($"      driver = {Hcl.Quote(driver)}");
+            sb.AppendLine("      config {");
+            sb.AppendLine($"        image = {Hcl.Quote($"{DaprConstants.SidecarImage}:{job.DaprVersion}")}");
+            sb.AppendLine($"        args = [{string.Join(", ", daprArgs.Select(Hcl.Quote))}]");
+            sb.AppendLine("      }");
+            sb.AppendLine("      resources {");
+            sb.AppendLine("        cpu = 50");
+            sb.AppendLine("        memory = 64");
+            sb.AppendLine("      }");
+            sb.AppendLine("      lifecycle {");
+            sb.AppendLine("        hook = \"prestart\"");
+            sb.AppendLine("        sidecar = true");
+            sb.AppendLine("      }");
+            sb.AppendLine("    }");
+        }
+    }
 
-	private static bool IsPublicRegistry(string image) =>
-		image.StartsWith("mcr.microsoft.com/", StringComparison.OrdinalIgnoreCase) ||
-		image.StartsWith("ghcr.io/", StringComparison.OrdinalIgnoreCase) ||
-		image.StartsWith("gcr.io/", StringComparison.OrdinalIgnoreCase) ||
-		image.StartsWith("quay.io/", StringComparison.OrdinalIgnoreCase) ||
-		image.StartsWith("daprio/", StringComparison.OrdinalIgnoreCase) ||
-		image.StartsWith("redis:", StringComparison.OrdinalIgnoreCase) ||
-		image.StartsWith("postgres:", StringComparison.OrdinalIgnoreCase) ||
-		image.StartsWith("nginx:", StringComparison.OrdinalIgnoreCase);
+    /// <summary>
+    /// Renders the ingress gateway group: one static host port and one TCP listener per
+    /// exposed service. TCP listeners work without extra Consul service-defaults entries.
+    /// </summary>
+    private static void RenderIngressGateway(StringBuilder sb, ConsulJob job)
+    {
+        sb.AppendLine("    network {");
+        sb.AppendLine("      mode = \"bridge\"");
+        foreach (var l in job.IngressListeners)
+        {
+            sb.AppendLine($"      port {Hcl.Quote($"inbound_{SanitizeLabel(l.ServiceName)}")} {{");
+            sb.AppendLine($"        static = {l.Port}");
+            sb.AppendLine($"        to = {l.Port}");
+            sb.AppendLine("      }");
+        }
 
-	private static string DeriveServerAddress(string image, string? containerRegistry)
-	{
-		var source = containerRegistry ?? image;
-		var firstSegment = source.Split('/')[0];
-		if (firstSegment.Contains('.') || firstSegment.Contains(':'))
-		{
-			return firstSegment.StartsWith("http") ? firstSegment : $"https://{firstSegment}";
-		}
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    service {");
+        sb.AppendLine($"      name = {Hcl.Quote(job.Name)}");
+        sb.AppendLine($"      port = {Hcl.Quote(job.IngressListeners[0].Port.ToString())}");
+        sb.AppendLine();
+        sb.AppendLine("      connect {");
+        sb.AppendLine("        gateway {");
+        sb.AppendLine("          proxy {}");
+        sb.AppendLine();
+        sb.AppendLine("          ingress {");
+        foreach (var l in job.IngressListeners)
+        {
+            sb.AppendLine("            listener {");
+            sb.AppendLine($"              port = {l.Port}");
+            sb.AppendLine("              protocol = \"tcp\"");
+            sb.AppendLine("              service {");
+            sb.AppendLine($"                name = {Hcl.Quote(l.ServiceName)}");
+            sb.AppendLine("              }");
+            sb.AppendLine("            }");
+        }
 
-		return "https://index.docker.io/v1/";
-	}
+        sb.AppendLine("          }");
+        sb.AppendLine("        }");
+        sb.AppendLine("      }");
+        sb.AppendLine("    }");
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private static string SanitizeLabel(string label)
+        => new(label.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
+
+    private static IEnumerable<string> ReadArgs(AspireResource resource)
+        => resource.ExtensionData is not null &&
+            resource.ExtensionData.TryGetValue("args", out var args) &&
+            args.ValueKind == JsonValueKind.Array
+            ? args.EnumerateArray().Where(a => a.ValueKind == JsonValueKind.String).Select(a => a.GetString()!)
+            : [];
+
+    private static bool IsPublicRegistry(string image)
+        => image.StartsWith("mcr.microsoft.com/", StringComparison.OrdinalIgnoreCase) ||
+            image.StartsWith("ghcr.io/", StringComparison.OrdinalIgnoreCase) ||
+            image.StartsWith("gcr.io/", StringComparison.OrdinalIgnoreCase) ||
+            image.StartsWith("quay.io/", StringComparison.OrdinalIgnoreCase) ||
+            image.StartsWith("daprio/", StringComparison.OrdinalIgnoreCase) ||
+            image.StartsWith("redis:", StringComparison.OrdinalIgnoreCase) ||
+            image.StartsWith("postgres:", StringComparison.OrdinalIgnoreCase) ||
+            image.StartsWith("nginx:", StringComparison.OrdinalIgnoreCase);
+
+    private static string DeriveServerAddress(string image, string? containerRegistry)
+    {
+        var firstSegment = (containerRegistry ?? image).Split('/')[0];
+        if (firstSegment.Contains('.') || firstSegment.Contains(':'))
+        {
+            if (firstSegment.Equals("docker.io", StringComparison.OrdinalIgnoreCase))
+            {
+                return "https://index.docker.io/v1/";
+            }
+
+            return firstSegment.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+                ? firstSegment : $"https://{firstSegment}";
+        }
+
+        return "https://index.docker.io/v1/";
+    }
 }

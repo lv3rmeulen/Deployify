@@ -10,62 +10,81 @@ public static class ApplyCommand
 {
     public static Command Build()
     {
-        var autoApprove = new Option<bool>("--auto-approve", () => false, "Skip confirmation prompt.");
+        var autoApprove = new Option<bool>("--auto-approve")
+        {
+            Description = "Skip confirmation prompt.",
+            DefaultValueFactory = _ => false
+        };
 
         var cmd = new Command("apply", "Deploy to the target.");
-        cmd.AddOption(GlobalOptions.ProjectPath);
-        cmd.AddOption(GlobalOptions.Environment);
-        cmd.AddOption(GlobalOptions.Target);
-        cmd.AddOption(GlobalOptions.DryRun);
-        cmd.AddOption(autoApprove);
+        cmd.Options.Add(GlobalOptions.ProjectPath);
+        cmd.Options.Add(GlobalOptions.Environment);
+        cmd.Options.Add(GlobalOptions.Target);
+        cmd.Options.Add(GlobalOptions.DryRun);
+        cmd.Options.Add(autoApprove);
 
-        cmd.SetHandler(async ctx =>
+        cmd.SetAction(async (parseResult, ct) =>
         {
-            var projectPath = ctx.ParseResult.GetValueForOption(GlobalOptions.ProjectPath)!;
-            var envOverride = ctx.ParseResult.GetValueForOption(GlobalOptions.Environment);
-            var targetOpt = ctx.ParseResult.GetValueForOption(GlobalOptions.Target);
-            var dryRun = ctx.ParseResult.GetValueForOption(GlobalOptions.DryRun);
-            var approve = ctx.ParseResult.GetValueForOption(autoApprove);
+            var exitCode = 0;
+            var projectPath = parseResult.GetValue(GlobalOptions.ProjectPath)!;
+            var envOverride = parseResult.GetValue(GlobalOptions.Environment);
+            var targetOpt = parseResult.GetValue(GlobalOptions.Target);
+            var dryRun = parseResult.GetValue(GlobalOptions.DryRun);
+            var approve = parseResult.GetValue(autoApprove);
 
             ResolvedContext resolved;
-            try { resolved = await DependencyInjection.ResolveAsync(projectPath, envOverride, targetOpt); }
-            catch (Exception ex) { AnsiConsole.MarkupLine($"[red]✗[/] {ex.Message}"); ctx.ExitCode = 1; return; }
+            try
+            {
+                resolved = await DependencyInjection.ResolveAsync(projectPath, envOverride, targetOpt, ct);
+            }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(ex.Message)}");
+                return 1;
+            }
 
             var (_, config, envName, _, target, directory) = resolved;
             var outputDir = Path.Combine(directory, config.OutputPath);
 
             AnsiConsole.MarkupLine($"[dim]Environment: [cyan]{envName}[/] Target: [cyan]{target.DisplayName}[/][/]\n");
 
-            var manifest = await resolved.LoadManifestAsync();
-            if (manifest is null) { ctx.ExitCode = 1; return; }
+            var manifest = await resolved.LoadManifestAsync(ct);
+            if (manifest is null)
+            {
+                return 1;
+            }
 
-            // PlanAsync writes artefacts to disk AND diffs against the live cluster.
+            // PlanAsync writes artifacts to disk AND diffs against the live cluster.
             // If the cluster is unreachable during dry-run we still want to exit 0
-            // because the artefact generation phase completed successfully.
+            // because the artifact generation phase completed successfully.
             try
             {
-	            var plan = await target.PlanAsync(manifest, config, outputDir);
-	            AnsiConsole.MarkupLine(
+                var plan = await target.PlanAsync(manifest, config, outputDir, ct);
+                AnsiConsole.MarkupLine(
                     $"[bold]Plan:[/] [green]{plan.CreateCount} to create[/], " +
                     $"[yellow]{plan.UpdateCount} to update[/], " +
                     $"[red]{plan.DeleteCount} to delete[/].");
             }
             catch (Exception ex) when (dryRun)
             {
-                AnsiConsole.MarkupLine($"[yellow]![/] Could not reach cluster for diff: {ex.Message}");
-                AnsiConsole.MarkupLine("[yellow]Dry-run: artefacts written, no changes applied.[/]");
-                return;
+                AnsiConsole.MarkupLine($"[yellow]![/] Could not reach cluster for diff: {Markup.Escape(ex.Message)}");
+                AnsiConsole.MarkupLine("[yellow]Dry-run: artifacts written, no changes applied.[/]");
+                return 0;
             }
 
-            if (dryRun) { AnsiConsole.MarkupLine("[yellow]Dry-run: no changes applied.[/]"); return; }
+            if (dryRun)
+            {
+                AnsiConsole.MarkupLine("[yellow]Dry-run: no changes applied.[/]");
+                return 0;
+            }
 
-            if (!approve && !AnsiConsole.Confirm($"Apply to [bold cyan]{envName}[/] ({target.DisplayName})?"))
+            if (!approve && !await ConsolePrompts.ConfirmAsync($"Apply to [bold cyan]{envName}[/] ({target.DisplayName})?", ct))
             {
                 AnsiConsole.MarkupLine("Aborted.");
-                return;
+                return 0;
             }
 
-            var results = await target.ApplyAsync(manifest, config, outputDir);
+            var results = await target.ApplyAsync(manifest, config, outputDir, ct);
 
             var succeeded = results.Count(r => r.Success);
             var failed = results.Count(r => !r.Success);
@@ -74,12 +93,12 @@ public static class ApplyCommand
             {
                 if (r.Success)
                 {
-	                AnsiConsole.MarkupLine($"  [green]✓[/] {r.ServiceName}" +
-	                                       (r.DeploymentId is not null ? $" [dim]({r.DeploymentId})[/]" : ""));
+                    AnsiConsole.MarkupLine($"  [green]✓[/] {Markup.Escape(r.ServiceName)}" +
+                        (r.DeploymentId is not null ? $" [dim]({r.DeploymentId})[/]" : ""));
                 }
                 else
                 {
-	                AnsiConsole.MarkupLine($"  [red]✗[/] {r.ServiceName}: {r.Error}");
+                    AnsiConsole.MarkupLine($"  [red]✗[/] {Markup.Escape(r.ServiceName)}: {Markup.Escape(r.Error ?? "")}");
                 }
             }
 
@@ -89,8 +108,10 @@ public static class ApplyCommand
 
             if (failed > 0)
             {
-	            ctx.ExitCode = 1;
+                exitCode = 1;
             }
+
+            return exitCode;
         });
 
         return cmd;

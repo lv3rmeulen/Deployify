@@ -1,0 +1,61 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = crlf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{csproj,props,targets,slnx,xml,json,yml,yaml}]
+indent_style = space
+indent_size = 2
+
+[*.cs]
+indent_style = space
+indent_size = 4
+
+# Allman braces: every opening brace on its own line.
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+csharp_new_line_before_members_in_object_initializers = true
+csharp_new_line_before_members_in_anonymous_types = true
+csharp_new_line_between_query_expression_clauses = true
+
+# Keep "{ get; set; }" and short initializers on one line. Blocks after control
+# statements always go on their own lines: no "if (x) { y; }" or "catch { }".
+csharp_preserve_single_line_blocks = true
+csharp_preserve_single_line_statements = false
+
+# Braces are required on every if/else/for/foreach/while/do/lock/using/fixed body.
+csharp_prefer_braces = true:warning
+dotnet_diagnostic.IDE0011.severity = warning
+resharper_braces_for_ifelse = required
+resharper_braces_for_for = required
+resharper_braces_for_foreach = required
+resharper_braces_for_while = required
+resharper_braces_for_dowhile = required
+resharper_braces_for_lock = required
+resharper_braces_for_using = required
+resharper_braces_for_fixed = required
+resharper_braces_redundant = false
+
+csharp_indent_case_contents = true
+csharp_indent_switch_labels = true
+
+# Blank lines and line breaks: report every violation as a warning.
+csharp_style_allow_embedded_statements_on_same_line_experimental = false
+dotnet_style_allow_multiple_blank_lines_experimental = false
+dotnet_style_allow_statement_immediately_after_block_experimental = false
+csharp_style_allow_blank_lines_between_consecutive_braces_experimental = false
+csharp_style_allow_blank_line_after_colon_in_constructor_initializer_experimental = false
+csharp_style_allow_blank_line_after_token_in_conditional_expression_experimental = false
+csharp_style_allow_blank_line_after_token_in_arrow_expression_clause_experimental = false
+dotnet_diagnostic.IDE2000.severity = warning
+dotnet_diagnostic.IDE2001.severity = warning
+dotnet_diagnostic.IDE2002.severity = warning
+dotnet_diagnostic.IDE2003.severity = warning
+dotnet_diagnostic.IDE2004.severity = warning
+dotnet_diagnostic.IDE2005.severity = warning
+dotnet_diagnostic.IDE2006.severity = warning

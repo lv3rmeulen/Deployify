@@ -1,6 +1,12 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading;
+using System.Threading.Tasks;
 using Deployify.Core.Models;
 
 namespace Deployify.Target.AwsEcs;
@@ -22,12 +28,15 @@ public sealed class EcsTaskDefinitionGenerator
         EcsTargetConfig ecsConfig)
     {
         var services = new List<EcsService>();
+        var ports = ServicePorts.Assign(manifest, ecsConfig.BasePort);
+        // With Service Connect each service is reachable at <name>:<port>.
+        var resolver = new PlaceholderResolver(manifest, ports, new EndpointStrategy());
 
         foreach (var (name, resource) in manifest.Resources)
         {
-            if (resource.Type is "value.v0" or "parameter.v0" or "dapr.v0" or "dapr.component.v0")
+            if (!resource.IsDeployable)
             {
-	            continue;
+                continue;
             }
 
             config.ServiceOverrides.TryGetValue(name, out var overrides);
@@ -39,40 +48,29 @@ public sealed class EcsTaskDefinitionGenerator
                 DesiredCount = overrides?.Count ?? ecsConfig.DefaultDesiredCount,
                 Cpu = ecsConfig.DefaultCpu,
                 Memory = ecsConfig.DefaultMemory,
-                IsProjectService = resource.Type.StartsWith("project.v"),
+                IsProjectService = resource.Type.StartsWith("project.", StringComparison.Ordinal),
                 Dependencies = resource.References?.Select(r => r.Name).ToList() ?? []
             };
 
-            // Resolve image
-            if (resource.Type.StartsWith("container.v"))
-            {
-	            svc.Image = resource.Image;
-            }
-            else if (resource.Type.StartsWith("project.v"))
-            {
-	            svc.Image = config.ContainerRegistry is not null
-		            ? $"{config.ContainerRegistry.TrimEnd('/')}/{name}"
-		            : name;
-            }
+            svc.Image = svc.IsProjectService
+                ? config.ContainerRegistry is not null
+                    ? $"{config.ContainerRegistry.TrimEnd('/')}/{name}"
+                    : name
+                : resource.Image;
 
-            // Env vars
-            if (resource.Env is not null)
+            foreach (var (k, v) in resolver.ResolveAll(resource.Env))
             {
-	            foreach (var (k, v) in resource.Env)
-	            {
-		            svc.Env[k] = v;
-	            }
+                svc.Env[k] = v;
             }
 
             if (overrides?.Env is not null)
             {
-	            foreach (var (k, v) in overrides.Env)
-	            {
-		            svc.Env[k] = v;
-	            }
+                foreach (var (k, v) in overrides.Env)
+                {
+                    svc.Env[k] = v;
+                }
             }
 
-            // Port mappings
             if (resource.Bindings is not null)
             {
                 foreach (var (label, binding) in resource.Bindings)
@@ -80,7 +78,7 @@ public sealed class EcsTaskDefinitionGenerator
                     svc.PortMappings.Add(new EcsPortMapping
                     {
                         Name = label,
-                        ContainerPort = binding.ContainerPort ?? 80,
+                        ContainerPort = ports[(name, label)],
                         Protocol = binding.Protocol?.ToLowerInvariant() == "udp" ? "udp" : "tcp"
                     });
                 }
@@ -91,17 +89,17 @@ public sealed class EcsTaskDefinitionGenerator
             {
                 svc.DaprEnabled = true;
                 svc.DaprAppId = resource.DaprAppId ?? name;
-                svc.DaprAppPort = resource.DaprAppPort;
+                svc.DaprAppPort = resource.HttpBinding is { } http ? ports[(name, http.Key)] : resource.DaprAppPort;
                 if (resource.Annotations!.TryGetValue(DaprConstants.HttpPortAnnotation, out var hp)
                     && int.TryParse(hp, out var httpP))
                 {
-	                svc.DaprHttpPort = httpP;
+                    svc.DaprHttpPort = httpP;
                 }
 
                 if (resource.Annotations!.TryGetValue(DaprConstants.GrpcPortAnnotation, out var gp)
                     && int.TryParse(gp, out var grpcP))
                 {
-	                svc.DaprGrpcPort = grpcP;
+                    svc.DaprGrpcPort = grpcP;
                 }
 
                 svc.DaprVersion = config.Dapr.DaprVersion;
@@ -110,8 +108,12 @@ public sealed class EcsTaskDefinitionGenerator
             services.Add(svc);
         }
 
+        Unresolved = [.. resolver.Unresolved];
         return services;
     }
+
+    /// <summary>Placeholders from the last <see cref="Generate"/> call that could not be resolved.</summary>
+    public IReadOnlyList<string> Unresolved { get; private set; } = [];
 
     public async Task<string> WriteTaskDefinitionAsync(
         EcsService service,
@@ -130,7 +132,8 @@ public sealed class EcsTaskDefinitionGenerator
         });
 
         var path = Path.Combine(outputDirectory, $"{service.Name}.taskdef.json");
-        await File.WriteAllTextAsync(path, json, Encoding.UTF8, ct);
+        // No BOM: the AWS CLI rejects JSON input that starts with one.
+        await File.WriteAllTextAsync(path, json, new UTF8Encoding(false), ct);
         service.TaskDefinitionPath = path;
         return path;
     }
@@ -141,15 +144,16 @@ public sealed class EcsTaskDefinitionGenerator
         EcsService service, EnvironmentConfig config, EcsTargetConfig ecsConfig)
     {
         var logGroup = ecsConfig.LogGroupName ?? $"/deployify/{ecsConfig.ClusterName}";
-        var imageRef = $"{service.Image}:{service.ImageTag}";
+        var imageRef = ImageReference.Format(service.Image!, service.ImageTag);
 
+        // CPU and memory are set on the task only. Giving the app container the full task
+        // allowance left no room for the Dapr sidecar, and ECS rejects a task whose
+        // containers reserve more than the task has.
         var containerDef = new Dictionary<string, object?>
         {
             ["name"] = service.Name,
             ["image"] = imageRef,
-            ["essential"] = true,
-            ["cpu"] = service.Cpu,
-            ["memory"] = service.Memory
+            ["essential"] = true
         };
 
         if (service.PortMappings.Count > 0)
@@ -180,7 +184,10 @@ public sealed class EcsTaskDefinitionGenerator
             {
                 ["awslogs-group"] = logGroup,
                 ["awslogs-region"] = ecsConfig.Region,
-                ["awslogs-stream-prefix"] = service.Name
+                ["awslogs-stream-prefix"] = service.Name,
+                // Create the log group on first start; otherwise every task fails to
+                // launch until someone creates it by hand.
+                ["awslogs-create-group"] = "true"
             }
         };
 
@@ -197,10 +204,16 @@ public sealed class EcsTaskDefinitionGenerator
                 "--log-level", config.Dapr.LogLevel
             };
             if (service.DaprAppPort.HasValue)
-            { daprArgs.Add("--app-port"); daprArgs.Add(service.DaprAppPort.Value.ToString()); }
+            {
+                daprArgs.Add("--app-port");
+                daprArgs.Add(service.DaprAppPort.Value.ToString());
+            }
 
             if (config.Dapr.ComponentsPath is not null)
-            { daprArgs.Add("--components-path"); daprArgs.Add(config.Dapr.ComponentsPath); }
+            {
+                daprArgs.Add("--resources-path");
+                daprArgs.Add(config.Dapr.ComponentsPath);
+            }
 
             containerDefs.Add(new Dictionary<string, object?>
             {
@@ -217,8 +230,7 @@ public sealed class EcsTaskDefinitionGenerator
                 {
                     new Dictionary<string, object> { ["containerName"] = service.Name, ["condition"] = "START" }
                 },
-                ["cpu"] = 64,
-                ["memory"] = 128
+                ["memoryReservation"] = 64
             });
         }
 
@@ -234,12 +246,12 @@ public sealed class EcsTaskDefinitionGenerator
 
         if (ecsConfig.ExecutionRoleArn is not null)
         {
-	        taskDef["executionRoleArn"] = ecsConfig.ExecutionRoleArn;
+            taskDef["executionRoleArn"] = ecsConfig.ExecutionRoleArn;
         }
 
         if (ecsConfig.TaskRoleArn is not null)
         {
-	        taskDef["taskRoleArn"] = ecsConfig.TaskRoleArn;
+            taskDef["taskRoleArn"] = ecsConfig.TaskRoleArn;
         }
 
         return taskDef;

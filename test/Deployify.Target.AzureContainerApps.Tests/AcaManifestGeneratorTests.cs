@@ -1,5 +1,7 @@
+using System.IO;
+using System.Linq;
 using System.Text.Json;
-using Deployify.Core.Models;
+using System.Threading.Tasks;
 using Shouldly;
 using Xunit;
 
@@ -47,7 +49,7 @@ public sealed class AcaManifestGeneratorTests
     public void Generate_RespectsServiceOverride_ImageTag()
     {
         var config = AcaFixtures.AcaConfig();
-        config.ServiceOverrides["myapp"] = new ServiceOverride { ImageTag = "canary" };
+        config.ServiceOverrides["myapp"] = new() { ImageTag = "canary" };
         var apps = _sut.Generate(AcaFixtures.SingleService("myapp"), config, new AcaTargetConfig());
         apps[0].ImageTag.ShouldBe("canary");
     }
@@ -56,7 +58,7 @@ public sealed class AcaManifestGeneratorTests
     public void Generate_RespectsServiceOverride_Count_AffectsMaxReplicas()
     {
         var config = AcaFixtures.AcaConfig();
-        config.ServiceOverrides["myapp"] = new ServiceOverride { Count = 5 };
+        config.ServiceOverrides["myapp"] = new() { Count = 5 };
         var apps = _sut.Generate(AcaFixtures.SingleService("myapp"), config, new AcaTargetConfig());
         apps[0].MaxReplicas.ShouldBe(5);
     }
@@ -124,7 +126,7 @@ public sealed class AcaManifestGeneratorTests
         var acaCfg = new AcaTargetConfig { Location = "eastus" };
         var apps = _sut.Generate(AcaFixtures.SingleService("myapi"), config, acaCfg);
 
-        var path = await _sut.WriteAppSpecAsync(apps[0], config, acaCfg, dir.Path);
+        var path = await _sut.WriteAppSpecAsync(apps[0], config, acaCfg, dir.Path, TestContext.Current.CancellationToken);
 
         File.Exists(path).ShouldBeTrue();
         path.ShouldEndWith("myapi.containerapp.json");
@@ -138,8 +140,9 @@ public sealed class AcaManifestGeneratorTests
         var acaCfg = new AcaTargetConfig();
         var apps = _sut.Generate(AcaFixtures.SingleService("api"), config, acaCfg);
 
-        var path = await _sut.WriteAppSpecAsync(apps[0], config, acaCfg, dir.Path);
-        var act = () => JsonDocument.Parse(File.ReadAllText(path));
+        var path = await _sut.WriteAppSpecAsync(apps[0], config, acaCfg, dir.Path, TestContext.Current.CancellationToken);
+        var json = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
+        var act = () => JsonDocument.Parse(json);
 
         Should.NotThrow(act);
     }
@@ -152,8 +155,8 @@ public sealed class AcaManifestGeneratorTests
         var acaCfg = new AcaTargetConfig();
         var apps = _sut.Generate(AcaFixtures.SingleService("myapi"), config, acaCfg);
 
-        var path = await _sut.WriteAppSpecAsync(apps[0], config, acaCfg, dir.Path);
-        var doc = JsonDocument.Parse(await File.ReadAllTextAsync(path));
+        var path = await _sut.WriteAppSpecAsync(apps[0], config, acaCfg, dir.Path, TestContext.Current.CancellationToken);
+        var doc = JsonDocument.Parse(await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken));
 
         doc.RootElement.GetProperty("name").GetString().ShouldBe("myapi");
     }
@@ -166,8 +169,8 @@ public sealed class AcaManifestGeneratorTests
         var acaCfg = new AcaTargetConfig { Location = "westeurope" };
         var apps = _sut.Generate(AcaFixtures.SingleService("api"), config, acaCfg);
 
-        var path = await _sut.WriteAppSpecAsync(apps[0], config, acaCfg, dir.Path);
-        var json = await File.ReadAllTextAsync(path);
+        var path = await _sut.WriteAppSpecAsync(apps[0], config, acaCfg, dir.Path, TestContext.Current.CancellationToken);
+        var json = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
 
         json.ShouldContain("westeurope");
     }
@@ -182,8 +185,8 @@ public sealed class AcaManifestGeneratorTests
         var acaCfg = new AcaTargetConfig();
         var apps = _sut.Generate(AcaFixtures.SingleService("api"), config, acaCfg);
 
-        var path = await _sut.WriteAppSpecAsync(apps[0], config, acaCfg, dir.Path);
-        var json = await File.ReadAllTextAsync(path);
+        var path = await _sut.WriteAppSpecAsync(apps[0], config, acaCfg, dir.Path, TestContext.Current.CancellationToken);
+        var json = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
 
         json.ShouldContain("reg.io/myapp/api:v3");
     }
@@ -196,8 +199,8 @@ public sealed class AcaManifestGeneratorTests
         var acaCfg = new AcaTargetConfig { IngressType = AcaIngressType.External };
         var apps = _sut.Generate(AcaFixtures.SingleService("api", "project.v0", 8080), config, acaCfg);
 
-        var path = await _sut.WriteAppSpecAsync(apps[0], config, acaCfg, dir.Path);
-        var json = await File.ReadAllTextAsync(path);
+        var path = await _sut.WriteAppSpecAsync(apps[0], config, acaCfg, dir.Path, TestContext.Current.CancellationToken);
+        var json = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
 
         json.ShouldContain("ingress");
         json.ShouldContain("8080");
@@ -209,10 +212,10 @@ public sealed class AcaManifestGeneratorTests
         using var dir = new AcaFixtures.TempDir();
         var config = AcaFixtures.AcaConfig();
         var acaCfg = new AcaTargetConfig { IngressType = AcaIngressType.External };
-        var apps = _sut.Generate(AcaFixtures.SingleService("api", "project.v0", 8080), config, acaCfg);
+        var apps = _sut.Generate(AcaFixtures.SingleService("api", "project.v0", 8080, external: true), config, acaCfg);
 
-        var path = await _sut.WriteAppSpecAsync(apps[0], config, acaCfg, dir.Path);
-        var doc = JsonDocument.Parse(await File.ReadAllTextAsync(path));
+        var path = await _sut.WriteAppSpecAsync(apps[0], config, acaCfg, dir.Path, TestContext.Current.CancellationToken);
+        var doc = JsonDocument.Parse(await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken));
 
         var ingress = doc.RootElement
             .GetProperty("properties")
@@ -229,8 +232,8 @@ public sealed class AcaManifestGeneratorTests
         var acaCfg = new AcaTargetConfig { MinReplicas = 1, MaxReplicas = 5 };
         var apps = _sut.Generate(AcaFixtures.SingleService("api"), config, acaCfg);
 
-        var path = await _sut.WriteAppSpecAsync(apps[0], config, acaCfg, dir.Path);
-        var doc = JsonDocument.Parse(await File.ReadAllTextAsync(path));
+        var path = await _sut.WriteAppSpecAsync(apps[0], config, acaCfg, dir.Path, TestContext.Current.CancellationToken);
+        var doc = JsonDocument.Parse(await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken));
 
         var scale = doc.RootElement
             .GetProperty("properties")
@@ -248,8 +251,8 @@ public sealed class AcaManifestGeneratorTests
         var acaCfg = new AcaTargetConfig { AcrLoginServer = "myregistry.azurecr.io" };
         var apps = _sut.Generate(AcaFixtures.SingleService("api"), config, acaCfg);
 
-        var path = await _sut.WriteAppSpecAsync(apps[0], config, acaCfg, dir.Path);
-        var json = await File.ReadAllTextAsync(path);
+        var path = await _sut.WriteAppSpecAsync(apps[0], config, acaCfg, dir.Path, TestContext.Current.CancellationToken);
+        var json = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
 
         json.ShouldContain("myregistry.azurecr.io");
     }
@@ -263,8 +266,8 @@ public sealed class AcaManifestGeneratorTests
         var apps = _sut.Generate(AcaFixtures.SimpleManifest(), config, acaCfg);
         var api = apps.Single(a => a.Name == "api");
 
-        var path = await _sut.WriteAppSpecAsync(api, config, acaCfg, dir.Path);
-        var json = await File.ReadAllTextAsync(path);
+        var path = await _sut.WriteAppSpecAsync(api, config, acaCfg, dir.Path, TestContext.Current.CancellationToken);
+        var json = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
 
         json.ShouldContain("ASPNETCORE_ENVIRONMENT");
     }
@@ -277,7 +280,7 @@ public sealed class AcaManifestGeneratorTests
         var acaCfg = new AcaTargetConfig();
         foreach (var app in _sut.Generate(AcaFixtures.SimpleManifest(), config, acaCfg))
         {
-	        await _sut.WriteAppSpecAsync(app, config, acaCfg, dir.Path);
+            await _sut.WriteAppSpecAsync(app, config, acaCfg, dir.Path, TestContext.Current.CancellationToken);
         }
 
         Directory.GetFiles(dir.Path, "*.containerapp.json").Length.ShouldBe(3);
@@ -291,8 +294,8 @@ public sealed class AcaManifestGeneratorTests
         var acaCfg = new AcaTargetConfig();
         var apps = _sut.Generate(AcaFixtures.SingleService("api"), config, acaCfg);
 
-        var path1 = await _sut.WriteAppSpecAsync(apps[0], config, acaCfg, dir.Path);
-        var path2 = await _sut.WriteAppSpecAsync(apps[0], config, acaCfg, dir.Path);
+        var path1 = await _sut.WriteAppSpecAsync(apps[0], config, acaCfg, dir.Path, TestContext.Current.CancellationToken);
+        var path2 = await _sut.WriteAppSpecAsync(apps[0], config, acaCfg, dir.Path, TestContext.Current.CancellationToken);
 
         path1.ShouldBe(path2);
         Directory.GetFiles(dir.Path, "*.containerapp.json").Length.ShouldBe(1);

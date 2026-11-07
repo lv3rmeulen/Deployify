@@ -4,8 +4,10 @@ using System.CommandLine;
 using System.IO;
 using System.IO.Compression;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Models;
+using Deployify.Core.Services;
 using Deployify.Target.Nomad;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -26,44 +28,63 @@ public static class PackageCommand
 {
     public static Command Build()
     {
-        var publishDirOpt = new Option<string?>("--publish-dir",
-            "Directory containing the published binaries. " +
-            "Defaults to the dotnet publish output directory (bin/Release/net*/publish) " +
-            "for each project found in the manifest.");
+        var publishDirOpt = new Option<string?>("--publish-dir")
+        {
+            Description = "Directory containing the published binaries. " +
+                "Defaults to the dotnet publish output directory (bin/Release/net*/publish) " +
+                "for each project found in the manifest."
+        };
 
         var cmd = new Command("package",
             "Zip build output and upload to the artifact store (raw_exec Nomad deployments only).");
-        cmd.AddOption(GlobalOptions.ProjectPath);
-        cmd.AddOption(GlobalOptions.Environment);
-        cmd.AddOption(GlobalOptions.Target);
-        cmd.AddOption(GlobalOptions.DryRun);
-        cmd.AddOption(publishDirOpt);
-
-        cmd.SetHandler(async ctx =>
+        cmd.Options.Add(GlobalOptions.ProjectPath);
+        cmd.Options.Add(GlobalOptions.Environment);
+        cmd.Options.Add(GlobalOptions.Target);
+        cmd.Options.Add(GlobalOptions.DryRun);
+        cmd.Options.Add(publishDirOpt);
+        var imageTagOpt = new Option<string?>("--image-tag", "-i")
         {
-            var projectPath = ctx.ParseResult.GetValueForOption(GlobalOptions.ProjectPath)!;
-            var envOverride = ctx.ParseResult.GetValueForOption(GlobalOptions.Environment);
-            var targetOpt = ctx.ParseResult.GetValueForOption(GlobalOptions.Target);
-            var dryRun = ctx.ParseResult.GetValueForOption(GlobalOptions.DryRun);
-            var publishDir = ctx.ParseResult.GetValueForOption(publishDirOpt);
+            Description = "Version used in the artifact file names (defaults to the environment's image tag)."
+        };
+        cmd.Options.Add(imageTagOpt);
+
+        cmd.SetAction(async (parseResult, ct) =>
+        {
+            var projectPath = parseResult.GetValue(GlobalOptions.ProjectPath)!;
+            var envOverride = parseResult.GetValue(GlobalOptions.Environment);
+            var targetOpt = parseResult.GetValue(GlobalOptions.Target);
+            var dryRun = parseResult.GetValue(GlobalOptions.DryRun);
+            var publishDir = parseResult.GetValue(publishDirOpt);
+            var tagOverride = parseResult.GetValue(imageTagOpt);
 
             ResolvedContext resolved;
-            try { resolved = await DependencyInjection.ResolveAsync(projectPath, envOverride, targetOpt); }
-            catch (Exception ex) { AnsiConsole.MarkupLine($"[red]✗[/] {ex.Message}"); ctx.ExitCode = 1; return; }
+            try
+            {
+                resolved = await DependencyInjection.ResolveAsync(projectPath, envOverride, targetOpt, ct);
+            }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(ex.Message)}");
+                return 1;
+            }
 
             var (_, config, envName, targetType, _, directory) = resolved;
+            if (tagOverride is not null)
+            {
+                config.ImageTag = tagOverride;
+            }
 
             if (targetType != DeploymentTargetType.Nomad)
             {
                 AnsiConsole.MarkupLine("[yellow]! package is only applicable to Nomad targets.[/]");
-                return;
+                return 0;
             }
 
             // Read Nomad target config
             NomadTargetConfig? nomadCfg = null;
             if (config.TargetConfig.TryGetValue("nomad", out var raw) && raw is JsonElement el)
             {
-	            nomadCfg = el.Deserialize<NomadTargetConfig>(TargetConfigJsonOptions.Default);
+                nomadCfg = el.Deserialize<NomadTargetConfig>(TargetConfigJsonOptions.Default);
             }
 
             nomadCfg ??= new NomadTargetConfig();
@@ -71,25 +92,27 @@ public static class PackageCommand
             if (nomadCfg.DeploymentMode != NomadDeploymentMode.RawExec)
             {
                 AnsiConsole.MarkupLine("[yellow]! package is only applicable when deploymentMode is RawExec.[/]");
-                return;
+                return 0;
             }
 
             if (nomadCfg.ArtifactStore is null)
             {
                 AnsiConsole.MarkupLine("[red]✗[/] No artifactStore configured in targetConfig.nomad. " +
                     "Add an artifactStore section to deployify-state.json.");
-                ctx.ExitCode = 1;
-                return;
+                return 1;
             }
 
-            var manifest = await resolved.LoadManifestAsync();
-            if (manifest is null) { ctx.ExitCode = 1; return; }
+            var manifest = await resolved.LoadManifestAsync(ct);
+            if (manifest is null)
+            {
+                return 1;
+            }
 
             AnsiConsole.MarkupLine(
                 $"[dim]Environment: [cyan]{envName}[/] Target: [cyan]Nomad (RawExec)[/] " +
                 $"Store: [cyan]{nomadCfg.ArtifactStore.Type}[/][/]\n");
 
-            var logger = resolved.Services.GetRequiredService<ILogger<PackageCommandStatic>>();
+            var logger = resolved.Services.GetRequiredService<ILogger<PackageLog>>();
             var store = ArtifactStoreFactory.Create(nomadCfg.ArtifactStore, logger);
 
             // Track uploaded URLs to write back to state
@@ -102,7 +125,7 @@ public static class PackageCommand
                 {
                     if (!resource.Type.StartsWith("project.v") || resource.Path is null)
                     {
-	                    continue;
+                        continue;
                     }
 
                     var projectFilePath = ResolveProjectPath(resolved.AppHostDirectory, resource.Path);
@@ -111,14 +134,13 @@ public static class PackageCommand
                     // Find the publish output directory
                     var sourceDir = publishDir is not null
                         ? Path.GetFullPath(publishDir)
-                        : FindPublishDir(projectDir, config);
+                        : FindPublishDir(projectDir);
 
                     if (sourceDir is null || !Directory.Exists(sourceDir))
                     {
                         AnsiConsole.MarkupLine($"[red]✗[/] Publish output not found for [cyan]{name}[/]. " +
                             "Run [cyan]dotnet publish[/] first.");
-                        ctx.ExitCode = 1;
-                        return;
+                        return 1;
                     }
 
                     var zipFileName = $"{name}-{config.ImageTag}.zip";
@@ -136,15 +158,15 @@ public static class PackageCommand
                     // Create zip
                     if (File.Exists(zipPath))
                     {
-	                    File.Delete(zipPath);
+                        File.Delete(zipPath);
                     }
 
-                    await ZipFile.CreateFromDirectoryAsync(sourceDir, zipPath, CompressionLevel.Optimal, includeBaseDirectory: false);
+                    await ZipFile.CreateFromDirectoryAsync(sourceDir, zipPath, CompressionLevel.Optimal, includeBaseDirectory: false, ct);
                     var sizeMb = new FileInfo(zipPath).Length / 1024.0 / 1024.0;
                     AnsiConsole.Markup($"[dim]{sizeMb:F1} MB[/] → uploading... ");
 
                     // Upload
-                    var url = await store.UploadAsync(name, config.ImageTag, zipPath, ctx.GetCancellationToken());
+                    var url = await store.UploadAsync(name, config.ImageTag, zipPath, ct);
                     uploadedUrls[name] = url;
 
                     AnsiConsole.MarkupLine("[green]✓[/]");
@@ -154,7 +176,7 @@ public static class PackageCommand
                 if (!dryRun && uploadedUrls.Count > 0)
                 {
                     // Write artifact URLs back into state so generate/plan picks them up
-                    await WriteArtifactUrlsToStateAsync(directory, envName, uploadedUrls, config);
+                    await WriteArtifactUrlsToStateAsync(directory, envName, uploadedUrls, config, ct);
                     AnsiConsole.MarkupLine("\n[green]✓[/] Artifact URLs saved to deployify-state.json.");
                     AnsiConsole.MarkupLine("[dim]Run [cyan]deployify generate[/] or [cyan]deployify plan[/] to update the HCL.[/]");
                 }
@@ -163,25 +185,33 @@ public static class PackageCommand
             {
                 foreach (var zip in tempZips)
                 {
-	                try { if (File.Exists(zip))
-		                {
-			                File.Delete(zip);
-		                }
-	                } catch { /* ignore */ }
+                    try
+                    {
+                        if (File.Exists(zip))
+                        {
+                            File.Delete(zip);
+                        }
+                    }
+                    catch
+                    {
+                        /* ignore */
+                    }
                 }
             }
+
+            return 0;
         });
 
         return cmd;
     }
 
-    private static string? FindPublishDir(string projectDir, EnvironmentConfig _)
+    private static string? FindPublishDir(string projectDir)
     {
         // Look for dotnet publish output: bin/Release/net*/publish
         var binRelease = Path.Combine(projectDir, "bin", "Release");
         if (!Directory.Exists(binRelease))
         {
-	        return null;
+            return null;
         }
 
         foreach (var tfm in Directory.GetDirectories(binRelease))
@@ -189,7 +219,7 @@ public static class PackageCommand
             var publishDir = Path.Combine(tfm, "publish");
             if (Directory.Exists(publishDir))
             {
-	            return publishDir;
+                return publishDir;
             }
         }
 
@@ -198,9 +228,9 @@ public static class PackageCommand
 
     private static string ResolveProjectPath(string appHostDirectory, string resourcePath)
     {
-        var normalised = resourcePath.Replace('/', Path.DirectorySeparatorChar)
+        var normalized = resourcePath.Replace('/', Path.DirectorySeparatorChar)
                                      .Replace('\\', Path.DirectorySeparatorChar);
-        return Path.GetFullPath(Path.Combine(appHostDirectory, normalised));
+        return Path.GetFullPath(Path.Combine(appHostDirectory, normalized));
     }
 
     /// <summary>
@@ -213,7 +243,8 @@ public static class PackageCommand
         string directory,
         string envName,
         Dictionary<string, string> uploadedUrls,
-        EnvironmentConfig config)
+        EnvironmentConfig config,
+        CancellationToken ct)
     {
         // Ensure serviceOverrides exist for each service
         foreach (var (name, url) in uploadedUrls)
@@ -227,24 +258,14 @@ public static class PackageCommand
             ov.ArtifactUrl = url;
         }
 
-        var stateFilePath = Path.Combine(directory, "deployify-state.json");
-        var existing = JsonSerializer.Deserialize<DeployifyStateFile>(
-            await File.ReadAllTextAsync(stateFilePath),
-            s_stateManagerJsonOptions) ?? new DeployifyStateFile();
-
-        existing.Environments[envName] = config;
-
-        await File.WriteAllTextAsync(stateFilePath,
-            JsonSerializer.Serialize(existing, s_stateManagerJsonOptions));
+        // Go through the StateManager so the file keeps its format and every other
+        // environment is preserved.
+        var stateManager = new StateManager();
+        var stateFile = await stateManager.LoadFileAsync(directory, ct);
+        stateFile.Environments[envName] = config;
+        await stateManager.SaveFileAsync(stateFile, directory, ct);
     }
 
-    private static readonly JsonSerializerOptions s_stateManagerJsonOptions = new JsonSerializerOptions
-    {
-        WriteIndented = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
-    };
-
-    // Marker type for ILogger generic
-    private sealed class PackageCommandStatic;
+    /// <summary>Log category for this command (a static class can't be a type argument).</summary>
+    private sealed class PackageLog;
 }

@@ -41,4 +41,18 @@ public sealed class KubernetesTargetConfig
 
     /// <summary>Default number of replicas per service.</summary>
     public int DefaultReplicas { get; set; } = 1;
+
+    /// <summary>
+    /// Liveness/readiness probe type: "tcp" (default) checks the port is open, "http" calls
+    /// <see cref="HealthCheckPath"/>, "none" adds no probes. TCP is the default because
+    /// Aspire's ServiceDefaults only map /health in the Development environment, so an
+    /// HTTP probe would restart a Production pod in a loop.
+    /// </summary>
+    public string HealthCheckType { get; set; } = "tcp";
+
+    /// <summary>HTTP path used when <see cref="HealthCheckType"/> is "http".</summary>
+    public string HealthCheckPath { get; set; } = "/health";
+
+    /// <summary>Base port for services whose Aspire bindings carry no port.</summary>
+    public int BasePort { get; set; } = 8080;
 }

@@ -9,41 +9,60 @@ public static class ExplainCommand
 {
     public static Command Build()
     {
-        var serviceOpt = new Option<string?>(["--service", "-s"], "Filter to a specific service.");
+        var serviceOpt = new Option<string?>("--service", "-s")
+        {
+            Description = "Filter to a specific service."
+        };
 
         var cmd = new Command("explain", "Display a human-readable summary of all services.");
-        cmd.AddOption(GlobalOptions.ProjectPath);
-        cmd.AddOption(GlobalOptions.Environment);
-        cmd.AddOption(GlobalOptions.Target);
-        cmd.AddOption(serviceOpt);
+        cmd.Options.Add(GlobalOptions.ProjectPath);
+        cmd.Options.Add(GlobalOptions.Environment);
+        cmd.Options.Add(GlobalOptions.Target);
+        cmd.Options.Add(serviceOpt);
 
-        cmd.SetHandler(async ctx =>
+        cmd.SetAction(async (parseResult, ct) =>
         {
-            var projectPath = ctx.ParseResult.GetValueForOption(GlobalOptions.ProjectPath)!;
-            var envOverride = ctx.ParseResult.GetValueForOption(GlobalOptions.Environment);
-            var targetOpt = ctx.ParseResult.GetValueForOption(GlobalOptions.Target);
-            var serviceFilter = ctx.ParseResult.GetValueForOption(serviceOpt);
+            var projectPath = parseResult.GetValue(GlobalOptions.ProjectPath)!;
+            var envOverride = parseResult.GetValue(GlobalOptions.Environment);
+            var targetOpt = parseResult.GetValue(GlobalOptions.Target);
+            var serviceFilter = parseResult.GetValue(serviceOpt);
 
             ResolvedContext resolved;
-            try { resolved = await DependencyInjection.ResolveAsync(projectPath, envOverride, targetOpt); }
-            catch (Exception ex) { AnsiConsole.MarkupLine($"[red]✗[/] {ex.Message}"); ctx.ExitCode = 1; return; }
+            try
+            {
+                resolved = await DependencyInjection.ResolveAsync(projectPath, envOverride, targetOpt, ct);
+            }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(ex.Message)}");
+                return 1;
+            }
 
-            var (_, config, envName, _, target, directory) = resolved;
+            var (_, config, envName, _, target, _) = resolved;
             AnsiConsole.MarkupLine($"[dim]Environment: [cyan]{envName}[/] Target: [cyan]{target.DisplayName}[/][/]\n");
 
-            var manifest = await resolved.LoadManifestAsync();
-            if (manifest is null) { ctx.ExitCode = 1; return; }
+            var manifest = await resolved.LoadManifestAsync(ct);
+            if (manifest is null)
+            {
+                return 1;
+            }
 
             var explanations = target.Explain(manifest, config);
 
             if (serviceFilter is not null)
             {
-	            explanations = explanations
-		            .Where(e => e.Name.Equals(serviceFilter, StringComparison.OrdinalIgnoreCase))
-		            .ToList();
+                explanations =
+                [
+                    .. explanations
+                        .Where(e => e.Name.Equals(serviceFilter, StringComparison.OrdinalIgnoreCase))
+                ];
             }
 
-            if (!explanations.Any()) { AnsiConsole.MarkupLine("[yellow]No matching services.[/]"); return; }
+            if (!explanations.Any())
+            {
+                AnsiConsole.MarkupLine("[yellow]No matching services.[/]");
+                return 0;
+            }
 
             foreach (var exp in explanations)
             {
@@ -53,17 +72,17 @@ public static class ExplainCommand
                 Row("Count", exp.Count.ToString());
                 if (exp.Ports.Count > 0)
                 {
-	                Row("Ports", string.Join(", ", exp.Ports));
+                    Row("Ports", string.Join(", ", exp.Ports));
                 }
 
                 if (exp.Dependencies.Count > 0)
                 {
-	                Row("Depends on", string.Join(", ", exp.Dependencies));
+                    Row("Depends on", string.Join(", ", exp.Dependencies));
                 }
 
                 foreach (var (k, v) in exp.AdditionalInfo)
                 {
-	                Row(k, v);
+                    Row(k, v);
                 }
 
                 AnsiConsole.Write(new Panel(grid)
@@ -74,6 +93,8 @@ public static class ExplainCommand
                 });
                 AnsiConsole.WriteLine();
             }
+
+            return 0;
         });
 
         return cmd;

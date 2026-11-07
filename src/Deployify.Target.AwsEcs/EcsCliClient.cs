@@ -1,5 +1,11 @@
+using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
+using System.Linq;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 
 namespace Deployify.Target.AwsEcs;
@@ -9,19 +15,23 @@ namespace Deployify.Target.AwsEcs;
 /// All operations require the AWS CLI to be installed and configured.
 ///
 /// Uses the CLI rather than the SDK to avoid a heavy dependency and to
-/// keep credentials management simple (honours all standard AWS credential
+/// keep credentials management simple (honors all standard AWS credential
 /// sources: env vars, ~/.aws/credentials, instance profiles, etc.).
 /// </summary>
 public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger)
 {
     // ── Availability ──────────────────────────────────────────────────────────
 
-    public static async Task<bool> IsAvailableAsync()
+    public static async Task<bool> IsAvailableAsync(CancellationToken ct = default)
     {
         try
         {
-            var (exit, _) = await RunAsync("aws", "--version");
+            var (exit, _) = await RunAsync("aws", "--version", ct);
             return exit == 0;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch
         {
@@ -37,7 +47,7 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger)
         var (exit, output) = await RunAsync("aws", args, ct);
         if (exit != 0)
         {
-	        return (false, $"Cannot reach AWS ECS: {output.Trim()}");
+            return (false, $"Cannot reach AWS ECS: {output.Trim()}");
         }
 
         try
@@ -46,7 +56,7 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger)
             var clusters = doc.RootElement.GetProperty("clusters");
             if (clusters.GetArrayLength() == 0)
             {
-	            return (false, $"ECS cluster '{config.ClusterName}' not found in {config.Region}.");
+                return (false, $"ECS cluster '{config.ClusterName}' not found in {config.Region}.");
             }
 
             return (true, null);
@@ -72,12 +82,14 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger)
         try
         {
             var doc = JsonDocument.Parse(output);
-            return doc.RootElement
-                .GetProperty("serviceArns")
-                .EnumerateArray()
-                .Select(e => e.GetString()!)
-                .Select(arn => arn.Split('/').Last()) // ARN → service name
-                .ToList();
+            return
+            [
+                .. doc.RootElement
+                    .GetProperty("serviceArns")
+                    .EnumerateArray()
+                    .Select(e => e.GetString()!)
+                    .Select(arn => arn.Split('/').Last()) // ARN → service name
+            ];
         }
         catch
         {
@@ -91,12 +103,12 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger)
         string taskDefJsonPath, CancellationToken ct = default)
     {
         var args = BuildArgs(
-            $"ecs register-task-definition --cli-input-json file://{taskDefJsonPath} --output json");
+            $"ecs register-task-definition --cli-input-json \"file://{taskDefJsonPath}\" --output json");
         var (exit, output) = await RunAsync("aws", args, ct);
         if (exit != 0)
         {
-	        throw new InvalidOperationException(
-		        $"Failed to register task definition from {taskDefJsonPath}: {output.Trim()}");
+            throw new InvalidOperationException(
+                $"Failed to register task definition from {taskDefJsonPath}: {output.Trim()}");
         }
 
         var doc = JsonDocument.Parse(output);
@@ -117,7 +129,7 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger)
         var running = await GetRunningServiceNamesAsync(ct);
         if (running.Contains(serviceName))
         {
-	        return await UpdateServiceAsync(serviceName, taskDefinitionArn, desiredCount, ct);
+            return await UpdateServiceAsync(serviceName, taskDefinitionArn, desiredCount, ct);
         }
 
         return await CreateServiceAsync(serviceName, taskDefinitionArn, desiredCount, ct);
@@ -138,21 +150,21 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger)
 
             if (!root.TryGetProperty("family", out _))
             {
-	            errors.Add("Missing required field: family");
+                errors.Add("Missing required field: family");
             }
 
             if (!root.TryGetProperty("containerDefinitions", out var containers))
             {
-	            errors.Add("Missing required field: containerDefinitions");
+                errors.Add("Missing required field: containerDefinitions");
             }
             else if (containers.GetArrayLength() == 0)
             {
-	            errors.Add("containerDefinitions must have at least one entry");
+                errors.Add("containerDefinitions must have at least one entry");
             }
 
             if (!root.TryGetProperty("networkMode", out _))
             {
-	            errors.Add("Missing required field: networkMode");
+                errors.Add("Missing required field: networkMode");
             }
         }
         catch (JsonException ex)
@@ -173,7 +185,7 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger)
         var (exit, output) = await RunAsync("aws", args, ct);
         if (exit != 0)
         {
-	        return null;
+            return null;
         }
 
         try
@@ -182,7 +194,7 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger)
             var services = doc.RootElement.GetProperty("services");
             if (services.GetArrayLength() == 0)
             {
-	            return null;
+                return null;
             }
 
             return services[0].GetProperty("taskDefinition").GetString();
@@ -209,12 +221,13 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger)
             $"--desired-count {desiredCount} " +
             $"--launch-type {launchType} " +
             $"--network-configuration \"{networkConfig}\" " +
-            $"--output json");
+            await ServiceConnectArgAsync(serviceName, ct) +
+            "--output json");
 
         var (exit, output) = await RunAsync("aws", args, ct);
         if (exit != 0)
         {
-	        throw new InvalidOperationException($"Failed to create ECS service '{serviceName}': {output.Trim()}");
+            throw new InvalidOperationException($"Failed to create ECS service '{serviceName}': {output.Trim()}");
         }
 
         var doc = JsonDocument.Parse(output);
@@ -230,16 +243,68 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger)
             $"--service {serviceName} " +
             $"--task-definition {taskDefinitionArn} " +
             $"--desired-count {desiredCount} " +
-            $"--output json");
+            await ServiceConnectArgAsync(serviceName, ct) +
+            "--output json");
 
         var (exit, output) = await RunAsync("aws", args, ct);
         if (exit != 0)
         {
-	        throw new InvalidOperationException($"Failed to update ECS service '{serviceName}': {output.Trim()}");
+            throw new InvalidOperationException($"Failed to update ECS service '{serviceName}': {output.Trim()}");
         }
 
         var doc = JsonDocument.Parse(output);
         return doc.RootElement.GetProperty("service").GetProperty("serviceArn").GetString()!;
+    }
+
+    /// <summary>Port mappings (name → port) per service, used for Service Connect.</summary>
+    public Dictionary<string, IReadOnlyList<(string Name, int Port)>> ServicePorts { get; } = [];
+
+    /// <summary>
+    /// Builds the Service Connect argument when a namespace is configured: the service's
+    /// first port is published under the service name. The JSON goes through a temp file
+    /// to avoid shell-quoting problems.
+    /// </summary>
+    private async Task<string> ServiceConnectArgAsync(string serviceName, CancellationToken ct)
+    {
+        if (config.ServiceConnectNamespace is null ||
+            !ServicePorts.TryGetValue(serviceName, out var ports) || ports.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var (portName, port) = ports[0];
+        var json = JsonSerializer.Serialize(new
+        {
+            enabled = true,
+            @namespace = config.ServiceConnectNamespace,
+            services = new[]
+            {
+                new
+                {
+                    portName,
+                    discoveryName = serviceName,
+                    clientAliases = new[] { new { port, dnsName = serviceName } }
+                }
+            }
+        });
+        var path = Path.Combine(Path.GetTempPath(), $"deployify-sc-{serviceName}-{Guid.NewGuid():N}.json");
+        await File.WriteAllTextAsync(path, json, new System.Text.UTF8Encoding(false), ct);
+        return $"--service-connect-configuration \"file://{path}\" ";
+    }
+
+    /// <summary>
+    /// Waits until the service reaches a steady state (ECS gives up after about ten
+    /// minutes). Throws when it doesn't, e.g. because tasks keep crashing.
+    /// </summary>
+    public async Task WaitForStableAsync(string serviceName, CancellationToken ct = default)
+    {
+        var args = BuildArgs($"ecs wait services-stable --cluster {config.ClusterName} --services {serviceName}");
+        var (exit, output) = await RunAsync("aws", args, ct);
+        if (exit != 0)
+        {
+            throw new InvalidOperationException(
+                $"Service '{serviceName}' did not become stable. Check its task logs. {output.Trim()}");
+        }
     }
 
     private string BuildNetworkConfig()
@@ -249,8 +314,8 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger)
         return $"awsvpcConfiguration={{subnets=[{subnets}],securityGroups=[{sgs}],assignPublicIp=ENABLED}}";
     }
 
-    private string BuildArgs(string command) =>
-        config.AwsProfile is not null
+    private string BuildArgs(string command)
+        => config.AwsProfile is not null
             ? $"--profile {config.AwsProfile} --region {config.Region} {command}"
             : $"--region {config.Region} {command}";
 
@@ -269,11 +334,26 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger)
 
         var stdoutTask = proc.StandardOutput.ReadToEndAsync(ct);
         var stderrTask = proc.StandardError.ReadToEndAsync(ct);
-        await proc.WaitForExitAsync(ct);
-        await Task.WhenAll(stdoutTask, stderrTask);
+        try
+        {
+            await proc.WaitForExitAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                proc.Kill(entireProcessTree: true);
+            }
+            catch
+            {
+                /* already exited */
+            }
 
-        var output = stdoutTask.Result;
-        var stderr = stderrTask.Result;
+            throw;
+        }
+
+        var output = await stdoutTask;
+        var stderr = await stderrTask;
         return (proc.ExitCode, string.IsNullOrWhiteSpace(output) ? stderr : output);
     }
 }

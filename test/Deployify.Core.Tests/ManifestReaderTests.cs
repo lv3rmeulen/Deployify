@@ -1,4 +1,8 @@
+using System;
+using System.IO;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Deployify.Core.Services;
 using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
@@ -10,10 +14,10 @@ public sealed class ManifestReaderTests
 {
     private readonly ManifestReader _sut = new(NullLogger<ManifestReader>.Instance);
 
-    private static async Task<string> WriteManifestAsync(string dir, object obj)
+    private static async Task<string> WriteManifestAsync(string dir, object obj, CancellationToken ct = default)
     {
         var path = Path.Combine(dir, "manifest.json");
-        await File.WriteAllTextAsync(path, JsonSerializer.Serialize(obj));
+        await File.WriteAllTextAsync(path, JsonSerializer.Serialize(obj), ct);
         return path;
     }
 
@@ -24,8 +28,8 @@ public sealed class ManifestReaderTests
         var path = await WriteManifestAsync(dir.Path, new
         {
             resources = new { api = new { type = "project.v0", path = "Api/Api.csproj" } }
-        });
-        var manifest = await _sut.ReadAsync(path);
+        }, TestContext.Current.CancellationToken);
+        var manifest = await _sut.ReadAsync(path, TestContext.Current.CancellationToken);
         manifest.Resources.ShouldContainKey("api");
         manifest.Resources["api"].Type.ShouldBe("project.v0");
     }
@@ -37,8 +41,8 @@ public sealed class ManifestReaderTests
         var path = await WriteManifestAsync(dir.Path, new
         {
             resources = new { redis = new { type = "container.v0", image = "redis:7" } }
-        });
-        var manifest = await _sut.ReadAsync(path);
+        }, TestContext.Current.CancellationToken);
+        var manifest = await _sut.ReadAsync(path, TestContext.Current.CancellationToken);
         manifest.Resources["redis"].Image.ShouldBe("redis:7");
     }
 
@@ -56,10 +60,10 @@ public sealed class ManifestReaderTests
                     bindings = new { http = new { containerPort = 8080, protocol = "http" } }
                 }
             }
-        });
+        }, TestContext.Current.CancellationToken);
         var manifest = await _sut.ReadAsync(path, TestContext.Current.CancellationToken);
         manifest.Resources["api"].Bindings?.ShouldContainKey("http");
-        manifest.Resources["api"].Bindings!["http"].ContainerPort.ShouldBe(8080);
+        manifest.Resources["api"].Bindings?["http"].ContainerPort.ShouldBe(8080);
     }
 
     [Fact]
@@ -72,7 +76,7 @@ public sealed class ManifestReaderTests
             {
                 api = new { type = "project.v0", env = new { ASPNETCORE_ENVIRONMENT = "Production" } }
             }
-        });
+        }, TestContext.Current.CancellationToken);
         var manifest = await _sut.ReadAsync(path, TestContext.Current.CancellationToken);
         manifest.Resources["api"].Env?.ShouldContainKey("ASPNETCORE_ENVIRONMENT");
     }
@@ -87,7 +91,7 @@ public sealed class ManifestReaderTests
             {
                 worker = new { type = "project.v0", references = new[] { new { name = "api" } } }
             }
-        });
+        }, TestContext.Current.CancellationToken);
         var manifest = await _sut.ReadAsync(path, TestContext.Current.CancellationToken);
         manifest.Resources["worker"].References?.ShouldContain(r => r.Name == "api");
     }
@@ -104,8 +108,8 @@ public sealed class ManifestReaderTests
                 worker = new { type = "project.v0" },
                 redis = new { type = "container.v0", image = "redis:7" }
             }
-        });
-        var manifest = await _sut.ReadAsync(path);
+        }, TestContext.Current.CancellationToken);
+        var manifest = await _sut.ReadAsync(path, TestContext.Current.CancellationToken);
         manifest.Resources.Count.ShouldBe(3);
     }
 
@@ -113,7 +117,7 @@ public sealed class ManifestReaderTests
     public async Task ReadAsync_ThrowsFileNotFound_WhenMissing()
     {
         await Should.ThrowAsync<FileNotFoundException>(
-            () => _sut.ReadAsync("/nonexistent/path/manifest.json"));
+            () => _sut.ReadAsync("/nonexistent/path/manifest.json", TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -121,9 +125,9 @@ public sealed class ManifestReaderTests
     {
         using var dir = new TempDir();
         var path = Path.Combine(dir.Path, "manifest.json");
-        await File.WriteAllTextAsync(path, "{ not valid json {{");
+        await File.WriteAllTextAsync(path, "{ not valid json {{", TestContext.Current.CancellationToken);
         await Should.ThrowAsync<Exception>(
-            () => _sut.ReadAsync(path));
+            () => _sut.ReadAsync(path, TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -131,8 +135,8 @@ public sealed class ManifestReaderTests
     {
         using var dir = new TempDir();
         var path = Path.Combine(dir.Path, "manifest.json");
-        await File.WriteAllTextAsync(path, "{}");
-        var manifest = await _sut.ReadAsync(path);
+        await File.WriteAllTextAsync(path, "{}", TestContext.Current.CancellationToken);
+        var manifest = await _sut.ReadAsync(path, TestContext.Current.CancellationToken);
         manifest.Resources.ShouldBeEmpty();
     }
 
@@ -148,8 +152,8 @@ public sealed class ManifestReaderTests
                 val = new { type = "value.v0" },
                 api = new { type = "project.v0" }
             }
-        });
-        var manifest = await _sut.ReadAsync(path);
+        }, TestContext.Current.CancellationToken);
+        var manifest = await _sut.ReadAsync(path, TestContext.Current.CancellationToken);
         manifest.Resources.Count.ShouldBe(3);
         manifest.Resources["cfg"].Type.ShouldBe("parameter.v0");
     }

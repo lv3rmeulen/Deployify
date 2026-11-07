@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
 
@@ -12,7 +15,7 @@ public sealed class DeploymentTargetFactory : IDeploymentTargetFactory
         _targets = targets.ToDictionary(t => t.TargetType);
     }
 
-    public IReadOnlyList<IDeploymentTarget> All => _targets.Values.ToList();
+    public IReadOnlyList<IDeploymentTarget> All => [.. _targets.Values];
 
     public bool IsSupported(DeploymentTargetType targetType) => _targets.ContainsKey(targetType);
 
@@ -20,7 +23,7 @@ public sealed class DeploymentTargetFactory : IDeploymentTargetFactory
     {
         if (_targets.TryGetValue(targetType, out var target))
         {
-	        return target;
+            return target;
         }
 
         var supported = string.Join(", ", _targets.Keys.Select(k => k.ToString().ToLower()));

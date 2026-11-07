@@ -1,7 +1,10 @@
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using Deployify.Core.Models;
 using Deployify.Core.Services;
-using Shouldly;
 using Microsoft.Extensions.Logging.Abstractions;
+using Shouldly;
 using Xunit;
 
 namespace Deployify.Core.Tests;
@@ -70,7 +73,7 @@ public sealed class PublisherRuntimeTests
             ContainerRuntime = ContainerRuntime.Docker
         };
 
-        await publisher.PublishAsync(manifest, config, "/app");
+        await publisher.PublishAsync(manifest, config, "/app", TestContext.Current.CancellationToken);
 
         publisher.CapturedArgs.ShouldNotContain(a => a.Contains("ContainerRuntimeIdentifier"));
     }
@@ -87,7 +90,7 @@ public sealed class PublisherRuntimeTests
             ContainerRuntime = ContainerRuntime.Podman
         };
 
-        await publisher.PublishAsync(manifest, config, "/app");
+        await publisher.PublishAsync(manifest, config, "/app", TestContext.Current.CancellationToken);
 
         publisher.CapturedArgs.ShouldContain(a => a.Contains("-p:ContainerRuntimeIdentifier=podman"));
     }
@@ -104,7 +107,7 @@ public sealed class PublisherRuntimeTests
             ContainerRuntime = ContainerRuntime.Podman
         };
 
-        await publisher.PublishAsync(manifest, config, "/app");
+        await publisher.PublishAsync(manifest, config, "/app", TestContext.Current.CancellationToken);
 
         publisher.CapturedArgs.ShouldContain(a => a.Contains("reg.io/app/myapi:v2"));
     }
@@ -121,7 +124,7 @@ public sealed class PublisherRuntimeTests
             ContainerRuntime = ContainerRuntime.Docker
         };
 
-        await publisher.PublishAsync(manifest, config, "/app");
+        await publisher.PublishAsync(manifest, config, "/app", TestContext.Current.CancellationToken);
 
         publisher.CapturedArgs.ShouldContain(a => a.Contains("reg.io/app/worker:sha-abc"));
     }
@@ -140,7 +143,7 @@ public sealed class PublisherRuntimeTests
         };
         var config = new EnvironmentConfig { ContainerRegistry = "reg.io/app", ImageTag = "v1" };
 
-        await publisher.PublishAsync(manifest, config, "/app");
+        await publisher.PublishAsync(manifest, config, "/app", TestContext.Current.CancellationToken);
 
         publisher.PublishedNames.ShouldContain("api");
         // single item implied;
@@ -161,7 +164,7 @@ public sealed class PublisherRuntimeTests
         };
         var config = new EnvironmentConfig { ContainerRegistry = "reg.io/app", ImageTag = "v1" };
 
-        await publisher.PublishAsync(manifest, config, "/app");
+        await publisher.PublishAsync(manifest, config, "/app", TestContext.Current.CancellationToken);
 
         publisher.PublishedNames.ShouldContain("api");
         // single item implied;
@@ -176,10 +179,10 @@ public sealed class PublisherRuntimeTests
         {
             ContainerRegistry = "reg.io/app",
             ImageTag = "v1",
-            ServiceOverrides = { ["api"] = new ServiceOverride { ImageTag = "canary" } }
+            ServiceOverrides = { ["api"] = new() { ImageTag = "canary" } }
         };
 
-        await publisher.PublishAsync(manifest, config, "/app");
+        await publisher.PublishAsync(manifest, config, "/app", TestContext.Current.CancellationToken);
 
         publisher.CapturedArgs.ShouldContain(a => a.Contains("reg.io/app/api:canary"));
     }
@@ -188,10 +191,10 @@ public sealed class PublisherRuntimeTests
 
     private static AspireManifest MakeManifest(string name) => new()
     {
-	    Resources = new Dictionary<string, AspireResource>
-	    {
-		    [name] = new() { Type = "project.v0", Path = $"{name}/{name}.csproj" }
-	    }
+        Resources = new Dictionary<string, AspireResource>
+        {
+            [name] = new() { Type = "project.v0", Path = $"{name}/{name}.csproj" }
+        }
     };
 
     /// <summary>
@@ -222,7 +225,7 @@ public sealed class PublisherRuntimeTests
             {
                 if (!resource.Type.StartsWith("project.v") || resource.Path is null)
                 {
-	                continue;
+                    continue;
                 }
 
                 var tag = config.ServiceOverrides.TryGetValue(name, out var ov) && ov.ImageTag is not null

@@ -10,56 +10,73 @@ public static class ValidateCommand
 {
     public static Command Build()
     {
-        var cmd = new Command("validate", "Validate generated artefacts against the target.");
-        cmd.AddOption(GlobalOptions.ProjectPath);
-        cmd.AddOption(GlobalOptions.Environment);
-        cmd.AddOption(GlobalOptions.Target);
+        var cmd = new Command("validate", "Validate generated artifacts against the target.");
+        cmd.Options.Add(GlobalOptions.ProjectPath);
+        cmd.Options.Add(GlobalOptions.Environment);
+        cmd.Options.Add(GlobalOptions.Target);
 
-        cmd.SetHandler(async ctx =>
+        cmd.SetAction(async (parseResult, ct) =>
         {
-            var projectPath = ctx.ParseResult.GetValueForOption(GlobalOptions.ProjectPath)!;
-            var envOverride = ctx.ParseResult.GetValueForOption(GlobalOptions.Environment);
-            var targetOpt = ctx.ParseResult.GetValueForOption(GlobalOptions.Target);
+            var exitCode = 0;
+            var projectPath = parseResult.GetValue(GlobalOptions.ProjectPath)!;
+            var envOverride = parseResult.GetValue(GlobalOptions.Environment);
+            var targetOpt = parseResult.GetValue(GlobalOptions.Target);
 
             ResolvedContext resolved;
-            try { resolved = await DependencyInjection.ResolveAsync(projectPath, envOverride, targetOpt); }
-            catch (Exception ex) { AnsiConsole.MarkupLine($"[red]✗[/] {ex.Message}"); ctx.ExitCode = 1; return; }
+            try
+            {
+                resolved = await DependencyInjection.ResolveAsync(projectPath, envOverride, targetOpt, ct);
+            }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(ex.Message)}");
+                return 1;
+            }
 
             var (_, config, envName, targetType, target, directory) = resolved;
             var outputDir = Path.Combine(directory, config.OutputPath);
 
             AnsiConsole.MarkupLine($"[dim]Environment: [cyan]{envName}[/] Target: [cyan]{target.DisplayName}[/] → {resolved.DisplayAddress}[/]\n");
 
-            var manifest = await resolved.LoadManifestAsync();
-            if (manifest is null) { ctx.ExitCode = 1; return; }
+            var manifest = await resolved.LoadManifestAsync(ct);
+            if (manifest is null)
+            {
+                return 1;
+            }
 
-            var results = await target.ValidateAsync(manifest, config, outputDir);
+            var results = await target.ValidateAsync(manifest, config, outputDir, ct);
 
             var table = new Table().Border(TableBorder.Rounded)
-                .AddColumn("Artefact").AddColumn("Status");
+                .AddColumn("Artifact").AddColumn("Status");
 
             var allValid = true;
             foreach (var r in results)
             {
                 if (r.IsValid)
                 {
-	                table.AddRow(r.ArtefactName, "[green]✓ Valid[/]");
+                    table.AddRow(Markup.Escape(r.ArtifactName), "[green]✓ Valid[/]");
                 }
                 else
                 {
                     allValid = false;
-                    table.AddRow(r.ArtefactName,
+                    table.AddRow(Markup.Escape(r.ArtifactName),
                         $"[red]✗ {r.Errors.Count} error(s)[/]\n" +
-                        string.Join("\n", r.Errors.Select(e => $"  • {e}")));
+                        string.Join("\n", r.Errors.Select(e => $"  • {Markup.Escape(e)}")));
                 }
             }
 
             AnsiConsole.Write(table);
-            if (!allValid) { AnsiConsole.MarkupLine("[red]Validation failed.[/]"); ctx.ExitCode = 1; }
+            if (!allValid)
+            {
+                AnsiConsole.MarkupLine("[red]Validation failed.[/]");
+                exitCode = 1;
+            }
             else
             {
-	            AnsiConsole.MarkupLine("[green]All artefacts valid.[/]");
+                AnsiConsole.MarkupLine("[green]All artifacts valid.[/]");
             }
+
+            return exitCode;
         });
 
         return cmd;

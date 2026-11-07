@@ -1,8 +1,25 @@
 <Solution>
   <Folder Name="/Solution Items/">
+    <File Path=".editorconfig" />
+    <File Path=".gitattributes" />
+    <File Path=".github/workflows/build.yml" />
+    <File Path=".github/workflows/release.yml" />
+    <File Path=".gitignore" />
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
     <File Path="README.md" />
   </Folder>
-  <Folder Name="/Tests/">
+  <Folder Name="/src/">
+    <Project Path="src/Deployify.Core/Deployify.Core.csproj" />
+    <Project Path="src/Deployify.Target.AwsEcs/Deployify.Target.AwsEcs.csproj" />
+    <Project Path="src/Deployify.Target.AzureContainerApps/Deployify.Target.AzureContainerApps.csproj" />
+    <Project Path="src/Deployify.Target.Compose/Deployify.Target.Compose.csproj" />
+    <Project Path="src/Deployify.Target.Kubernetes/Deployify.Target.Kubernetes.csproj" />
+    <Project Path="src/Deployify.Target.Nomad/Deployify.Target.Nomad.csproj" />
+    <Project Path="src/Deployify.Target.NomadConsul/Deployify.Target.NomadConsul.csproj" />
+    <Project Path="src/Deployify/Deployify.csproj" />
+  </Folder>
+  <Folder Name="/test/">
     <Project Path="test/Deployify.Core.Tests/Deployify.Core.Tests.csproj" />
     <Project Path="test/Deployify.Integration.Tests/Deployify.Integration.Tests.csproj" />
     <Project Path="test/Deployify.Target.AwsEcs.Tests/Deployify.Target.AwsEcs.Tests.csproj" />
@@ -12,12 +29,4 @@
     <Project Path="test/Deployify.Target.Nomad.Tests/Deployify.Target.Nomad.Tests.csproj" />
     <Project Path="test/Deployify.Target.NomadConsul.Tests/Deployify.Target.NomadConsul.Tests.csproj" />
   </Folder>
-  <Project Path="src/Deployify.Core/Deployify.Core.csproj" />
-  <Project Path="src/Deployify.Target.AwsEcs/Deployify.Target.AwsEcs.csproj" />
-  <Project Path="src/Deployify.Target.AzureContainerApps/Deployify.Target.AzureContainerApps.csproj" />
-  <Project Path="src/Deployify.Target.Compose/Deployify.Target.Compose.csproj" />
-  <Project Path="src/Deployify.Target.Kubernetes/Deployify.Target.Kubernetes.csproj" />
-  <Project Path="src/Deployify.Target.Nomad/Deployify.Target.Nomad.csproj" />
-  <Project Path="src/Deployify.Target.NomadConsul/Deployify.Target.NomadConsul.csproj" />
-  <Project Path="src/Deployify/Deployify.csproj" />
 </Solution>

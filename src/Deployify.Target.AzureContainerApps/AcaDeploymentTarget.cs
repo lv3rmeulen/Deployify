@@ -1,4 +1,10 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
 using Microsoft.Extensions.Logging;
@@ -22,7 +28,7 @@ public sealed class AcaDeploymentTarget(
     IPublisher publisher,
     ILogger<AcaDeploymentTarget> logger) : IDeploymentTarget
 {
-    private readonly AcaManifestGenerator _generator = new AcaManifestGenerator();
+    private readonly AcaManifestGenerator _generator = new();
 
     public DeploymentTargetType TargetType => DeploymentTargetType.AzureContainerApps;
     public string DisplayName => "Azure Container Apps";
@@ -32,9 +38,9 @@ public sealed class AcaDeploymentTarget(
     public async Task<(bool Ok, string? Error)> PingAsync(
         EnvironmentConfig config, CancellationToken ct = default)
     {
-        if (!await AcaCliClient.IsAvailableAsync())
+        if (!await AcaCliClient.IsAvailableAsync(ct))
         {
-	        return (false, "Azure CLI ('az') not found on PATH. Install it from https://aka.ms/install-azure-cli");
+            return (false, "Azure CLI ('az') not found on PATH. Install it from https://aka.ms/install-azure-cli");
         }
 
         var cfg = GetConfig(config);
@@ -55,7 +61,7 @@ public sealed class AcaDeploymentTarget(
         var paths = new List<string>();
         foreach (var app in apps)
         {
-	        paths.Add(await _generator.WriteAppSpecAsync(app, config, cfg, outputDirectory, ct));
+            paths.Add(await _generator.WriteAppSpecAsync(app, config, cfg, outputDirectory, ct));
         }
 
         return paths;
@@ -78,7 +84,7 @@ public sealed class AcaDeploymentTarget(
         {
             var path = await _generator.WriteAppSpecAsync(app, config, cfg, outputDirectory, ct);
             var errors = await client.ValidateAppSpecAsync(path, ct);
-            results.Add(new ValidationResult { ArtefactName = path, Errors = errors });
+            results.Add(new ValidationResult { ArtifactName = path, Errors = errors });
         }
 
         return results;
@@ -93,25 +99,37 @@ public sealed class AcaDeploymentTarget(
         CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
+        // The app spec needs the subscription to build the environment ID.
+        if (string.IsNullOrWhiteSpace(cfg.SubscriptionId))
+        {
+            cfg.SubscriptionId = await new AcaCliClient(cfg, logger).GetCurrentSubscriptionAsync(ct) ?? string.Empty;
+        }
+
         var apps = _generator.Generate(manifest, config, cfg);
 
         // Write specs to disk — apply reads these
         foreach (var app in apps)
         {
-	        await _generator.WriteAppSpecAsync(app, config, cfg, outputDirectory, ct);
+            await _generator.WriteAppSpecAsync(app, config, cfg, outputDirectory, ct);
         }
 
         var desired = apps.Select(a => a.Name).ToHashSet();
         var client = new AcaCliClient(cfg, logger);
         HashSet<string> running;
-        try { running = (await client.GetRunningAppNamesAsync(ct)).ToHashSet(); }
-        catch { running = []; }
+        try
+        {
+            running = [.. await client.GetRunningAppNamesAsync(ct)];
+        }
+        catch
+        {
+            running = [];
+        }
 
         return new PlanResult
         {
-            ToCreate = desired.Except(running).Select(n => (object)n).ToList(),
-            ToUpdate = desired.Intersect(running).Select(n => (object)n).ToList(),
-            ToDelete = running.Except(desired).ToList(),
+            ToCreate = [.. desired.Except(running).Select(n => (object)n)],
+            ToUpdate = [.. desired.Intersect(running).Select(n => (object)n)],
+            ToDelete = [.. running.Except(desired)],
             Unchanged = []
         };
     }
@@ -176,8 +194,8 @@ public sealed class AcaDeploymentTarget(
         AspireManifest manifest,
         EnvironmentConfig config,
         string appHostDirectory,
-        CancellationToken ct = default) =>
-        await publisher.PublishAsync(manifest, config, appHostDirectory, ct);
+        CancellationToken ct = default)
+        => await publisher.PublishAsync(manifest, config, appHostDirectory, ct);
 
     // ── Explain ───────────────────────────────────────────────────────────────
 
@@ -187,28 +205,31 @@ public sealed class AcaDeploymentTarget(
         var cfg = GetConfig(config);
         var apps = _generator.Generate(manifest, config, cfg);
 
-        return apps.Select(app => new ServiceExplanation
-        {
-            Name = app.Name,
-            Image = app.Image,
-            ImageTag = app.ImageTag,
-            Count = app.MaxReplicas,
-            Env = app.Env,
-            Ports = app.Ports.Select(p => $"{p.ContainerPort}/{p.Protocol}").ToList(),
-            Dependencies = app.Dependencies,
-            AdditionalInfo = new Dictionary<string, string>
+        return
+        [
+            .. apps.Select(app => new ServiceExplanation
             {
-                ["resourceGroup"] = cfg.ResourceGroup,
-                ["location"] = cfg.Location,
-                ["environment"] = cfg.EnvironmentName,
-                ["ingress"] = app.IngressType.ToString().ToLowerInvariant(),
-                ["minReplicas"] = app.MinReplicas.ToString(),
-                ["maxReplicas"] = app.MaxReplicas.ToString(),
-                ["cpu"] = $"{app.Cpu} cores",
-                ["memory"] = app.Memory,
-                ["type"] = app.IsProjectService ? "project" : "container"
-            }
-        }).ToList();
+                Name = app.Name,
+                Image = app.Image,
+                ImageTag = app.ImageTag,
+                Count = app.MaxReplicas,
+                Env = app.Env,
+                Ports = [.. app.Ports.Select(p => $"{p.ContainerPort}/{p.Protocol}")],
+                Dependencies = app.Dependencies,
+                AdditionalInfo = new Dictionary<string, string>
+                {
+                    ["resourceGroup"] = cfg.ResourceGroup,
+                    ["location"] = cfg.Location,
+                    ["environment"] = cfg.EnvironmentName,
+                    ["ingress"] = app.IngressType.ToString().ToLowerInvariant(),
+                    ["minReplicas"] = app.MinReplicas.ToString(),
+                    ["maxReplicas"] = app.MaxReplicas.ToString(),
+                    ["cpu"] = $"{app.Cpu} cores",
+                    ["memory"] = app.Memory,
+                    ["type"] = app.IsProjectService ? "project" : "container"
+                }
+            })
+        ];
     }
 
     // ── Graph ─────────────────────────────────────────────────────────────────
@@ -217,10 +238,12 @@ public sealed class AcaDeploymentTarget(
         AspireManifest manifest, EnvironmentConfig config)
     {
         var cfg = GetConfig(config);
-        return _generator.Generate(manifest, config, cfg)
-            .SelectMany(app => app.Dependencies.Select(dep =>
-                new ServiceDependency { From = dep, To = app.Name }))
-            .ToList();
+        return
+        [
+            .. _generator.Generate(manifest, config, cfg)
+                .SelectMany(app => app.Dependencies.Select(dep =>
+                    new ServiceDependency { From = dep, To = app.Name }))
+        ];
     }
 
     // ── Diff ──────────────────────────────────────────────────────────────────
@@ -237,12 +260,17 @@ public sealed class AcaDeploymentTarget(
         var entries = new List<DiffEntry>();
 
         HashSet<string> running;
-        try { running = (await client.GetRunningAppNamesAsync(ct)).ToHashSet(); }
+        try
+        {
+            running = [.. await client.GetRunningAppNamesAsync(ct)];
+        }
         catch
         {
-            return apps
-                .Select(a => new DiffEntry { ServiceName = a.Name, Kind = DiffKind.Added })
-                .ToList();
+            return
+            [
+                .. apps
+                    .Select(a => new DiffEntry { ServiceName = a.Name, Kind = DiffKind.Added })
+            ];
         }
 
         var desired = apps.Select(a => a.Name).ToHashSet();
@@ -268,7 +296,7 @@ public sealed class AcaDeploymentTarget(
 
         foreach (var name in running.Except(desired))
         {
-	        entries.Add(new DiffEntry { ServiceName = name, Kind = DiffKind.Removed });
+            entries.Add(new DiffEntry { ServiceName = name, Kind = DiffKind.Removed });
         }
 
         return entries;
@@ -280,7 +308,7 @@ public sealed class AcaDeploymentTarget(
     {
         if (config.TargetConfig.TryGetValue("aca", out var raw) && raw is JsonElement el)
         {
-	        return el.Deserialize<AcaTargetConfig>(TargetConfigJsonOptions.Default) ?? new AcaTargetConfig();
+            return el.Deserialize<AcaTargetConfig>(TargetConfigJsonOptions.Default) ?? new AcaTargetConfig();
         }
 
         return new AcaTargetConfig();

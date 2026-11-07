@@ -1,5 +1,7 @@
-using Shouldly;
+using System.IO;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Logging.Abstractions;
+using Shouldly;
 using Xunit;
 
 namespace Deployify.Target.AwsEcs.Tests;
@@ -24,9 +26,9 @@ public sealed class EcsCliClientValidationTests
         var config = EcsFixtures.EcsConfig();
         var ecsCfg = new EcsTargetConfig();
         var services = generator.Generate(EcsFixtures.SingleService("api"), config, ecsCfg);
-        var path = await generator.WriteTaskDefinitionAsync(services[0], config, ecsCfg, dir.Path);
+        var path = await generator.WriteTaskDefinitionAsync(services[0], config, ecsCfg, dir.Path, TestContext.Current.CancellationToken);
 
-        var errors = await Client().ValidateTaskDefinitionAsync(path);
+        var errors = await Client().ValidateTaskDefinitionAsync(path, TestContext.Current.CancellationToken);
 
         errors.ShouldBeEmpty();
     }
@@ -36,9 +38,9 @@ public sealed class EcsCliClientValidationTests
     {
         using var dir = new EcsFixtures.TempDir();
         var path = Path.Combine(dir.Path, "bad.taskdef.json");
-        await File.WriteAllTextAsync(path, """{"containerDefinitions": [{"name":"x"}], "networkMode": "awsvpc"}""");
+        await File.WriteAllTextAsync(path, """{"containerDefinitions": [{"name":"x"}], "networkMode": "awsvpc"}""", TestContext.Current.CancellationToken);
 
-        var errors = await Client().ValidateTaskDefinitionAsync(path);
+        var errors = await Client().ValidateTaskDefinitionAsync(path, TestContext.Current.CancellationToken);
 
         errors.ShouldContain(e => e.Contains("family"));
     }
@@ -48,9 +50,9 @@ public sealed class EcsCliClientValidationTests
     {
         using var dir = new EcsFixtures.TempDir();
         var path = Path.Combine(dir.Path, "bad.taskdef.json");
-        await File.WriteAllTextAsync(path, """{"family": "myapp", "networkMode": "awsvpc"}""");
+        await File.WriteAllTextAsync(path, """{"family": "myapp", "networkMode": "awsvpc"}""", TestContext.Current.CancellationToken);
 
-        var errors = await Client().ValidateTaskDefinitionAsync(path);
+        var errors = await Client().ValidateTaskDefinitionAsync(path, TestContext.Current.CancellationToken);
 
         errors.ShouldContain(e => e.Contains("containerDefinitions"));
     }
@@ -60,9 +62,9 @@ public sealed class EcsCliClientValidationTests
     {
         using var dir = new EcsFixtures.TempDir();
         var path = Path.Combine(dir.Path, "bad.taskdef.json");
-        await File.WriteAllTextAsync(path, """{"family": "myapp", "containerDefinitions": [], "networkMode": "awsvpc"}""");
+        await File.WriteAllTextAsync(path, """{"family": "myapp", "containerDefinitions": [], "networkMode": "awsvpc"}""", TestContext.Current.CancellationToken);
 
-        var errors = await Client().ValidateTaskDefinitionAsync(path);
+        var errors = await Client().ValidateTaskDefinitionAsync(path, TestContext.Current.CancellationToken);
 
         errors.ShouldContain(e => e.Contains("at least one"));
     }
@@ -72,9 +74,9 @@ public sealed class EcsCliClientValidationTests
     {
         using var dir = new EcsFixtures.TempDir();
         var path = Path.Combine(dir.Path, "bad.taskdef.json");
-        await File.WriteAllTextAsync(path, """{"family": "myapp", "containerDefinitions": [{"name":"x"}]}""");
+        await File.WriteAllTextAsync(path, """{"family": "myapp", "containerDefinitions": [{"name":"x"}]}""", TestContext.Current.CancellationToken);
 
-        var errors = await Client().ValidateTaskDefinitionAsync(path);
+        var errors = await Client().ValidateTaskDefinitionAsync(path, TestContext.Current.CancellationToken);
 
         errors.ShouldContain(e => e.Contains("networkMode"));
     }
@@ -84,9 +86,9 @@ public sealed class EcsCliClientValidationTests
     {
         using var dir = new EcsFixtures.TempDir();
         var path = Path.Combine(dir.Path, "bad.taskdef.json");
-        await File.WriteAllTextAsync(path, "{ not valid json }}}");
+        await File.WriteAllTextAsync(path, "{ not valid json }}}", TestContext.Current.CancellationToken);
 
-        var errors = await Client().ValidateTaskDefinitionAsync(path);
+        var errors = await Client().ValidateTaskDefinitionAsync(path, TestContext.Current.CancellationToken);
 
         errors.ShouldContain(e => e.Contains("Invalid JSON") || e.Contains("JSON"));
     }
@@ -96,9 +98,9 @@ public sealed class EcsCliClientValidationTests
     {
         using var dir = new EcsFixtures.TempDir();
         var path = Path.Combine(dir.Path, "bad.taskdef.json");
-        await File.WriteAllTextAsync(path, "{}");
+        await File.WriteAllTextAsync(path, "{}", TestContext.Current.CancellationToken);
 
-        var errors = await Client().ValidateTaskDefinitionAsync(path);
+        var errors = await Client().ValidateTaskDefinitionAsync(path, TestContext.Current.CancellationToken);
 
         errors.Count.ShouldBeGreaterThan(1);
     }

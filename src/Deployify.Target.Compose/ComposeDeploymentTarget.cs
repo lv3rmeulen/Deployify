@@ -1,4 +1,10 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
 using Microsoft.Extensions.Logging;
@@ -27,7 +33,7 @@ public sealed class ComposeDeploymentTarget(
     IPublisher publisher,
     ILogger<ComposeDeploymentTarget> logger) : IDeploymentTarget
 {
-    private readonly ComposeFileGenerator _generator = new ComposeFileGenerator();
+    private readonly ComposeFileGenerator _generator = new();
 
     public DeploymentTargetType TargetType => DeploymentTargetType.Compose;
     public string DisplayName => "Docker Compose";
@@ -37,14 +43,14 @@ public sealed class ComposeDeploymentTarget(
     public async Task<(bool Ok, string? Error)> PingAsync(
         EnvironmentConfig config, CancellationToken ct = default)
     {
-        if (!await ComposeRunner.IsAvailableAsync())
+        if (!await ComposeRunner.IsAvailableAsync(ct))
         {
-	        return (false, "Neither 'docker compose' nor 'docker-compose' found on PATH.");
+            return (false, "Neither 'docker compose' nor 'docker-compose' found on PATH.");
         }
 
         var cfg = GetConfig(config);
         var runner = new ComposeRunner(cfg, logger);
-        return await runner.PingAsync();
+        return await runner.PingAsync(ct);
     }
 
     // ── Generate ──────────────────────────────────────────────────────────────
@@ -61,12 +67,12 @@ public sealed class ComposeDeploymentTarget(
 
         foreach (var svc in services)
         {
-	        paths.Add(await _generator.WriteServiceFileAsync(svc, outputDirectory, cfg, ct));
+            paths.Add(await _generator.WriteServiceFileAsync(svc, outputDirectory, cfg, ct));
         }
 
         if (cfg.GenerateMergedFile)
         {
-	        paths.Add(await _generator.WriteMergedFileAsync(services, outputDirectory, cfg, ct));
+            paths.Add(await _generator.WriteMergedFileAsync(services, outputDirectory, cfg, ct));
         }
 
         return paths;
@@ -84,7 +90,7 @@ public sealed class ComposeDeploymentTarget(
         var services = _generator.Generate(manifest, config, cfg);
         var results = new List<ValidationResult>();
 
-        var cliAvailable = await ComposeRunner.IsAvailableAsync();
+        var cliAvailable = await ComposeRunner.IsAvailableAsync(ct);
         var runner = cliAvailable ? new ComposeRunner(cfg, logger) : null;
 
         // Validate each per-service file
@@ -94,17 +100,17 @@ public sealed class ComposeDeploymentTarget(
 
             if (runner is not null)
             {
-                var (ok, output) = await runner.ValidateAsync(filePath);
+                var (ok, output) = await runner.ValidateAsync(filePath, ct);
                 results.Add(new ValidationResult
                 {
-                    ArtefactName = filePath,
+                    ArtifactName = filePath,
                     Errors = ok ? [] : [output]
                 });
             }
             else
             {
                 // No CLI — just confirm the file was written
-                results.Add(new ValidationResult { ArtefactName = filePath, Errors = [] });
+                results.Add(new ValidationResult { ArtifactName = filePath, Errors = [] });
             }
         }
 
@@ -114,16 +120,16 @@ public sealed class ComposeDeploymentTarget(
             var mergedPath = await _generator.WriteMergedFileAsync(services, outputDirectory, cfg, ct);
             if (runner is not null)
             {
-                var (ok, output) = await runner.ValidateAsync(mergedPath);
+                var (ok, output) = await runner.ValidateAsync(mergedPath, ct);
                 results.Add(new ValidationResult
                 {
-                    ArtefactName = mergedPath,
+                    ArtifactName = mergedPath,
                     Errors = ok ? [] : [output]
                 });
             }
             else
             {
-                results.Add(new ValidationResult { ArtefactName = mergedPath, Errors = [] });
+                results.Add(new ValidationResult { ArtifactName = mergedPath, Errors = [] });
                 logger.LogWarning("docker compose not found — skipping config validation.");
             }
         }
@@ -145,36 +151,61 @@ public sealed class ComposeDeploymentTarget(
         // Generate all compose files to disk — apply will use these
         foreach (var svc in services)
         {
-	        await _generator.WriteServiceFileAsync(svc, outputDirectory, cfg, ct);
+            await _generator.WriteServiceFileAsync(svc, outputDirectory, cfg, ct);
         }
 
         if (cfg.GenerateMergedFile)
         {
-	        await _generator.WriteMergedFileAsync(services, outputDirectory, cfg, ct);
+            await _generator.WriteMergedFileAsync(services, outputDirectory, cfg, ct);
         }
 
         var desired = services.Select(s => s.Name).ToHashSet();
         IReadOnlyList<string> running = [];
+        string? dryRun = null;
+        var mergedPath = Path.Combine(outputDirectory, "compose.yml");
 
-        if (await ComposeRunner.IsAvailableAsync())
+        if (await ComposeRunner.IsAvailableAsync(ct) && File.Exists(mergedPath))
         {
             var runner = new ComposeRunner(cfg, logger);
-            var mergedPath = Path.Combine(outputDirectory, "compose.yml");
-            if (File.Exists(mergedPath))
+            running = await runner.GetRunningServicesAsync(mergedPath, ct);
+            dryRun = await runner.DryRunUpAsync(mergedPath, ct: ct);
+        }
+
+        // Dapr sidecars run as "<service>-dapr"; they belong to their service.
+        var runningSet = running
+            .Where(r => !(r.EndsWith("-dapr", StringComparison.Ordinal) && desired.Contains(r[..^5])))
+            .ToHashSet();
+
+        var result = new PlanResult();
+        foreach (var name in desired)
+        {
+            if (!runningSet.Contains(name))
             {
-	            running = await runner.GetRunningServicesAsync(mergedPath);
+                result.ToCreate.Add(name);
+                continue;
+            }
+
+            // `up --dry-run` names every container it would create or recreate. Without
+            // dry-run support (Compose < 2.18) we can't tell, so report an update.
+            var changed = dryRun is null || System.Text.RegularExpressions.Regex.IsMatch(dryRun,
+                $@"\b{System.Text.RegularExpressions.Regex.Escape(cfg.ProjectName)}[-_]{System.Text.RegularExpressions.Regex.Escape(name)}[-_]\d+\s+(Recreate|Create)",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (changed)
+            {
+                result.ToUpdate.Add(name);
+            }
+            else
+            {
+                result.Unchanged.Add(name);
             }
         }
 
-        var runningSet = running.ToHashSet();
-
-        return new PlanResult
+        foreach (var name in runningSet.Except(desired))
         {
-            ToCreate = desired.Except(runningSet).Select(n => (object)n).ToList(),
-            ToUpdate = desired.Intersect(runningSet).Select(n => (object)n).ToList(),
-            ToDelete = runningSet.Except(desired).ToList(),
-            Unchanged = []
-        };
+            result.ToDelete.Add(name);
+        }
+
+        return result;
     }
 
     // ── Apply ─────────────────────────────────────────────────────────────────
@@ -191,49 +222,42 @@ public sealed class ComposeDeploymentTarget(
 
         if (!File.Exists(mergedPath))
         {
-            return services.Select(s => new DeploymentResult
-            {
-                ServiceName = s.Name,
-                Success = false,
-                Error = $"compose.yml not found at {mergedPath}. Run 'deployify plan' first."
-            }).ToList();
+            return
+            [
+                .. services.Select(s => new DeploymentResult { ServiceName = s.Name, Success = false, Error = $"compose.yml not found at {mergedPath}. Run 'deployify plan' first." })
+            ];
         }
 
         var runner = new ComposeRunner(cfg, logger);
 
         // Ensure infrastructure exists
-        await runner.EnsureNetworkAsync();
+        await runner.EnsureNetworkAsync(ct);
         if (cfg.Volumes.Count > 0)
         {
-	        await runner.EnsureVolumesAsync(cfg.Volumes.Keys);
+            await runner.EnsureVolumesAsync(cfg.Volumes.Keys, ct);
         }
 
         // Bring everything up using the file plan already wrote
         var profiles = cfg.GenerateProfiles ? new[] { "prod" } : null;
-        var (ok, output) = await runner.UpAsync(mergedPath, profiles, forceRecreate: false);
+        var (ok, output) = await runner.UpAsync(mergedPath, profiles, forceRecreate: false, ct: ct);
 
         if (!ok)
         {
             logger.LogError("docker compose up failed: {Output}", output);
-            return services.Select(s => new DeploymentResult
-            {
-                ServiceName = s.Name,
-                Success = false,
-                Error = output.Trim()
-            }).ToList();
+            return
+            [
+                .. services.Select(s => new DeploymentResult { ServiceName = s.Name, Success = false, Error = output.Trim() })
+            ];
         }
 
         logger.LogInformation("docker compose up succeeded:\n{Output}", output);
 
-        var nowRunning = (await runner.GetRunningServicesAsync(mergedPath)).ToHashSet();
+        var nowRunning = (await runner.GetRunningServicesAsync(mergedPath, ct)).ToHashSet();
 
-        return services.Select(s => new DeploymentResult
-        {
-            ServiceName = s.Name,
-            DeploymentId = $"{cfg.ProjectName}/{s.Name}",
-            Success = nowRunning.Contains(s.Name),
-            Error = nowRunning.Contains(s.Name) ? null : "Service did not start — check logs."
-        }).ToList();
+        return
+        [
+            .. services.Select(s => new DeploymentResult { ServiceName = s.Name, DeploymentId = $"{cfg.ProjectName}/{s.Name}", Success = nowRunning.Contains(s.Name), Error = nowRunning.Contains(s.Name) ? null : "Service did not start — check logs." })
+        ];
     }
 
     // ── Publish ───────────────────────────────────────────────────────────────
@@ -242,8 +266,8 @@ public sealed class ComposeDeploymentTarget(
         AspireManifest manifest,
         EnvironmentConfig config,
         string appHostDirectory,
-        CancellationToken ct = default) =>
-        await publisher.PublishAsync(manifest, config, appHostDirectory, ct);
+        CancellationToken ct = default)
+        => await publisher.PublishAsync(manifest, config, appHostDirectory, ct);
 
     // ── Explain ───────────────────────────────────────────────────────────────
 
@@ -252,26 +276,29 @@ public sealed class ComposeDeploymentTarget(
         var cfg = GetConfig(config);
         var services = _generator.Generate(manifest, config, cfg);
 
-        return services.Select(svc => new ServiceExplanation
-        {
-            Name = svc.Name,
-            Image = svc.Image,
-            ImageTag = svc.ImageTag,
-            Count = svc.Replicas,
-            Env = svc.Env,
-            Ports = svc.Ports.Select(p => $"{p.HostPort}→{p.ContainerPort}/{p.Protocol}").ToList(),
-            Dependencies = svc.DependsOn,
-            AdditionalInfo = new Dictionary<string, string>
+        return
+        [
+            .. services.Select(svc => new ServiceExplanation
             {
-                ["restart"] = svc.RestartPolicy,
-                ["profiles"] = svc.Profiles.Count > 0 ? string.Join(", ", svc.Profiles) : "none",
-                ["volumes"] = svc.NamedVolumes.Count + svc.BindMounts.Count > 0
-                                  ? $"{svc.NamedVolumes.Count} named, {svc.BindMounts.Count} bind"
-                                  : "none",
-                ["network"] = cfg.ProjectName,
-                ["type"] = svc.IsProjectService ? "project" : "container"
-            }
-        }).ToList();
+                Name = svc.Name,
+                Image = svc.Image,
+                ImageTag = svc.ImageTag,
+                Count = svc.Replicas,
+                Env = svc.Env,
+                Ports = [.. svc.Ports.Select(p => $"{p.HostPort}→{p.ContainerPort}/{p.Protocol}")],
+                Dependencies = svc.DependsOn,
+                AdditionalInfo = new Dictionary<string, string>
+                {
+                    ["restart"] = svc.RestartPolicy,
+                    ["profiles"] = svc.Profiles.Count > 0 ? string.Join(", ", svc.Profiles) : "none",
+                    ["volumes"] = svc.NamedVolumes.Count + svc.BindMounts.Count > 0
+                        ? $"{svc.NamedVolumes.Count} named, {svc.BindMounts.Count} bind"
+                        : "none",
+                    ["network"] = cfg.ProjectName,
+                    ["type"] = svc.IsProjectService ? "project" : "container"
+                }
+            })
+        ];
     }
 
     // ── Graph ─────────────────────────────────────────────────────────────────
@@ -282,10 +309,12 @@ public sealed class ComposeDeploymentTarget(
         var cfg = GetConfig(config);
         var services = _generator.Generate(manifest, config, cfg);
 
-        return services
-            .SelectMany(svc => svc.DependsOn.Select(dep =>
-                new ServiceDependency { From = dep, To = svc.Name }))
-            .ToList();
+        return
+        [
+            .. services
+                .SelectMany(svc => svc.DependsOn.Select(dep =>
+                    new ServiceDependency { From = dep, To = svc.Name }))
+        ];
     }
 
     // ── Diff ──────────────────────────────────────────────────────────────────
@@ -300,15 +329,13 @@ public sealed class ComposeDeploymentTarget(
         var services = _generator.Generate(manifest, config, cfg);
         var entries = new List<DiffEntry>();
 
-        if (!await ComposeRunner.IsAvailableAsync())
+        if (!await ComposeRunner.IsAvailableAsync(ct))
         {
             // No CLI — report all services as unknown
-            return services.Select(s => new DiffEntry
-            {
-                ServiceName = s.Name,
-                Kind = DiffKind.Unchanged,
-                Field = "compose CLI not available — cannot diff live state"
-            }).ToList();
+            return
+            [
+                .. services.Select(s => new DiffEntry { ServiceName = s.Name, Kind = DiffKind.Unchanged, Field = "compose CLI not available — cannot diff live state" })
+            ];
         }
 
         var runner = new ComposeRunner(cfg, logger);
@@ -317,7 +344,7 @@ public sealed class ComposeDeploymentTarget(
         // Write files so we have something to compare
         foreach (var svc in services)
         {
-	        await _generator.WriteServiceFileAsync(svc, outputDirectory, cfg, ct);
+            await _generator.WriteServiceFileAsync(svc, outputDirectory, cfg, ct);
         }
 
         await _generator.WriteMergedFileAsync(services, outputDirectory, cfg, ct);
@@ -325,8 +352,14 @@ public sealed class ComposeDeploymentTarget(
         IReadOnlyList<string> running = [];
         if (File.Exists(mergedPath))
         {
-            try { running = await runner.GetRunningServicesAsync(mergedPath); }
-            catch { running = []; }
+            try
+            {
+                running = await runner.GetRunningServicesAsync(mergedPath, ct);
+            }
+            catch
+            {
+                running = [];
+            }
         }
 
         var runningSet = running.ToHashSet();
@@ -334,7 +367,7 @@ public sealed class ComposeDeploymentTarget(
 
         // Try docker compose up --dry-run for rich diff (Compose v2.18+)
         var dryRunOutput = await runner.DryRunUpAsync(mergedPath,
-            cfg.GenerateProfiles ? new[] { "prod" } : null);
+            cfg.GenerateProfiles ? new[] { "prod" } : null, ct);
 
         if (dryRunOutput is not null)
         {
@@ -365,18 +398,18 @@ public sealed class ComposeDeploymentTarget(
             // Fallback: name-only diff
             foreach (var svc in services)
             {
-	            entries.Add(new DiffEntry
-	            {
-		            ServiceName = svc.Name,
-		            Kind = runningSet.Contains(svc.Name) ? DiffKind.Unchanged : DiffKind.Added
-	            });
+                entries.Add(new DiffEntry
+                {
+                    ServiceName = svc.Name,
+                    Kind = runningSet.Contains(svc.Name) ? DiffKind.Unchanged : DiffKind.Added
+                });
             }
         }
 
         // Services running but not in manifest
         foreach (var name in runningSet.Except(desiredSet))
         {
-	        entries.Add(new DiffEntry { ServiceName = name, Kind = DiffKind.Removed });
+            entries.Add(new DiffEntry { ServiceName = name, Kind = DiffKind.Removed });
         }
 
         return entries;
@@ -388,7 +421,7 @@ public sealed class ComposeDeploymentTarget(
     {
         if (config.TargetConfig.TryGetValue("compose", out var raw) && raw is JsonElement el)
         {
-	        return el.Deserialize<ComposeTargetConfig>(TargetConfigJsonOptions.Default) ?? new ComposeTargetConfig();
+            return el.Deserialize<ComposeTargetConfig>(TargetConfigJsonOptions.Default) ?? new ComposeTargetConfig();
         }
 
         return new ComposeTargetConfig();

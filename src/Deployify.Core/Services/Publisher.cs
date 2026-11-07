@@ -1,5 +1,10 @@
+using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
 using Microsoft.Extensions.Logging;
@@ -26,7 +31,7 @@ public class Publisher(ILogger<Publisher> logger) : IPublisher
         }
 
         var runtimeArg = runtime == ContainerRuntime.Podman
-            ? " -p:ContainerRuntimeIdentifier=podman"
+            ? " -p:LocalRegistry=podman"
             : string.Empty;
 
         // Pass the daemon socket explicitly so Microsoft.NET.Build.Containers finds it
@@ -37,7 +42,7 @@ public class Publisher(ILogger<Publisher> logger) : IPublisher
         {
             if (!resource.Type.StartsWith("project.v") || resource.Path is null)
             {
-	            continue;
+                continue;
             }
 
             var projectPath = ResolveProjectPath(appHostDirectory, resource.Path!);
@@ -100,7 +105,7 @@ public class Publisher(ILogger<Publisher> logger) : IPublisher
             {
                 if (File.Exists(path))
                 {
-	                return $" -p:ContainerDaemonSocket=unix://{path}";
+                    return $" -p:ContainerDaemonSocket=unix://{path}";
                 }
             }
 
@@ -108,7 +113,7 @@ public class Publisher(ILogger<Publisher> logger) : IPublisher
             var dockerHost = Environment.GetEnvironmentVariable("DOCKER_HOST");
             if (!string.IsNullOrEmpty(dockerHost))
             {
-	            return $" -p:ContainerDaemonSocket={dockerHost}";
+                return $" -p:ContainerDaemonSocket={dockerHost}";
             }
         }
         else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -123,21 +128,21 @@ public class Publisher(ILogger<Publisher> logger) : IPublisher
             var sock = Environment.GetEnvironmentVariable("DOCKER_HOST");
             if (!string.IsNullOrEmpty(sock))
             {
-	            return $" -p:ContainerDaemonSocket={sock}";
+                return $" -p:ContainerDaemonSocket={sock}";
             }
 
             var defaultSock = "/var/run/docker.sock";
             if (File.Exists(defaultSock))
             {
-	            return $" -p:ContainerDaemonSocket=unix://{defaultSock}";
+                return $" -p:ContainerDaemonSocket=unix://{defaultSock}";
             }
         }
 
         return string.Empty;
     }
 
-    private static async Task<bool> IsRuntimeReachableAsync(ContainerRuntime runtime, CancellationToken ct) =>
-        runtime == ContainerRuntime.Podman
+    private static async Task<bool> IsRuntimeReachableAsync(ContainerRuntime runtime, CancellationToken ct)
+        => runtime == ContainerRuntime.Podman
             ? await IsPodmanReachableAsync(ct)
             : await IsDockerReachableAsync(ct);
 
@@ -149,12 +154,12 @@ public class Publisher(ILogger<Publisher> logger) : IPublisher
     {
         if (configured == ContainerRuntime.Podman)
         {
-	        return ContainerRuntime.Podman;
+            return ContainerRuntime.Podman;
         }
 
         if (await IsDockerReachableAsync(ct))
         {
-	        return ContainerRuntime.Docker;
+            return ContainerRuntime.Docker;
         }
 
         if (await IsPodmanReachableAsync(ct))
@@ -180,10 +185,10 @@ public class Publisher(ILogger<Publisher> logger) : IPublisher
     {
         // Aspire emits resource paths relative to the AppHost project directory.
         // Path.GetFullPath correctly resolves ../ segments.
-        var normalised = resourcePath.Replace('/', Path.DirectorySeparatorChar)
+        var normalized = resourcePath.Replace('/', Path.DirectorySeparatorChar)
                                      .Replace('\\', Path.DirectorySeparatorChar);
 
-        var resolved = Path.GetFullPath(Path.Combine(appHostDirectory, normalised));
+        var resolved = Path.GetFullPath(Path.Combine(appHostDirectory, normalized));
         if (File.Exists(resolved))
         {
             logger.LogInformation("Resolved '{Resource}' → {Path}", resourcePath, resolved);
@@ -192,8 +197,8 @@ public class Publisher(ILogger<Publisher> logger) : IPublisher
 
         // Aspire sometimes generates one extra ../ depending on how dotnet run was invoked.
         // If the direct resolution doesn't exist, strip the leading ..\ and try again.
-        var stripped = StripLeadingParent(normalised);
-        if (stripped != normalised)
+        var stripped = StripLeadingParent(normalized);
+        if (stripped != normalized)
         {
             var viaStripped = Path.GetFullPath(Path.Combine(appHostDirectory, stripped));
             if (File.Exists(viaStripped))
@@ -209,7 +214,7 @@ public class Publisher(ILogger<Publisher> logger) : IPublisher
         return resolved;
     }
 
-    /// <summary>Removes the first ..\ or ../ segment from a normalised path.</summary>
+    /// <summary>Removes the first ..\ or ../ segment from a normalized path.</summary>
     private static string StripLeadingParent(string path)
     {
         var parent = ".." + Path.DirectorySeparatorChar;
@@ -225,11 +230,15 @@ public class Publisher(ILogger<Publisher> logger) : IPublisher
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromSeconds(3));
             var psi = new ProcessStartInfo("docker", "info")
-                { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
             using var proc = Process.Start(psi);
             if (proc is null)
             {
-	            return false;
+                return false;
             }
 
             try
@@ -242,12 +251,22 @@ public class Publisher(ILogger<Publisher> logger) : IPublisher
             }
             catch (OperationCanceledException)
             {
-                try { proc.Kill(entireProcessTree: true); } catch { /* ignore */ }
+                try
+                {
+                    proc.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    /* ignore */
+                }
 
                 return false;
             }
         }
-        catch { return false; }
+        catch
+        {
+            return false;
+        }
     }
 
     private static async Task<bool> IsPodmanReachableAsync(CancellationToken ct)
@@ -258,11 +277,15 @@ public class Publisher(ILogger<Publisher> logger) : IPublisher
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromSeconds(3));
             var psi = new ProcessStartInfo("podman", "info")
-                { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
             using var proc = Process.Start(psi);
             if (proc is null)
             {
-	            return false;
+                return false;
             }
 
             try
@@ -275,19 +298,29 @@ public class Publisher(ILogger<Publisher> logger) : IPublisher
             }
             catch (OperationCanceledException)
             {
-                try { proc.Kill(entireProcessTree: true); } catch { /* ignore */ }
+                try
+                {
+                    proc.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    /* ignore */
+                }
 
                 return false;
             }
         }
-        catch { return false; }
+        catch
+        {
+            return false;
+        }
     }
 
     private static void TrySetPodmanSocketAsDockerHost()
     {
         if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DOCKER_HOST")))
         {
-	        return;
+            return;
         }
 
         foreach (var path in PodmanSocketCandidates())
@@ -308,7 +341,7 @@ public class Publisher(ILogger<Publisher> logger) : IPublisher
         {
             if (uid.HasValue)
             {
-	            yield return $"/run/user/{uid}/podman/podman.sock";
+                yield return $"/run/user/{uid}/podman/podman.sock";
             }
 
             yield return Path.Combine(home, ".local/share/containers/podman/machine/podman.sock");
@@ -322,29 +355,32 @@ public class Publisher(ILogger<Publisher> logger) : IPublisher
         }
     }
 
+    /// <summary>
+    /// The current user id, read straight from libc rather than by running <c>id -u</c>,
+    /// so finding the rootless Podman socket needs no blocking child process.
+    /// </summary>
     private static int? GetUid()
     {
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux) &&
             !RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
-	        return null;
+            return null;
         }
 
         try
         {
-            var psi = new ProcessStartInfo("id", "-u")
-                { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
-            using var proc = Process.Start(psi);
-            if (proc is null)
-            {
-	            return null;
-            }
-
-            var output = proc.StandardOutput.ReadToEnd().Trim();
-            proc.WaitForExit();
-            return int.TryParse(output, out var uid) ? uid : null;
+            return (int)NativeMethods.getuid();
         }
-        catch { return null; }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static class NativeMethods
+    {
+        [DllImport("libc")]
+        internal static extern uint getuid();
     }
 
     private static async Task RunAsync(string command, string args, CancellationToken ct)
@@ -360,13 +396,31 @@ public class Publisher(ILogger<Publisher> logger) : IPublisher
 
         var stdoutTask = proc.StandardOutput.ReadToEndAsync(ct);
         var stderrTask = proc.StandardError.ReadToEndAsync(ct);
-        await proc.WaitForExitAsync(ct);
-        await Task.WhenAll(stdoutTask, stderrTask);
+        try
+        {
+            await proc.WaitForExitAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                proc.Kill(entireProcessTree: true);
+            }
+            catch
+            {
+                /* already exited */
+            }
+
+            throw;
+        }
+
+        await stdoutTask;
+        var stderr = await stderrTask;
 
         if (proc.ExitCode != 0)
         {
-	        throw new InvalidOperationException(
-		        $"{command} exited with {proc.ExitCode}: {stderrTask.Result}");
+            throw new InvalidOperationException(
+                $"{command} exited with {proc.ExitCode}: {stderr}");
         }
     }
 }

@@ -1,5 +1,7 @@
+using System.IO;
+using System.Linq;
 using System.Text.Json;
-using Deployify.Core.Models;
+using System.Threading.Tasks;
 using Shouldly;
 using Xunit;
 
@@ -47,7 +49,7 @@ public sealed class EcsTaskDefinitionGeneratorTests
     public void Generate_RespectsServiceOverride_ImageTag()
     {
         var config = EcsFixtures.EcsConfig();
-        config.ServiceOverrides["myapp"] = new ServiceOverride { ImageTag = "canary" };
+        config.ServiceOverrides["myapp"] = new() { ImageTag = "canary" };
         var services = _sut.Generate(EcsFixtures.SingleService("myapp"), config, new EcsTargetConfig());
         services[0].ImageTag.ShouldBe("canary");
     }
@@ -56,7 +58,7 @@ public sealed class EcsTaskDefinitionGeneratorTests
     public void Generate_RespectsServiceOverride_Count()
     {
         var config = EcsFixtures.EcsConfig();
-        config.ServiceOverrides["myapp"] = new ServiceOverride { Count = 5 };
+        config.ServiceOverrides["myapp"] = new() { Count = 5 };
         var services = _sut.Generate(EcsFixtures.SingleService("myapp"), config, new EcsTargetConfig());
         services[0].DesiredCount.ShouldBe(5);
     }
@@ -117,7 +119,7 @@ public sealed class EcsTaskDefinitionGeneratorTests
         var ecsCfg = new EcsTargetConfig { Region = "us-east-1", ClusterName = "test" };
         var services = _sut.Generate(EcsFixtures.SingleService("myapi"), config, ecsCfg);
 
-        var path = await _sut.WriteTaskDefinitionAsync(services[0], config, ecsCfg, dir.Path);
+        var path = await _sut.WriteTaskDefinitionAsync(services[0], config, ecsCfg, dir.Path, TestContext.Current.CancellationToken);
 
         File.Exists(path).ShouldBeTrue();
         path.ShouldEndWith("myapi.taskdef.json");
@@ -131,8 +133,8 @@ public sealed class EcsTaskDefinitionGeneratorTests
         var ecsCfg = new EcsTargetConfig { Region = "eu-west-1" };
         var services = _sut.Generate(EcsFixtures.SingleService("api"), config, ecsCfg);
 
-        var path = await _sut.WriteTaskDefinitionAsync(services[0], config, ecsCfg, dir.Path);
-        var json = await File.ReadAllTextAsync(path);
+        var path = await _sut.WriteTaskDefinitionAsync(services[0], config, ecsCfg, dir.Path, TestContext.Current.CancellationToken);
+        var json = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
 
         var act = () => JsonDocument.Parse(json);
         Should.NotThrow(act);
@@ -146,8 +148,8 @@ public sealed class EcsTaskDefinitionGeneratorTests
         var ecsCfg = new EcsTargetConfig();
         var services = _sut.Generate(EcsFixtures.SingleService("myapi"), config, ecsCfg);
 
-        var path = await _sut.WriteTaskDefinitionAsync(services[0], config, ecsCfg, dir.Path);
-        var doc = JsonDocument.Parse(await File.ReadAllTextAsync(path));
+        var path = await _sut.WriteTaskDefinitionAsync(services[0], config, ecsCfg, dir.Path, TestContext.Current.CancellationToken);
+        var doc = JsonDocument.Parse(await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken));
 
         doc.RootElement.GetProperty("family").GetString().ShouldBe("myapi");
     }
@@ -160,8 +162,8 @@ public sealed class EcsTaskDefinitionGeneratorTests
         var ecsCfg = new EcsTargetConfig();
         var services = _sut.Generate(EcsFixtures.SingleService("api"), config, ecsCfg);
 
-        var path = await _sut.WriteTaskDefinitionAsync(services[0], config, ecsCfg, dir.Path);
-        var doc = JsonDocument.Parse(await File.ReadAllTextAsync(path));
+        var path = await _sut.WriteTaskDefinitionAsync(services[0], config, ecsCfg, dir.Path, TestContext.Current.CancellationToken);
+        var doc = JsonDocument.Parse(await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken));
 
         doc.RootElement.GetProperty("containerDefinitions").GetArrayLength().ShouldBe(1);
     }
@@ -176,8 +178,8 @@ public sealed class EcsTaskDefinitionGeneratorTests
         var ecsCfg = new EcsTargetConfig();
         var services = _sut.Generate(EcsFixtures.SingleService("api"), config, ecsCfg);
 
-        var path = await _sut.WriteTaskDefinitionAsync(services[0], config, ecsCfg, dir.Path);
-        var json = await File.ReadAllTextAsync(path);
+        var path = await _sut.WriteTaskDefinitionAsync(services[0], config, ecsCfg, dir.Path, TestContext.Current.CancellationToken);
+        var json = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
 
         json.ShouldContain("reg.io/myapp/api:v2");
     }
@@ -190,8 +192,8 @@ public sealed class EcsTaskDefinitionGeneratorTests
         var ecsCfg = new EcsTargetConfig();
         var services = _sut.Generate(EcsFixtures.SingleService("api", "project.v0", 8080), config, ecsCfg);
 
-        var path = await _sut.WriteTaskDefinitionAsync(services[0], config, ecsCfg, dir.Path);
-        var doc = JsonDocument.Parse(await File.ReadAllTextAsync(path));
+        var path = await _sut.WriteTaskDefinitionAsync(services[0], config, ecsCfg, dir.Path, TestContext.Current.CancellationToken);
+        var doc = JsonDocument.Parse(await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken));
 
         var container = doc.RootElement.GetProperty("containerDefinitions")[0];
         container.GetProperty("portMappings").GetArrayLength().ShouldBeGreaterThan(0);
@@ -206,8 +208,8 @@ public sealed class EcsTaskDefinitionGeneratorTests
         var services = _sut.Generate(EcsFixtures.SimpleManifest(), config, ecsCfg);
         var api = services.Single(s => s.Name == "api");
 
-        var path = await _sut.WriteTaskDefinitionAsync(api, config, ecsCfg, dir.Path);
-        var json = await File.ReadAllTextAsync(path);
+        var path = await _sut.WriteTaskDefinitionAsync(api, config, ecsCfg, dir.Path, TestContext.Current.CancellationToken);
+        var json = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
 
         json.ShouldContain("ASPNETCORE_ENVIRONMENT");
     }
@@ -220,8 +222,8 @@ public sealed class EcsTaskDefinitionGeneratorTests
         var ecsCfg = new EcsTargetConfig { Region = "ap-southeast-1" };
         var services = _sut.Generate(EcsFixtures.SingleService("api"), config, ecsCfg);
 
-        var path = await _sut.WriteTaskDefinitionAsync(services[0], config, ecsCfg, dir.Path);
-        var json = await File.ReadAllTextAsync(path);
+        var path = await _sut.WriteTaskDefinitionAsync(services[0], config, ecsCfg, dir.Path, TestContext.Current.CancellationToken);
+        var json = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
 
         json.ShouldContain("awslogs");
         json.ShouldContain("ap-southeast-1");
@@ -235,8 +237,8 @@ public sealed class EcsTaskDefinitionGeneratorTests
         var ecsCfg = new EcsTargetConfig { LaunchType = EcsLaunchType.Fargate };
         var services = _sut.Generate(EcsFixtures.SingleService("api"), config, ecsCfg);
 
-        var path = await _sut.WriteTaskDefinitionAsync(services[0], config, ecsCfg, dir.Path);
-        var json = await File.ReadAllTextAsync(path);
+        var path = await _sut.WriteTaskDefinitionAsync(services[0], config, ecsCfg, dir.Path, TestContext.Current.CancellationToken);
+        var json = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
 
         json.ShouldContain("FARGATE");
     }
@@ -249,8 +251,8 @@ public sealed class EcsTaskDefinitionGeneratorTests
         var ecsCfg = new EcsTargetConfig();
         var services = _sut.Generate(EcsFixtures.SingleService("api"), config, ecsCfg);
 
-        var path = await _sut.WriteTaskDefinitionAsync(services[0], config, ecsCfg, dir.Path);
-        var json = await File.ReadAllTextAsync(path);
+        var path = await _sut.WriteTaskDefinitionAsync(services[0], config, ecsCfg, dir.Path, TestContext.Current.CancellationToken);
+        var json = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
 
         json.ShouldContain("awsvpc");
     }
@@ -263,8 +265,8 @@ public sealed class EcsTaskDefinitionGeneratorTests
         var ecsCfg = new EcsTargetConfig { ExecutionRoleArn = "arn:aws:iam::123:role/ecsExec" };
         var services = _sut.Generate(EcsFixtures.SingleService("api"), config, ecsCfg);
 
-        var path = await _sut.WriteTaskDefinitionAsync(services[0], config, ecsCfg, dir.Path);
-        var json = await File.ReadAllTextAsync(path);
+        var path = await _sut.WriteTaskDefinitionAsync(services[0], config, ecsCfg, dir.Path, TestContext.Current.CancellationToken);
+        var json = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
 
         json.ShouldContain("arn:aws:iam::123:role/ecsExec");
     }
@@ -277,7 +279,7 @@ public sealed class EcsTaskDefinitionGeneratorTests
         var ecsCfg = new EcsTargetConfig();
         foreach (var svc in _sut.Generate(EcsFixtures.SimpleManifest(), config, ecsCfg))
         {
-	        await _sut.WriteTaskDefinitionAsync(svc, config, ecsCfg, dir.Path);
+            await _sut.WriteTaskDefinitionAsync(svc, config, ecsCfg, dir.Path, TestContext.Current.CancellationToken);
         }
 
         Directory.GetFiles(dir.Path, "*.taskdef.json").Length.ShouldBe(3);
@@ -291,8 +293,8 @@ public sealed class EcsTaskDefinitionGeneratorTests
         var ecsCfg = new EcsTargetConfig();
         var services = _sut.Generate(EcsFixtures.SingleService("api"), config, ecsCfg);
 
-        var path1 = await _sut.WriteTaskDefinitionAsync(services[0], config, ecsCfg, dir.Path);
-        var path2 = await _sut.WriteTaskDefinitionAsync(services[0], config, ecsCfg, dir.Path);
+        var path1 = await _sut.WriteTaskDefinitionAsync(services[0], config, ecsCfg, dir.Path, TestContext.Current.CancellationToken);
+        var path2 = await _sut.WriteTaskDefinitionAsync(services[0], config, ecsCfg, dir.Path, TestContext.Current.CancellationToken);
 
         path1.ShouldBe(path2);
         Directory.GetFiles(dir.Path, "*.taskdef.json").Length.ShouldBe(1);

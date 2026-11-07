@@ -1,12 +1,13 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
 using Deployify.Core.Services;
-using Deployify.Target.AzureContainerApps;
 using Deployify.Target.AwsEcs;
+using Deployify.Target.AzureContainerApps;
 using Deployify.Target.Compose;
 using Deployify.Target.Kubernetes;
 using Deployify.Target.Nomad;
@@ -20,8 +21,8 @@ namespace Deployify.Commands;
 internal static class DependencyInjection
 {
     /// <summary>Core services — no target-specific clients.</summary>
-    public static IServiceCollection AddDeployifyCore(this IServiceCollection services) =>
-        services
+    public static IServiceCollection AddDeployifyCore(this IServiceCollection services)
+        => services
             .AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Information))
             .AddSingleton<IStateManager, StateManager>()
             .AddSingleton<IManifestReader, ManifestReader>()
@@ -43,7 +44,8 @@ internal static class DependencyInjection
     public static async Task<ResolvedContext> ResolveAsync(
         string projectPath,
         string? envOverride,
-        DeploymentTargetType? targetOverride)
+        DeploymentTargetType? targetOverride,
+        CancellationToken ct = default)
     {
         var appHostDirectory = File.Exists(projectPath)
             ? Path.GetDirectoryName(Path.GetFullPath(projectPath))!
@@ -57,7 +59,7 @@ internal static class DependencyInjection
 
         var sp0 = new ServiceCollection().AddDeployifyCore().BuildServiceProvider();
         var stateManager = sp0.GetRequiredService<IStateManager>();
-        var (config, envName) = await stateManager.LoadActiveAsync(stateDirectory, envOverride);
+        var (config, envName) = await stateManager.LoadActiveAsync(stateDirectory, envOverride, ct);
 
         // Prefer AppHostPath from state; fall back to the path the user passed.
         // Manifest resource paths are relative to the AppHost project directory.
@@ -82,7 +84,7 @@ internal static class DependencyInjection
         {
             if (File.Exists(Path.Combine(candidate, "deployify-state.json")))
             {
-	            return candidate;
+                return candidate;
             }
 
             candidate = Path.GetDirectoryName(candidate);
@@ -129,7 +131,7 @@ internal sealed record ResolvedContext(
             if (!Config.TargetConfig.TryGetValue(key, out var raw) ||
                 raw is not System.Text.Json.JsonElement el)
             {
-	            return "-";
+                return "-";
             }
 
             return Config.Target switch
@@ -161,21 +163,45 @@ internal sealed record ResolvedContext(
         var path = Path.Combine(Directory, Config.OutputPath, "manifest.json");
         try
         {
-            if (!File.Exists(path))
+            if (!File.Exists(path) || IsManifestStale(path, AppHostDirectory))
             {
-	            path = await reader.GenerateAsync(AppHostDirectory, Path.Combine(Directory, Config.OutputPath), ct);
+                path = await reader.GenerateAsync(AppHostDirectory, Path.Combine(Directory, Config.OutputPath), ct);
             }
 
             var manifest = await reader.ReadAsync(path, ct);
             return manifest
                 .WithDashboardIfEnabled(Config)
-                .WithDaprIfEnabled(Config);
+                .WithDaprIfEnabled(Config)
+                .WithInferredReferences();
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Could not load manifest: {ex.Message}");
+            AnsiConsole.MarkupLine($"[red]✗[/] Could not load manifest: {Markup.Escape(ex.Message)}");
             AnsiConsole.MarkupLine("[dim]Tip: run [cyan]deployify generate[/] first, or point --project-path at your AppHost .csproj.[/]");
             return null;
         }
+    }
+
+    /// <summary>
+    /// True when the AppHost has changed since manifest.json was written, so the manifest
+    /// has to be regenerated. Only applies when the AppHost directory actually contains a
+    /// project file; a hand-placed manifest without an AppHost is always used as-is.
+    /// </summary>
+    private static bool IsManifestStale(string manifestPath, string appHostDirectory)
+    {
+        if (!System.IO.Directory.Exists(appHostDirectory) ||
+            System.IO.Directory.GetFiles(appHostDirectory, "*.csproj", SearchOption.TopDirectoryOnly).Length == 0)
+        {
+            return false;
+        }
+
+        var manifestTime = File.GetLastWriteTimeUtc(manifestPath);
+        var sources = System.IO.Directory.EnumerateFiles(appHostDirectory, "*.*", SearchOption.AllDirectories)
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}") &&
+                        !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}"))
+            .Where(f => f.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) ||
+                        f.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) ||
+                        Path.GetFileName(f).StartsWith("appsettings", StringComparison.OrdinalIgnoreCase));
+        return sources.Any(f => File.GetLastWriteTimeUtc(f) > manifestTime);
     }
 }

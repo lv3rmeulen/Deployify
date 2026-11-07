@@ -1,4 +1,10 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
 using Microsoft.Extensions.Logging;
@@ -24,7 +30,7 @@ public sealed class EcsDeploymentTarget(
     IPublisher publisher,
     ILogger<EcsDeploymentTarget> logger) : IDeploymentTarget
 {
-    private readonly EcsTaskDefinitionGenerator _generator = new EcsTaskDefinitionGenerator();
+    private readonly EcsTaskDefinitionGenerator _generator = new();
 
     public DeploymentTargetType TargetType => DeploymentTargetType.AwsEcs;
     public string DisplayName => "AWS ECS (Fargate)";
@@ -34,9 +40,9 @@ public sealed class EcsDeploymentTarget(
     public async Task<(bool Ok, string? Error)> PingAsync(
         EnvironmentConfig config, CancellationToken ct = default)
     {
-        if (!await EcsCliClient.IsAvailableAsync())
+        if (!await EcsCliClient.IsAvailableAsync(ct))
         {
-	        return (false, "AWS CLI ('aws') not found on PATH. Install it from https://aws.amazon.com/cli/");
+            return (false, "AWS CLI ('aws') not found on PATH. Install it from https://aws.amazon.com/cli/");
         }
 
         var cfg = GetConfig(config);
@@ -57,7 +63,7 @@ public sealed class EcsDeploymentTarget(
         var paths = new List<string>();
         foreach (var svc in services)
         {
-	        paths.Add(await _generator.WriteTaskDefinitionAsync(svc, config, cfg, outputDirectory, ct));
+            paths.Add(await _generator.WriteTaskDefinitionAsync(svc, config, cfg, outputDirectory, ct));
         }
 
         return paths;
@@ -80,7 +86,7 @@ public sealed class EcsDeploymentTarget(
         {
             var path = await _generator.WriteTaskDefinitionAsync(svc, config, cfg, outputDirectory, ct);
             var errors = await client.ValidateTaskDefinitionAsync(path, ct);
-            results.Add(new ValidationResult { ArtefactName = path, Errors = errors });
+            results.Add(new ValidationResult { ArtifactName = path, Errors = errors });
         }
 
         return results;
@@ -100,20 +106,26 @@ public sealed class EcsDeploymentTarget(
         // Write task definitions to disk — apply reads these
         foreach (var svc in services)
         {
-	        await _generator.WriteTaskDefinitionAsync(svc, config, cfg, outputDirectory, ct);
+            await _generator.WriteTaskDefinitionAsync(svc, config, cfg, outputDirectory, ct);
         }
 
         var desired = services.Select(s => s.Name).ToHashSet();
         var client = new EcsCliClient(cfg, logger);
         HashSet<string> running;
-        try { running = (await client.GetRunningServiceNamesAsync(ct)).ToHashSet(); }
-        catch { running = []; }
+        try
+        {
+            running = [.. await client.GetRunningServiceNamesAsync(ct)];
+        }
+        catch
+        {
+            running = [];
+        }
 
         return new PlanResult
         {
-            ToCreate = desired.Except(running).Select(n => (object)n).ToList(),
-            ToUpdate = desired.Intersect(running).Select(n => (object)n).ToList(),
-            ToDelete = running.Except(desired).ToList(),
+            ToCreate = [.. desired.Except(running).Select(n => (object)n)],
+            ToUpdate = [.. desired.Intersect(running).Select(n => (object)n)],
+            ToDelete = [.. running.Except(desired)],
             Unchanged = []
         };
     }
@@ -129,6 +141,11 @@ public sealed class EcsDeploymentTarget(
         var cfg = GetConfig(config);
         var services = _generator.Generate(manifest, config, cfg);
         var client = new EcsCliClient(cfg, logger);
+        foreach (var svc in services)
+        {
+            client.ServicePorts[svc.Name] = [.. svc.PortMappings.Select(p => (p.Name, p.ContainerPort))];
+        }
+
         var results = new List<DeploymentResult>();
 
         foreach (var svc in services)
@@ -152,6 +169,11 @@ public sealed class EcsDeploymentTarget(
 
                 var serviceArn = await client.UpsertServiceAsync(
                     svc.Name, taskDefArn, svc.DesiredCount, ct);
+
+                if (cfg.WaitForStable)
+                {
+                    await client.WaitForStableAsync(svc.Name, ct);
+                }
 
                 results.Add(new DeploymentResult
                 {
@@ -181,8 +203,8 @@ public sealed class EcsDeploymentTarget(
         AspireManifest manifest,
         EnvironmentConfig config,
         string appHostDirectory,
-        CancellationToken ct = default) =>
-        await publisher.PublishAsync(manifest, config, appHostDirectory, ct);
+        CancellationToken ct = default)
+        => await publisher.PublishAsync(manifest, config, appHostDirectory, ct);
 
     // ── Explain ───────────────────────────────────────────────────────────────
 
@@ -192,25 +214,28 @@ public sealed class EcsDeploymentTarget(
         var cfg = GetConfig(config);
         var services = _generator.Generate(manifest, config, cfg);
 
-        return services.Select(svc => new ServiceExplanation
-        {
-            Name = svc.Name,
-            Image = svc.Image,
-            ImageTag = svc.ImageTag,
-            Count = svc.DesiredCount,
-            Env = svc.Env,
-            Ports = svc.PortMappings.Select(p => $"{p.ContainerPort}/{p.Protocol}").ToList(),
-            Dependencies = svc.Dependencies,
-            AdditionalInfo = new Dictionary<string, string>
+        return
+        [
+            .. services.Select(svc => new ServiceExplanation
             {
-                ["cluster"] = cfg.ClusterName,
-                ["region"] = cfg.Region,
-                ["launchType"] = cfg.LaunchType.ToString(),
-                ["cpu"] = $"{svc.Cpu} units",
-                ["memory"] = $"{svc.Memory} MiB",
-                ["type"] = svc.IsProjectService ? "project" : "container"
-            }
-        }).ToList();
+                Name = svc.Name,
+                Image = svc.Image,
+                ImageTag = svc.ImageTag,
+                Count = svc.DesiredCount,
+                Env = svc.Env,
+                Ports = [.. svc.PortMappings.Select(p => $"{p.ContainerPort}/{p.Protocol}")],
+                Dependencies = svc.Dependencies,
+                AdditionalInfo = new Dictionary<string, string>
+                {
+                    ["cluster"] = cfg.ClusterName,
+                    ["region"] = cfg.Region,
+                    ["launchType"] = cfg.LaunchType.ToString(),
+                    ["cpu"] = $"{svc.Cpu} units",
+                    ["memory"] = $"{svc.Memory} MiB",
+                    ["type"] = svc.IsProjectService ? "project" : "container"
+                }
+            })
+        ];
     }
 
     // ── Graph ─────────────────────────────────────────────────────────────────
@@ -219,10 +244,12 @@ public sealed class EcsDeploymentTarget(
         AspireManifest manifest, EnvironmentConfig config)
     {
         var cfg = GetConfig(config);
-        return _generator.Generate(manifest, config, cfg)
-            .SelectMany(svc => svc.Dependencies.Select(dep =>
-                new ServiceDependency { From = dep, To = svc.Name }))
-            .ToList();
+        return
+        [
+            .. _generator.Generate(manifest, config, cfg)
+                .SelectMany(svc => svc.Dependencies.Select(dep =>
+                    new ServiceDependency { From = dep, To = svc.Name }))
+        ];
     }
 
     // ── Diff ──────────────────────────────────────────────────────────────────
@@ -239,12 +266,17 @@ public sealed class EcsDeploymentTarget(
         var entries = new List<DiffEntry>();
 
         HashSet<string> running;
-        try { running = (await client.GetRunningServiceNamesAsync(ct)).ToHashSet(); }
+        try
+        {
+            running = [.. await client.GetRunningServiceNamesAsync(ct)];
+        }
         catch
         {
-            return services
-                .Select(s => new DiffEntry { ServiceName = s.Name, Kind = DiffKind.Added })
-                .ToList();
+            return
+            [
+                .. services
+                    .Select(s => new DiffEntry { ServiceName = s.Name, Kind = DiffKind.Added })
+            ];
         }
 
         var desired = services.Select(s => s.Name).ToHashSet();
@@ -272,7 +304,7 @@ public sealed class EcsDeploymentTarget(
 
         foreach (var name in running.Except(desired))
         {
-	        entries.Add(new DiffEntry { ServiceName = name, Kind = DiffKind.Removed });
+            entries.Add(new DiffEntry { ServiceName = name, Kind = DiffKind.Removed });
         }
 
         return entries;
@@ -284,7 +316,7 @@ public sealed class EcsDeploymentTarget(
     {
         if (config.TargetConfig.TryGetValue("ecs", out var raw) && raw is JsonElement el)
         {
-	        return el.Deserialize<EcsTargetConfig>(TargetConfigJsonOptions.Default) ?? new EcsTargetConfig();
+            return el.Deserialize<EcsTargetConfig>(TargetConfigJsonOptions.Default) ?? new EcsTargetConfig();
         }
 
         return new EcsTargetConfig();

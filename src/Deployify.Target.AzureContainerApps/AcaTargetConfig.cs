@@ -54,6 +54,21 @@ public sealed class AcaTargetConfig
 
     /// <summary>Azure CLI profile / tenant to use. Null = currently logged-in account.</summary>
     public string? TenantId { get; set; }
+
+    /// <summary>
+    /// Resource ID of a user-assigned managed identity that has AcrPull on the registry.
+    /// Recommended: a system-assigned identity only exists after the app is created, so it
+    /// can't be granted AcrPull in time for the first image pull.
+    /// </summary>
+    public string? AcrIdentityResourceId { get; set; }
+
+    /// <summary>Base port for services whose Aspire bindings carry no port.</summary>
+    public int BasePort { get; set; } = 8080;
 }
 
-public enum AcaIngressType { External, Internal, None }
+public enum AcaIngressType
+{
+    External,
+    Internal,
+    None
+}

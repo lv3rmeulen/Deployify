@@ -22,32 +22,43 @@ public static class WatchCommand
 {
     public static Command Build()
     {
-        var debounceOpt = new Option<int>("--debounce",
-            () => 500,
-            "Milliseconds to wait after the last file change before re-running (default: 500).");
-        var noGenerateOpt = new Option<bool>("--no-generate",
-            () => false,
-            "Skip re-generating artefacts; only re-run the plan diff against the cluster.");
+        var debounceOpt = new Option<int>("--debounce")
+        {
+            Description = "Milliseconds to wait after the last file change before re-running (default: 500).",
+            DefaultValueFactory = _ => 500
+        };
+        var noGenerateOpt = new Option<bool>("--no-generate")
+        {
+            Description = "Skip re-generating artifacts; only re-run the plan diff against the cluster.",
+            DefaultValueFactory = _ => false
+        };
 
         var cmd = new Command("watch",
             "Watch for source changes and automatically re-run generate + plan.");
-        cmd.AddOption(GlobalOptions.ProjectPath);
-        cmd.AddOption(GlobalOptions.Environment);
-        cmd.AddOption(GlobalOptions.Target);
-        cmd.AddOption(debounceOpt);
-        cmd.AddOption(noGenerateOpt);
+        cmd.Options.Add(GlobalOptions.ProjectPath);
+        cmd.Options.Add(GlobalOptions.Environment);
+        cmd.Options.Add(GlobalOptions.Target);
+        cmd.Options.Add(debounceOpt);
+        cmd.Options.Add(noGenerateOpt);
 
-        cmd.SetHandler(async ctx =>
+        cmd.SetAction(async (parseResult, ct) =>
         {
-            var projectPath = ctx.ParseResult.GetValueForOption(GlobalOptions.ProjectPath)!;
-            var envOverride = ctx.ParseResult.GetValueForOption(GlobalOptions.Environment);
-            var targetOpt = ctx.ParseResult.GetValueForOption(GlobalOptions.Target);
-            var debounceMs = ctx.ParseResult.GetValueForOption(debounceOpt);
-            var noGenerate = ctx.ParseResult.GetValueForOption(noGenerateOpt);
+            var projectPath = parseResult.GetValue(GlobalOptions.ProjectPath)!;
+            var envOverride = parseResult.GetValue(GlobalOptions.Environment);
+            var targetOpt = parseResult.GetValue(GlobalOptions.Target);
+            var debounceMs = parseResult.GetValue(debounceOpt);
+            var noGenerate = parseResult.GetValue(noGenerateOpt);
 
             ResolvedContext resolved;
-            try { resolved = await DependencyInjection.ResolveAsync(projectPath, envOverride, targetOpt); }
-            catch (Exception ex) { AnsiConsole.MarkupLine($"[red]✗[/] {ex.Message}"); ctx.ExitCode = 1; return; }
+            try
+            {
+                resolved = await DependencyInjection.ResolveAsync(projectPath, envOverride, targetOpt, ct);
+            }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(ex.Message)}");
+                return 1;
+            }
 
             var (_, config, envName, _, target, directory) = resolved;
             var outputDir = Path.Combine(directory, config.OutputPath);
@@ -56,15 +67,17 @@ public static class WatchCommand
             AnsiConsole.MarkupLine($"[dim]Watching: {directory}[/]");
             AnsiConsole.MarkupLine("[dim]Press Ctrl+C to stop.[/]\n");
 
-            using var cts = new CancellationTokenSource();
-            Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+            // Ctrl+C cancels the command's token; everything below stops with it.
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
             // Run immediately on start
-            await RunCycleAsync(resolved, target, config, outputDir, noGenerate);
+            await RunCycleAsync(resolved, target, config, outputDir, noGenerate, cts.Token);
 
             using var watcher = BuildWatcher(directory);
-            var pendingRun = (Task?)null;
-            var runLock = new SemaphoreSlim(1, 1);
+            var gate = new object();
+            CancellationTokenSource? debounceCts = null;
+            var cycleLock = new SemaphoreSlim(1, 1);
+            var outputPrefix = Path.TrimEndingDirectorySeparator(Path.GetFullPath(outputDir)) + Path.DirectorySeparatorChar;
 
             watcher.Changed += OnChanged;
             watcher.Created += OnChanged;
@@ -72,44 +85,61 @@ public static class WatchCommand
             watcher.Renamed += OnChanged;
             watcher.EnableRaisingEvents = true;
 
-            try { await Task.Delay(Timeout.Infinite, cts.Token); }
-            catch (OperationCanceledException) { }
-
-            AnsiConsole.MarkupLine("\n[dim]Watch stopped.[/]");
-            return;
-
-            void OnChanged(object _, FileSystemEventArgs e)
+            try
             {
-                // Ignore output directory changes (we write there ourselves)
-                if (e.FullPath.StartsWith(outputDir, StringComparison.OrdinalIgnoreCase))
-                {
-	                return;
-                }
-
-                if (e.FullPath.Contains(Path.DirectorySeparatorChar + "obj" + Path.DirectorySeparatorChar))
-                {
-	                return;
-                }
-
-                if (e.FullPath.Contains(Path.DirectorySeparatorChar + "bin" + Path.DirectorySeparatorChar))
-                {
-	                return;
-                }
-
-                // Debounce: cancel any pending run, schedule a new one
-                runLock.Wait(cts.Token);
-                try
-                {
-                    pendingRun = pendingRun?.Status is TaskStatus.Running ? pendingRun : ScheduleRunAsync();
-                }
-                finally { runLock.Release(); }
+                await Task.Delay(Timeout.Infinite, cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
             }
 
-            async Task ScheduleRunAsync()
+            AnsiConsole.MarkupLine("\n[dim]Watch stopped.[/]");
+            return 0;
+
+            void OnChanged(object obj, FileSystemEventArgs e)
             {
-                await Task.Delay(debounceMs, cts.Token).ConfigureAwait(false);
-                AnsiConsole.MarkupLine("\n[dim]Change detected — re-running...[/]");
-                await RunCycleAsync(resolved, target, config, outputDir, noGenerate);
+                if (IsIgnored(e.FullPath, outputPrefix))
+                {
+                    return;
+                }
+
+                // Debounce: every change restarts the quiet period; only the last one runs.
+                CancellationToken token;
+                lock (gate)
+                {
+                    _ = debounceCts?.CancelAsync();
+                    debounceCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
+                    token = debounceCts.Token;
+                }
+
+                _ = RunAfterQuietPeriodAsync(token);
+            }
+
+            async Task RunAfterQuietPeriodAsync(CancellationToken token)
+            {
+                try
+                {
+                    await Task.Delay(debounceMs, token);
+                    // Never run two cycles at once; a change during a cycle queues one more.
+                    await cycleLock.WaitAsync(cts.Token);
+                    try
+                    {
+                        AnsiConsole.MarkupLine("\n[dim]Change detected — re-running...[/]");
+                        await RunCycleAsync(resolved, target, config, outputDir, noGenerate, token);
+                    }
+                    finally
+                    {
+                        cycleLock.Release();
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    /* superseded by a newer change, or stopping */
+                }
+                catch (Exception ex)
+                {
+                    AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(ex.Message)}");
+                }
             }
         });
 
@@ -121,29 +151,30 @@ public static class WatchCommand
         IDeploymentTarget target,
         EnvironmentConfig config,
         string outputDir,
-        bool noGenerate)
+        bool noGenerate,
+        CancellationToken ct)
     {
         var timestamp = DateTime.Now.ToString("HH:mm:ss");
         AnsiConsole.MarkupLine($"[dim]── {timestamp} ──────────────────────────────[/]");
 
-        var manifest = await resolved.LoadManifestAsync();
+        var manifest = await resolved.LoadManifestAsync(ct);
         if (manifest is null)
         {
             AnsiConsole.MarkupLine("[yellow]! Could not load manifest — skipping cycle.[/]");
             return;
         }
 
-        // Generate artefacts
+        // Generate artifacts
         if (!noGenerate)
         {
             try
             {
-                var paths = await target.GenerateAsync(manifest, config, outputDir);
-                AnsiConsole.MarkupLine($"[green]✓[/] Generated {paths.Count} artefact(s)");
+                var paths = await target.GenerateAsync(manifest, config, outputDir, ct);
+                AnsiConsole.MarkupLine($"[green]✓[/] Generated {paths.Count} artifact(s)");
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] Generate failed: {ex.Message}");
+                AnsiConsole.MarkupLine($"[red]✗[/] Generate failed: {Markup.Escape(ex.Message)}");
                 return;
             }
         }
@@ -151,7 +182,7 @@ public static class WatchCommand
         // Plan (best-effort — cluster may be unreachable)
         try
         {
-            var plan = await target.PlanAsync(manifest, config, outputDir);
+            var plan = await target.PlanAsync(manifest, config, outputDir, ct);
             var hasChanges = plan.CreateCount + plan.UpdateCount + plan.DeleteCount > 0;
 
             if (!hasChanges)
@@ -162,27 +193,51 @@ public static class WatchCommand
 
             if (plan.CreateCount > 0)
             {
-	            AnsiConsole.MarkupLine($"[green]+ {plan.CreateCount} to create[/]: " +
-	                                   string.Join(", ", plan.ToCreate.Select(o => o.ToString()!)));
+                AnsiConsole.MarkupLine($"[green]+ {plan.CreateCount} to create[/]: " +
+                    string.Join(", ", plan.ToCreate.Select(o => o.ToString()!)));
             }
 
             if (plan.UpdateCount > 0)
             {
-	            AnsiConsole.MarkupLine($"[yellow]~ {plan.UpdateCount} to update[/]: " +
-	                                   string.Join(", ", plan.ToUpdate.Select(o => o.ToString()!)));
+                AnsiConsole.MarkupLine($"[yellow]~ {plan.UpdateCount} to update[/]: " +
+                    string.Join(", ", plan.ToUpdate.Select(o => o.ToString()!)));
             }
 
             if (plan.DeleteCount > 0)
             {
-	            AnsiConsole.MarkupLine($"[red]- {plan.DeleteCount} to delete[/]: " +
-	                                   string.Join(", ", plan.ToDelete));
+                AnsiConsole.MarkupLine($"[red]- {plan.DeleteCount} to delete[/]: " +
+                    string.Join(", ", plan.ToDelete));
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            AnsiConsole.MarkupLine($"[yellow]! Plan diff unavailable: {ex.Message}[/]");
-            AnsiConsole.MarkupLine("[dim]Artefacts written. Cluster unreachable for diff.[/]");
+            AnsiConsole.MarkupLine($"[yellow]! Plan diff unavailable: {Markup.Escape(ex.Message)}[/]");
+            AnsiConsole.MarkupLine("[dim]Artifacts written. Cluster unreachable for diff.[/]");
         }
+    }
+
+    /// <summary>
+    /// Changes Deployify makes itself (generated output, the state file, build output)
+    /// must not trigger another cycle, or watch would loop forever.
+    /// </summary>
+    private static bool IsIgnored(string fullPath, string outputPrefix)
+    {
+        if (fullPath.StartsWith(outputPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var sep = Path.DirectorySeparatorChar;
+        foreach (var dir in new[] { "obj", "bin", ".git", ".vs", ".idea", "node_modules" })
+        {
+            if (fullPath.Contains($"{sep}{dir}{sep}", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        var file = Path.GetFileName(fullPath);
+        return file.StartsWith("deployify-state.json", StringComparison.OrdinalIgnoreCase);
     }
 
     private static FileSystemWatcher BuildWatcher(string directory)
@@ -193,10 +248,10 @@ public static class WatchCommand
             NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.DirectoryName
         };
 
-        // Watch source files most likely to affect generated artefacts
+        // Watch source files most likely to affect generated artifacts
         foreach (var filter in new[] { "*.cs", "*.csproj", "*.json", "*.yaml", "*.yml", "*.toml" })
         {
-	        watcher.Filters.Add(filter);
+            watcher.Filters.Add(filter);
         }
 
         return watcher;

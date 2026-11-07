@@ -427,3 +427,8 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Specific to Deployify
+deployify-state.json
+deployify-output/
+**/Properties/launchSettings.json

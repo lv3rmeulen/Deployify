@@ -3,12 +3,13 @@ using System.Collections.Generic;
 using System.CommandLine;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
 using Deployify.Core.Services;
-using Deployify.Target.AzureContainerApps;
 using Deployify.Target.AwsEcs;
+using Deployify.Target.AzureContainerApps;
 using Deployify.Target.Compose;
 using Deployify.Target.Kubernetes;
 using Deployify.Target.Nomad;
@@ -22,106 +23,333 @@ public static class InitCommand
 {
     public static Command Build()
     {
-        var cmd = new Command("init", "Initialise deployify in an Aspire AppHost project.");
-        cmd.AddOption(GlobalOptions.ProjectPath);
-        cmd.AddOption(GlobalOptions.NonInteractive);
+        var cmd = new Command("init", "Initialize deployify in an Aspire AppHost project.");
+        cmd.Options.Add(GlobalOptions.ProjectPath);
+        cmd.Options.Add(GlobalOptions.NonInteractive);
 
         // Common flags
-        var envNameOpt = new Option<string>("--env-name", () => "local", "Environment name.");
-        var targetOpt = new Option<DeploymentTargetType?>("--target", "Deployment target.");
-        var registryOpt = new Option<string?>("--container-registry", "Container registry URL.");
-        var tagOpt = new Option<string>("--image-tag", () => "latest", "Default image tag.");
-        var outPathOpt = new Option<string>("--output-path", () => "deployify-output", "Output folder for artefacts.");
-        var runtimeOpt = new Option<ContainerRuntime>("--container-runtime", () => ContainerRuntime.Docker, "Container runtime for publishing: docker (default) | podman.");
-        var containerOsOpt = new Option<string>("--container-os", () => "linux", "Target OS for container images (default: linux).");
-        var containerArchOpt = new Option<string>("--container-arch", () => "x64", "Target CPU architecture for container images: x64 (default) | arm64 | arm.");
+        var envNameOpt = new Option<string>("--env-name")
+        {
+            Description = "Environment name.",
+            DefaultValueFactory = _ => "local"
+        };
+        var targetOpt = new Option<DeploymentTargetType?>("--target")
+        {
+            Description = "Deployment target."
+        };
+        var registryOpt = new Option<string?>("--container-registry")
+        {
+            Description = "Container registry URL."
+        };
+        var tagOpt = new Option<string>("--image-tag")
+        {
+            Description = "Default image tag.",
+            DefaultValueFactory = _ => "latest"
+        };
+        var outPathOpt = new Option<string>("--output-path")
+        {
+            Description = "Output folder for artifacts.",
+            DefaultValueFactory = _ => "deployify-output"
+        };
+        var runtimeOpt = new Option<ContainerRuntime>("--container-runtime")
+        {
+            Description = "Container runtime for publishing: docker (default) | podman.",
+            DefaultValueFactory = _ => ContainerRuntime.Docker
+        };
+        var containerOsOpt = new Option<string>("--container-os")
+        {
+            Description = "Target OS for container images (default: linux).",
+            DefaultValueFactory = _ => "linux"
+        };
+        var containerArchOpt = new Option<string>("--container-arch")
+        {
+            Description = "Target CPU architecture for container images: x64 (default) | arm64 | arm.",
+            DefaultValueFactory = _ => "x64"
+        };
 
         // Dapr
-        var daprOpt = new Option<bool>("--deploy-dapr", () => false, "Inject a Dapr sidecar into every service.");
-        var daprVersionOpt = new Option<string>("--dapr-version", () => "latest", "Dapr sidecar image tag.");
-        var daprHttpPortOpt = new Option<int>("--dapr-http-port", () => 3500, "Base Dapr HTTP port.");
-        var daprGrpcPortOpt = new Option<int>("--dapr-grpc-port", () => 50001, "Base Dapr gRPC port.");
-        var daprComponentsOpt = new Option<string?>("--dapr-components-path", "Path to Dapr components directory.");
-        var daprConfigOpt = new Option<string?>("--dapr-config-path", "Path to Dapr config file.");
-        var daprLogLevelOpt = new Option<string>("--dapr-log-level", () => "info", "Dapr sidecar log level.");
+        var daprOpt = new Option<bool>("--deploy-dapr")
+        {
+            Description = "Inject a Dapr sidecar into every service.",
+            DefaultValueFactory = _ => false
+        };
+        var daprVersionOpt = new Option<string>("--dapr-version")
+        {
+            Description = "Dapr sidecar image tag.",
+            DefaultValueFactory = _ => "latest"
+        };
+        var daprHttpPortOpt = new Option<int>("--dapr-http-port")
+        {
+            Description = "Base Dapr HTTP port.",
+            DefaultValueFactory = _ => 3500
+        };
+        var daprGrpcPortOpt = new Option<int>("--dapr-grpc-port")
+        {
+            Description = "Base Dapr gRPC port.",
+            DefaultValueFactory = _ => 50001
+        };
+        var daprComponentsOpt = new Option<string?>("--dapr-components-path")
+        {
+            Description = "Path to Dapr components directory."
+        };
+        var daprConfigOpt = new Option<string?>("--dapr-config-path")
+        {
+            Description = "Path to Dapr config file."
+        };
+        var daprLogLevelOpt = new Option<string>("--dapr-log-level")
+        {
+            Description = "Dapr sidecar log level.",
+            DefaultValueFactory = _ => "info"
+        };
 
         // Dashboard
-        var dashboardOpt = new Option<bool>("--deploy-dashboard", () => false, "Inject the Aspire Dashboard container into every deployment.");
-        var dashboardTagOpt = new Option<string>("--dashboard-tag", () => "latest", "Image tag for mcr.microsoft.com/dotnet/aspire-dashboard.");
-        var dashboardPortOpt = new Option<int>("--dashboard-port", () => 18888, "Host port for the dashboard UI.");
-        var dashboardOtlpPortOpt = new Option<int>("--dashboard-otlp-port", () => 18889, "Host port for the OTLP gRPC endpoint.");
-        var dashboardTokenOpt = new Option<string?>("--dashboard-token", "Browser auth token (omit for unauthenticated).");
+        var dashboardOpt = new Option<bool>("--deploy-dashboard")
+        {
+            Description = "Inject the Aspire Dashboard container into every deployment.",
+            DefaultValueFactory = _ => false
+        };
+        var dashboardTagOpt = new Option<string>("--dashboard-tag")
+        {
+            Description = "Image tag for mcr.microsoft.com/dotnet/aspire-dashboard.",
+            DefaultValueFactory = _ => "latest"
+        };
+        var dashboardPortOpt = new Option<int>("--dashboard-port")
+        {
+            Description = "Host port for the dashboard UI.",
+            DefaultValueFactory = _ => 18888
+        };
+        var dashboardOtlpPortOpt = new Option<int>("--dashboard-otlp-port")
+        {
+            Description = "Host port for the OTLP gRPC endpoint.",
+            DefaultValueFactory = _ => 18889
+        };
+        var dashboardTokenOpt = new Option<string?>("--dashboard-token")
+        {
+            Description = "Browser auth token (omit for unauthenticated)."
+        };
 
         // Nomad-specific
-        var nomadAddrOpt = new Option<string>("--nomad-address", () => "http://localhost:4646", "Nomad cluster address.");
-        var nomadTokenOpt = new Option<string?>("--nomad-token", "Nomad ACL token.");
-        var nomadNsOpt = new Option<string>("--nomad-namespace", () => "default", "Nomad namespace.");
-        var nomadModeOpt = new Option<NomadDeploymentMode>("--nomad-mode", () => NomadDeploymentMode.Docker, "Nomad deployment mode: Docker (default) | RawExec.");
-        var nomadRegUserOpt = new Option<string?>("--nomad-registry-username", "Docker registry username for private image pulls.");
-        var nomadRegPassOpt = new Option<string?>("--nomad-registry-password", "Docker registry password or access token.");
-        var nomadRegisterOpt = new Option<bool>("--nomad-register-services", () => true, "Register services in Nomad/Consul service catalog.");
-        var nomadProviderOpt = new Option<string>("--nomad-service-provider", () => "nomad", "Service registration provider: nomad (default) | consul.");
-        var nomadHealthPathOpt = new Option<string>("--nomad-health-check-path", () => "/health", "HTTP path for service health checks.");
-        var nomadDcOpt = new Option<string>("--nomad-datacenter", () => "dc1", "Nomad datacenter.");
+        var nomadAddrOpt = new Option<string>("--nomad-address")
+        {
+            Description = "Nomad cluster address.",
+            DefaultValueFactory = _ => "http://localhost:4646"
+        };
+        var nomadTokenOpt = new Option<string?>("--nomad-token")
+        {
+            Description = "Nomad ACL token."
+        };
+        var nomadNsOpt = new Option<string>("--nomad-namespace")
+        {
+            Description = "Nomad namespace.",
+            DefaultValueFactory = _ => "default"
+        };
+        var nomadModeOpt = new Option<NomadDeploymentMode>("--nomad-mode")
+        {
+            Description = "Nomad deployment mode: Docker (default) | RawExec.",
+            DefaultValueFactory = _ => NomadDeploymentMode.Docker
+        };
+        var nomadRegUserOpt = new Option<string?>("--nomad-registry-username")
+        {
+            Description = "Docker registry username for private image pulls."
+        };
+        var nomadRegPassOpt = new Option<string?>("--nomad-registry-password")
+        {
+            Description = "Docker registry password or access token."
+        };
+        var nomadRegisterOpt = new Option<bool>("--nomad-register-services")
+        {
+            Description = "Register services in Nomad/Consul service catalog.",
+            DefaultValueFactory = _ => true
+        };
+        var nomadProviderOpt = new Option<string>("--nomad-service-provider")
+        {
+            Description = "Service registration provider: nomad (default) | consul.",
+            DefaultValueFactory = _ => "nomad"
+        };
+        var nomadHealthPathOpt = new Option<string>("--nomad-health-check-path")
+        {
+            Description = "HTTP path for service health checks.",
+            DefaultValueFactory = _ => "/health"
+        };
+        var nomadDcOpt = new Option<string>("--nomad-datacenter")
+        {
+            Description = "Nomad datacenter.",
+            DefaultValueFactory = _ => "dc1"
+        };
 
         // Kubernetes-specific
-        var k8SContextOpt = new Option<string?>("--k8s-context", "kubectl context name.");
-        var k8SPrefixOpt = new Option<string>("--k8s-namespace-prefix", () => "deployify", "Kubernetes namespace prefix.");
-        var k8SDomainOpt = new Option<string?>("--k8s-ingress-domain", "Ingress base domain.");
+        var kubernetesContextOpt = new Option<string?>("--kubernetes-context")
+        {
+            Description = "kubectl context name."
+        };
+        var kubernetesPrefixOpt = new Option<string>("--kubernetes-namespace-prefix")
+        {
+            Description = "Kubernetes namespace prefix.",
+            DefaultValueFactory = _ => "deployify"
+        };
+        var kubernetesDomainOpt = new Option<string?>("--kubernetes-ingress-domain")
+        {
+            Description = "Ingress base domain."
+        };
 
         // Compose-specific
-        var composeProjectOpt = new Option<string>("--compose-project", () => "deployify", "Docker Compose project name.");
-        var composeRestartOpt = new Option<string>("--compose-restart", () => "unless-stopped", "Restart policy.");
+        var composeProjectOpt = new Option<string>("--compose-project")
+        {
+            Description = "Docker Compose project name.",
+            DefaultValueFactory = _ => "deployify"
+        };
+        var composeRestartOpt = new Option<string>("--compose-restart")
+        {
+            Description = "Restart policy.",
+            DefaultValueFactory = _ => "unless-stopped"
+        };
 
         // ECS-specific
-        var ecsRegionOpt = new Option<string>("--ecs-region", () => "us-east-1", "AWS region.");
-        var ecsClusterOpt = new Option<string>("--ecs-cluster", () => "deployify", "ECS cluster name.");
-        var ecsProfileOpt = new Option<string?>("--ecs-profile", "AWS CLI profile name.");
-        var ecsSubnetsOpt = new Option<string?>("--ecs-subnets", "Comma-separated subnet IDs for Fargate tasks.");
-        var ecsSecGroupsOpt = new Option<string?>("--ecs-security-groups", "Comma-separated security group IDs.");
-        var ecsExecRoleOpt = new Option<string?>("--ecs-execution-role", "ECS task execution role ARN.");
+        var ecsRegionOpt = new Option<string>("--ecs-region")
+        {
+            Description = "AWS region.",
+            DefaultValueFactory = _ => "us-east-1"
+        };
+        var ecsClusterOpt = new Option<string>("--ecs-cluster")
+        {
+            Description = "ECS cluster name.",
+            DefaultValueFactory = _ => "deployify"
+        };
+        var ecsProfileOpt = new Option<string?>("--ecs-profile")
+        {
+            Description = "AWS CLI profile name."
+        };
+        var ecsSubnetsOpt = new Option<string?>("--ecs-subnets")
+        {
+            Description = "Comma-separated subnet IDs for Fargate tasks."
+        };
+        var ecsSecGroupsOpt = new Option<string?>("--ecs-security-groups")
+        {
+            Description = "Comma-separated security group IDs."
+        };
+        var ecsExecRoleOpt = new Option<string?>("--ecs-execution-role")
+        {
+            Description = "ECS task execution role ARN."
+        };
 
         // ACA-specific
-        var acaSubOpt = new Option<string?>("--aca-subscription", "Azure subscription ID.");
-        var acaRgOpt = new Option<string>("--aca-resource-group", () => "deployify-rg", "Azure resource group.");
-        var acaLocationOpt = new Option<string>("--aca-location", () => "eastus", "Azure region.");
-        var acaEnvOpt = new Option<string>("--aca-environment", () => "deployify-env", "Container Apps environment name.");
-        var acaAcrOpt = new Option<string?>("--aca-acr", "Azure Container Registry login server.");
+        var acaSubOpt = new Option<string?>("--aca-subscription")
+        {
+            Description = "Azure subscription ID."
+        };
+        var acaRgOpt = new Option<string>("--aca-resource-group")
+        {
+            Description = "Azure resource group.",
+            DefaultValueFactory = _ => "deployify-rg"
+        };
+        var acaLocationOpt = new Option<string>("--aca-location")
+        {
+            Description = "Azure region.",
+            DefaultValueFactory = _ => "eastus"
+        };
+        var acaEnvOpt = new Option<string>("--aca-environment")
+        {
+            Description = "Container Apps environment name.",
+            DefaultValueFactory = _ => "deployify-env"
+        };
+        var acaAcrOpt = new Option<string?>("--aca-acr")
+        {
+            Description = "Azure Container Registry login server."
+        };
 
         // NomadConsul-specific
-        var ncNomadAddrOpt = new Option<string>("--nc-nomad-address", () => "http://localhost:4646", "Nomad address (Consul mesh target).");
-        var ncNomadTokenOpt = new Option<string?>("--nc-nomad-token", "Nomad ACL token (Consul mesh target).");
-        var ncNomadNsOpt = new Option<string>("--nc-nomad-namespace", () => "default", "Nomad namespace (Consul mesh target).");
-        var ncNomadDcOpt = new Option<string>("--nc-datacenter", () => "dc1", "Nomad/Consul datacenter.");
-        var ncConsulAddrOpt = new Option<string>("--nc-consul-address", () => "http://localhost:8500", "Consul address. ");
-        var ncConsulTokenOpt = new Option<string?>("--nc-consul-token", "Consul ACL token.");
-        var ncIngressOpt = new Option<bool>("--nc-ingress-gateway", () => false, "Enable Consul Ingress Gateway for HTTP services.");
-
-        cmd.AddOption(envNameOpt); cmd.AddOption(targetOpt); cmd.AddOption(registryOpt);
-        cmd.AddOption(tagOpt); cmd.AddOption(outPathOpt); cmd.AddOption(runtimeOpt);
-        cmd.AddOption(containerOsOpt); cmd.AddOption(containerArchOpt);
-        cmd.AddOption(daprOpt); cmd.AddOption(daprVersionOpt); cmd.AddOption(daprHttpPortOpt);
-        cmd.AddOption(daprGrpcPortOpt); cmd.AddOption(daprComponentsOpt); cmd.AddOption(daprConfigOpt);
-        cmd.AddOption(daprLogLevelOpt);
-        cmd.AddOption(dashboardOpt); cmd.AddOption(dashboardTagOpt); cmd.AddOption(dashboardPortOpt);
-        cmd.AddOption(dashboardOtlpPortOpt); cmd.AddOption(dashboardTokenOpt);
-        cmd.AddOption(nomadAddrOpt); cmd.AddOption(nomadTokenOpt); cmd.AddOption(nomadNsOpt); cmd.AddOption(nomadDcOpt); cmd.AddOption(nomadModeOpt);
-        cmd.AddOption(nomadRegUserOpt); cmd.AddOption(nomadRegPassOpt);
-        cmd.AddOption(nomadRegisterOpt); cmd.AddOption(nomadProviderOpt); cmd.AddOption(nomadHealthPathOpt);
-        cmd.AddOption(k8SContextOpt); cmd.AddOption(k8SPrefixOpt); cmd.AddOption(k8SDomainOpt);
-        cmd.AddOption(composeProjectOpt); cmd.AddOption(composeRestartOpt);
-        cmd.AddOption(ecsRegionOpt); cmd.AddOption(ecsClusterOpt); cmd.AddOption(ecsProfileOpt);
-        cmd.AddOption(ecsSubnetsOpt); cmd.AddOption(ecsSecGroupsOpt); cmd.AddOption(ecsExecRoleOpt);
-        cmd.AddOption(acaSubOpt); cmd.AddOption(acaRgOpt); cmd.AddOption(acaLocationOpt);
-        cmd.AddOption(acaEnvOpt); cmd.AddOption(acaAcrOpt);
-        cmd.AddOption(ncNomadAddrOpt); cmd.AddOption(ncNomadTokenOpt); cmd.AddOption(ncNomadNsOpt);
-        cmd.AddOption(ncNomadDcOpt); cmd.AddOption(ncConsulAddrOpt); cmd.AddOption(ncConsulTokenOpt);
-        cmd.AddOption(ncIngressOpt);
-
-        cmd.SetHandler(async ctx =>
+        var ncNomadAddrOpt = new Option<string>("--nc-nomad-address")
         {
-            var projectPath = ctx.ParseResult.GetValueForOption(GlobalOptions.ProjectPath)!;
-            var nonInteractive = ctx.ParseResult.GetValueForOption(GlobalOptions.NonInteractive);
+            Description = "Nomad address (Consul mesh target).",
+            DefaultValueFactory = _ => "http://localhost:4646"
+        };
+        var ncNomadTokenOpt = new Option<string?>("--nc-nomad-token")
+        {
+            Description = "Nomad ACL token (Consul mesh target)."
+        };
+        var ncNomadNsOpt = new Option<string>("--nc-nomad-namespace")
+        {
+            Description = "Nomad namespace (Consul mesh target).",
+            DefaultValueFactory = _ => "default"
+        };
+        var ncNomadDcOpt = new Option<string>("--nc-datacenter")
+        {
+            Description = "Nomad/Consul datacenter.",
+            DefaultValueFactory = _ => "dc1"
+        };
+        var ncConsulAddrOpt = new Option<string>("--nc-consul-address")
+        {
+            Description = "Consul address.",
+            DefaultValueFactory = _ => "http://localhost:8500"
+        };
+        var ncConsulTokenOpt = new Option<string?>("--nc-consul-token")
+        {
+            Description = "Consul ACL token."
+        };
+        var ncIngressOpt = new Option<bool>("--nc-ingress-gateway")
+        {
+            Description = "Enable Consul Ingress Gateway for HTTP services.",
+            DefaultValueFactory = _ => false
+        };
+
+        cmd.Options.Add(envNameOpt);
+        cmd.Options.Add(targetOpt);
+        cmd.Options.Add(registryOpt);
+        cmd.Options.Add(tagOpt);
+        cmd.Options.Add(outPathOpt);
+        cmd.Options.Add(runtimeOpt);
+        cmd.Options.Add(containerOsOpt);
+        cmd.Options.Add(containerArchOpt);
+        cmd.Options.Add(daprOpt);
+        cmd.Options.Add(daprVersionOpt);
+        cmd.Options.Add(daprHttpPortOpt);
+        cmd.Options.Add(daprGrpcPortOpt);
+        cmd.Options.Add(daprComponentsOpt);
+        cmd.Options.Add(daprConfigOpt);
+        cmd.Options.Add(daprLogLevelOpt);
+        cmd.Options.Add(dashboardOpt);
+        cmd.Options.Add(dashboardTagOpt);
+        cmd.Options.Add(dashboardPortOpt);
+        cmd.Options.Add(dashboardOtlpPortOpt);
+        cmd.Options.Add(dashboardTokenOpt);
+        cmd.Options.Add(nomadAddrOpt);
+        cmd.Options.Add(nomadTokenOpt);
+        cmd.Options.Add(nomadNsOpt);
+        cmd.Options.Add(nomadDcOpt);
+        cmd.Options.Add(nomadModeOpt);
+        cmd.Options.Add(nomadRegUserOpt);
+        cmd.Options.Add(nomadRegPassOpt);
+        cmd.Options.Add(nomadRegisterOpt);
+        cmd.Options.Add(nomadProviderOpt);
+        cmd.Options.Add(nomadHealthPathOpt);
+        cmd.Options.Add(kubernetesContextOpt);
+        cmd.Options.Add(kubernetesPrefixOpt);
+        cmd.Options.Add(kubernetesDomainOpt);
+        cmd.Options.Add(composeProjectOpt);
+        cmd.Options.Add(composeRestartOpt);
+        cmd.Options.Add(ecsRegionOpt);
+        cmd.Options.Add(ecsClusterOpt);
+        cmd.Options.Add(ecsProfileOpt);
+        cmd.Options.Add(ecsSubnetsOpt);
+        cmd.Options.Add(ecsSecGroupsOpt);
+        cmd.Options.Add(ecsExecRoleOpt);
+        cmd.Options.Add(acaSubOpt);
+        cmd.Options.Add(acaRgOpt);
+        cmd.Options.Add(acaLocationOpt);
+        cmd.Options.Add(acaEnvOpt);
+        cmd.Options.Add(acaAcrOpt);
+        cmd.Options.Add(ncNomadAddrOpt);
+        cmd.Options.Add(ncNomadTokenOpt);
+        cmd.Options.Add(ncNomadNsOpt);
+        cmd.Options.Add(ncNomadDcOpt);
+        cmd.Options.Add(ncConsulAddrOpt);
+        cmd.Options.Add(ncConsulTokenOpt);
+        cmd.Options.Add(ncIngressOpt);
+
+        cmd.SetAction(async (parseResult, ct) =>
+        {
+            var projectPath = parseResult.GetValue(GlobalOptions.ProjectPath)!;
+            var nonInteractive = parseResult.GetValue(GlobalOptions.NonInteractive);
             var directory = ResolveDirectory(projectPath);
 
             var sp = new ServiceCollection()
@@ -133,86 +361,93 @@ public static class InitCommand
 
             if (nonInteractive)
             {
-                var pr = ctx.ParseResult;
-                var target = pr.GetValueForOption(targetOpt) ?? DeploymentTargetType.Nomad;
-                var name = pr.GetValueForOption(envNameOpt)!;
+                var pr = parseResult;
+                var target = pr.GetValue(targetOpt) ?? DeploymentTargetType.Nomad;
+                var name = pr.GetValue(envNameOpt)!;
                 var config = new EnvironmentConfig
                 {
                     Target = target,
-                    ContainerRegistry = pr.GetValueForOption(registryOpt),
-                    ImageTag = pr.GetValueForOption(tagOpt)!,
-                    OutputPath = pr.GetValueForOption(outPathOpt)!,
+                    ContainerRegistry = pr.GetValue(registryOpt),
+                    ImageTag = pr.GetValue(tagOpt)!,
+                    OutputPath = pr.GetValue(outPathOpt)!,
                     AppHostPath = directory,
-                    ContainerRuntime = pr.GetValueForOption(runtimeOpt),
-                    ContainerOs = pr.GetValueForOption(containerOsOpt)!,
-                    ContainerArch = pr.GetValueForOption(containerArchOpt)!,
-                    DeployDapr = pr.GetValueForOption(daprOpt),
+                    ContainerRuntime = pr.GetValue(runtimeOpt),
+                    ContainerOs = pr.GetValue(containerOsOpt)!,
+                    ContainerArch = pr.GetValue(containerArchOpt)!,
+                    DeployDapr = pr.GetValue(daprOpt),
                     Dapr = new DaprConfig
                     {
-                        DaprVersion = pr.GetValueForOption(daprVersionOpt)!,
-                        DaprHttpPort = pr.GetValueForOption(daprHttpPortOpt),
-                        DaprGrpcPort = pr.GetValueForOption(daprGrpcPortOpt),
-                        ComponentsPath = pr.GetValueForOption(daprComponentsOpt),
-                        ConfigPath = pr.GetValueForOption(daprConfigOpt),
-                        LogLevel = pr.GetValueForOption(daprLogLevelOpt)!
+                        DaprVersion = pr.GetValue(daprVersionOpt)!,
+                        DaprHttpPort = pr.GetValue(daprHttpPortOpt),
+                        DaprGrpcPort = pr.GetValue(daprGrpcPortOpt),
+                        ComponentsPath = pr.GetValue(daprComponentsOpt),
+                        ConfigPath = pr.GetValue(daprConfigOpt),
+                        LogLevel = pr.GetValue(daprLogLevelOpt)!
                     },
-                    DeployDashboard = pr.GetValueForOption(dashboardOpt),
+                    DeployDashboard = pr.GetValue(dashboardOpt),
                     Dashboard = new DashboardConfig
                     {
-                        ImageTag = pr.GetValueForOption(dashboardTagOpt)!,
-                        Port = pr.GetValueForOption(dashboardPortOpt),
-                        OtlpPort = pr.GetValueForOption(dashboardOtlpPortOpt),
-                        BrowserToken = pr.GetValueForOption(dashboardTokenOpt)
+                        ImageTag = pr.GetValue(dashboardTagOpt)!,
+                        Port = pr.GetValue(dashboardPortOpt),
+                        OtlpPort = pr.GetValue(dashboardOtlpPortOpt),
+                        BrowserToken = pr.GetValue(dashboardTokenOpt)
                     },
                     TargetConfig = BuildTargetConfig(target,
-                        pr.GetValueForOption(nomadAddrOpt)!,
-                        pr.GetValueForOption(nomadTokenOpt),
-                        pr.GetValueForOption(nomadNsOpt)!,
-                        pr.GetValueForOption(nomadDcOpt)!,
-                        pr.GetValueForOption(nomadModeOpt),
-                        pr.GetValueForOption(nomadRegUserOpt),
-                        pr.GetValueForOption(nomadRegPassOpt),
-                        pr.GetValueForOption(nomadRegisterOpt),
-                        pr.GetValueForOption(nomadProviderOpt)!,
-                        pr.GetValueForOption(nomadHealthPathOpt)!,
-                        pr.GetValueForOption(k8SContextOpt),
-                        pr.GetValueForOption(k8SPrefixOpt)!,
-                        pr.GetValueForOption(k8SDomainOpt),
-                        pr.GetValueForOption(composeProjectOpt)!,
-                        pr.GetValueForOption(composeRestartOpt)!,
-                        pr.GetValueForOption(ecsRegionOpt)!,
-                        pr.GetValueForOption(ecsClusterOpt)!,
-                        pr.GetValueForOption(ecsProfileOpt),
-                        pr.GetValueForOption(ecsSubnetsOpt),
-                        pr.GetValueForOption(ecsSecGroupsOpt),
-                        pr.GetValueForOption(ecsExecRoleOpt),
-                        pr.GetValueForOption(acaSubOpt),
-                        pr.GetValueForOption(acaRgOpt)!,
-                        pr.GetValueForOption(acaLocationOpt)!,
-                        pr.GetValueForOption(acaEnvOpt)!,
-                        pr.GetValueForOption(acaAcrOpt),
-                        pr.GetValueForOption(ncNomadAddrOpt)!,
-                        pr.GetValueForOption(ncNomadTokenOpt),
-                        pr.GetValueForOption(ncNomadNsOpt)!,
-                        pr.GetValueForOption(ncNomadDcOpt)!,
-                        pr.GetValueForOption(ncConsulAddrOpt)!,
-                        pr.GetValueForOption(ncConsulTokenOpt),
-                        pr.GetValueForOption(ncIngressOpt))
+                        pr.GetValue(nomadAddrOpt)!,
+                        pr.GetValue(nomadTokenOpt),
+                        pr.GetValue(nomadNsOpt)!,
+                        pr.GetValue(nomadDcOpt)!,
+                        pr.GetValue(nomadModeOpt),
+                        pr.GetValue(nomadRegUserOpt),
+                        pr.GetValue(nomadRegPassOpt),
+                        pr.GetValue(nomadRegisterOpt),
+                        pr.GetValue(nomadProviderOpt)!,
+                        pr.GetValue(nomadHealthPathOpt)!,
+                        pr.GetValue(kubernetesContextOpt),
+                        pr.GetValue(kubernetesPrefixOpt)!,
+                        pr.GetValue(kubernetesDomainOpt),
+                        pr.GetValue(composeProjectOpt)!,
+                        pr.GetValue(composeRestartOpt)!,
+                        pr.GetValue(ecsRegionOpt)!,
+                        pr.GetValue(ecsClusterOpt)!,
+                        pr.GetValue(ecsProfileOpt),
+                        pr.GetValue(ecsSubnetsOpt),
+                        pr.GetValue(ecsSecGroupsOpt),
+                        pr.GetValue(ecsExecRoleOpt),
+                        pr.GetValue(acaSubOpt),
+                        pr.GetValue(acaRgOpt)!,
+                        pr.GetValue(acaLocationOpt)!,
+                        pr.GetValue(acaEnvOpt)!,
+                        pr.GetValue(acaAcrOpt),
+                        pr.GetValue(ncNomadAddrOpt)!,
+                        pr.GetValue(ncNomadTokenOpt),
+                        pr.GetValue(ncNomadNsOpt)!,
+                        pr.GetValue(ncNomadDcOpt)!,
+                        pr.GetValue(ncConsulAddrOpt)!,
+                        pr.GetValue(ncConsulTokenOpt),
+                        pr.GetValue(ncIngressOpt))
                 };
-                stateFile = new DeployifyStateFile
+                // Add to (or replace) this one environment; keep any others already defined.
+                stateFile = stateManager.Exists(directory)
+                    ? await stateManager.LoadFileAsync(directory, ct)
+                    : new DeployifyStateFile { Environments = [] };
+                if (stateFile.Environments.ContainsKey(name))
                 {
-                    ActiveEnvironment = name,
-                    Environments = { [name] = config }
-                };
+                    AnsiConsole.MarkupLine($"[yellow]![/] Replacing existing environment [cyan]{Markup.Escape(name)}[/].");
+                }
+
+                stateFile.Environments[name] = config;
+                stateFile.ActiveEnvironment = name;
             }
             else
             {
-                stateFile = await PromptAsync(directory, stateManager);
+                stateFile = await PromptAsync(directory, stateManager, ct);
             }
 
-            await stateManager.SaveFileAsync(stateFile, directory);
+            await stateManager.SaveFileAsync(stateFile, directory, ct);
+            await SecretsWarning.PrintAsync(stateFile, directory, ct);
 
-            AnsiConsole.MarkupLine($"\n[green]✓[/] Deployify initialised → [bold]{directory}/deployify-state.json[/]");
+            AnsiConsole.MarkupLine($"\n[green]✓[/] Deployify initialized → [bold]{directory}/deployify-state.json[/]");
             AnsiConsole.MarkupLine($"  Active environment : [cyan]{stateFile.ActiveEnvironment}[/]");
             AnsiConsole.MarkupLine($"  Environments: {string.Join(", ", stateFile.Environments.Keys.Select(k => $"[cyan]{k}[/]"))}");
             AnsiConsole.WriteLine();
@@ -227,12 +462,12 @@ public static class InitCommand
     // ── Interactive prompts ───────────────────────────────────────────────────
 
     private static async Task<DeployifyStateFile> PromptAsync(
-        string directory, IStateManager stateManager)
+        string directory, IStateManager stateManager, CancellationToken ct)
     {
         AnsiConsole.Write(new FigletText("Deployify").Color(Color.Cyan1));
 
         var stateFile = stateManager.Exists(directory)
-            ? await stateManager.LoadFileAsync(directory)
+            ? await stateManager.LoadFileAsync(directory, ct)
             : new DeployifyStateFile { Environments = [] };
 
         var addAnother = true;
@@ -240,32 +475,37 @@ public static class InitCommand
 
         while (addAnother)
         {
-            var name = AnsiConsole.Ask<string>(isFirst
+            var name = await ConsolePrompts.AskAsync<string>(isFirst
                 ? "Name for first environment [dim](e.g. local)[/]:"
-                : "Name for next environment:");
+                : "Name for next environment:", ct);
 
-            stateFile.Environments[name] = PromptEnvironmentConfig(name, directory);
-            if (isFirst) { stateFile.ActiveEnvironment = name; isFirst = false; }
+            stateFile.Environments[name] = await PromptEnvironmentConfigAsync(name, directory, ct);
+            if (isFirst)
+            {
+                stateFile.ActiveEnvironment = name;
+                isFirst = false;
+            }
 
-            addAnother = AnsiConsole.Confirm("Add another environment?", defaultValue: false);
+            addAnother = await ConsolePrompts.ConfirmAsync("Add another environment?", defaultValue: false, ct);
         }
 
         if (stateFile.Environments.Count > 1)
         {
-	        stateFile.ActiveEnvironment = AnsiConsole.Prompt(
-		        new SelectionPrompt<string>()
-			        .Title("Which environment should be [bold]active[/] by default?")
-			        .AddChoices(stateFile.Environments.Keys));
+            stateFile.ActiveEnvironment = await ConsolePrompts.PromptAsync(
+                new SelectionPrompt<string>()
+                    .Title("Which environment should be [bold]active[/] by default?")
+                    .AddChoices(stateFile.Environments.Keys), ct);
         }
 
         return stateFile;
     }
 
-    internal static EnvironmentConfig PromptEnvironmentConfig(string envName, string directory)
+    internal static async Task<EnvironmentConfig> PromptEnvironmentConfigAsync(
+        string envName, string directory, CancellationToken ct)
     {
         AnsiConsole.MarkupLine($"\n[bold]Configuring: [cyan]{envName}[/][/]");
 
-        var target = AnsiConsole.Prompt(
+        var target = await ConsolePrompts.PromptAsync(
             new SelectionPrompt<DeploymentTargetType>()
                 .Title("Deployment target:")
                 .AddChoices(
@@ -275,46 +515,46 @@ public static class InitCommand
                     DeploymentTargetType.AwsEcs,
                     DeploymentTargetType.AzureContainerApps,
                     DeploymentTargetType.NomadConsul)
-                .HighlightStyle(new Style(foreground: Color.Cyan1)));
+                .HighlightStyle(new Style(foreground: Color.Cyan1)), ct);
 
-        var registry = AnsiConsole.Ask("Container registry [dim](blank to skip)[/]:", string.Empty);
-        var tag = AnsiConsole.Ask("Default image tag:", "latest");
-        var outPath = AnsiConsole.Ask("Output path:", "deployify-output");
-        var runtime = AnsiConsole.Prompt(
+        var registry = await ConsolePrompts.AskAsync("Container registry [dim](blank to skip)[/]:", string.Empty, ct);
+        var tag = await ConsolePrompts.AskAsync("Default image tag:", "latest", ct);
+        var outPath = await ConsolePrompts.AskAsync("Output path:", "deployify-output", ct);
+        var runtime = await ConsolePrompts.PromptAsync(
             new SelectionPrompt<ContainerRuntime>()
                 .Title("Container runtime for publishing:")
                 .AddChoices(ContainerRuntime.Docker, ContainerRuntime.Podman)
-                .HighlightStyle(new Style(foreground: Color.Cyan1)));
+                .HighlightStyle(new Style(foreground: Color.Cyan1)), ct);
 
-        var containerArch = AnsiConsole.Prompt(
+        var containerArch = await ConsolePrompts.PromptAsync(
             new SelectionPrompt<string>()
                 .Title("Target CPU architecture for container images:")
                 .AddChoices("x64", "arm64", "arm")
-                .HighlightStyle(new Style(foreground: Color.Cyan1)));
+                .HighlightStyle(new Style(foreground: Color.Cyan1)), ct);
 
-        var deployDapr = AnsiConsole.Confirm("Inject Dapr sidecars into all services?", defaultValue: false);
+        var deployDapr = await ConsolePrompts.ConfirmAsync("Inject Dapr sidecars into all services?", defaultValue: false, ct);
         var daprConfig = new DaprConfig();
         if (deployDapr)
         {
-            daprConfig.DaprHttpPort = AnsiConsole.Ask("Base Dapr HTTP port:", 3500);
-            daprConfig.DaprGrpcPort = AnsiConsole.Ask("Base Dapr gRPC port:", 50001);
-            var components = AnsiConsole.Ask("Dapr components path [dim](blank to skip)[/]:", string.Empty);
+            daprConfig.DaprHttpPort = await ConsolePrompts.AskAsync("Base Dapr HTTP port:", 3500, ct);
+            daprConfig.DaprGrpcPort = await ConsolePrompts.AskAsync("Base Dapr gRPC port:", 50001, ct);
+            var components = await ConsolePrompts.AskAsync("Dapr components path [dim](blank to skip)[/]:", string.Empty, ct);
             if (!string.IsNullOrWhiteSpace(components))
             {
-	            daprConfig.ComponentsPath = components;
+                daprConfig.ComponentsPath = components;
             }
         }
 
-        var deployDashboard = AnsiConsole.Confirm("Deploy Aspire Dashboard alongside services?", defaultValue: false);
+        var deployDashboard = await ConsolePrompts.ConfirmAsync("Deploy Aspire Dashboard alongside services?", defaultValue: false, ct);
         var dashboardConfig = new DashboardConfig();
         if (deployDashboard)
         {
-            dashboardConfig.Port = AnsiConsole.Ask("Dashboard UI port:", 18888);
-            dashboardConfig.OtlpPort = AnsiConsole.Ask("Dashboard OTLP port:", 18889);
-            var token = AnsiConsole.Ask("Browser auth token [dim](blank for none)[/]:", string.Empty);
+            dashboardConfig.Port = await ConsolePrompts.AskAsync("Dashboard UI port:", 18888, ct);
+            dashboardConfig.OtlpPort = await ConsolePrompts.AskAsync("Dashboard OTLP port:", 18889, ct);
+            var token = await ConsolePrompts.AskSecretAsync("Browser auth token [dim](blank for none)[/]:", ct);
             if (!string.IsNullOrWhiteSpace(token))
             {
-	            dashboardConfig.BrowserToken = token;
+                dashboardConfig.BrowserToken = token;
             }
         }
 
@@ -324,7 +564,7 @@ public static class InitCommand
         var nomadRegisterServices = true;
         var nomadServiceProvider = "nomad";
         var nomadHealthPath = "/health";
-        string k8SContext = string.Empty, k8SPrefix = string.Empty, k8SDomain = string.Empty;
+        string kubernetesContext = string.Empty, kubernetesPrefix = string.Empty, kubernetesDomain = string.Empty;
         string composeProject = string.Empty, composeRestart = string.Empty;
         string ecsRegion = string.Empty, ecsCluster = string.Empty;
         string? ecsProfile = null, ecsSubnets = null, ecsSecGroups = null, ecsExecRole = null;
@@ -338,74 +578,73 @@ public static class InitCommand
         {
             case DeploymentTargetType.Nomad:
                 AnsiConsole.MarkupLine("[dim]Nomad settings:[/]");
-                nomadAddr = AnsiConsole.Ask("Nomad address:", "http://localhost:4646");
-                nomadNs = AnsiConsole.Ask("Namespace:", "default");
-                nomadDc = AnsiConsole.Ask("Datacenter:", "dc1");
-                nomadToken = AnsiConsole.Ask("ACL token [dim](blank to skip)[/]:", string.Empty);
-                nomadMode = AnsiConsole.Prompt(
+                nomadAddr = await ConsolePrompts.AskAsync("Nomad address:", "http://localhost:4646", ct);
+                nomadNs = await ConsolePrompts.AskAsync("Namespace:", "default", ct);
+                nomadDc = await ConsolePrompts.AskAsync("Datacenter:", "dc1", ct);
+                nomadToken = await ConsolePrompts.AskSecretAsync("ACL token [dim](blank to skip, or env:VAR_NAME)[/]:", ct);
+                nomadMode = await ConsolePrompts.PromptAsync(
                     new SelectionPrompt<NomadDeploymentMode>()
                         .Title("Deployment mode:")
-                        .AddChoices(NomadDeploymentMode.Docker, NomadDeploymentMode.RawExec));
-                if (AnsiConsole.Confirm("Authenticate with a private Docker registry?", defaultValue: false))
+                        .AddChoices(NomadDeploymentMode.Docker, NomadDeploymentMode.RawExec), ct);
+                if (await ConsolePrompts.ConfirmAsync("Authenticate with a private Docker registry?", defaultValue: false, ct))
                 {
-                    nomadRegUser = AnsiConsole.Ask<string>("Registry username:");
-                    nomadRegPass = AnsiConsole.Prompt(
-                        new TextPrompt<string>("Registry password / token:").Secret());
+                    nomadRegUser = await ConsolePrompts.AskAsync<string>("Registry username:", ct);
+                    nomadRegPass = await ConsolePrompts.AskSecretAsync("Registry password / token [dim](or env:VAR_NAME)[/]:", ct);
                 }
 
-                nomadRegisterServices = AnsiConsole.Confirm("Register services in service catalog?", defaultValue: true);
+                nomadRegisterServices = await ConsolePrompts.ConfirmAsync("Register services in service catalog?", defaultValue: true, ct);
                 if (nomadRegisterServices)
                 {
-                    nomadServiceProvider = AnsiConsole.Prompt(
+                    nomadServiceProvider = await ConsolePrompts.PromptAsync(
                         new SelectionPrompt<string>()
                             .Title("Service provider:")
-                            .AddChoices("nomad", "consul"));
-                    nomadHealthPath = AnsiConsole.Ask("Health check path:", "/health");
+                            .AddChoices("nomad", "consul"), ct);
+                    nomadHealthPath = await ConsolePrompts.AskAsync("Health check path:", "/health", ct);
                 }
-                
+
                 break;
 
             case DeploymentTargetType.Kubernetes:
                 AnsiConsole.MarkupLine("[dim]Kubernetes settings:[/]");
-                k8SContext = AnsiConsole.Ask("kubectl context [dim](blank = current)[/]:", string.Empty);
-                k8SPrefix = AnsiConsole.Ask("Namespace prefix:", envName);
-                k8SDomain = AnsiConsole.Ask("Ingress base domain [dim](blank to skip)[/]:", string.Empty);
+                kubernetesContext = await ConsolePrompts.AskAsync("kubectl context [dim](blank = current)[/]:", string.Empty, ct);
+                kubernetesPrefix = await ConsolePrompts.AskAsync("Namespace prefix:", envName, ct);
+                kubernetesDomain = await ConsolePrompts.AskAsync("Ingress base domain [dim](blank to skip)[/]:", string.Empty, ct);
                 break;
 
             case DeploymentTargetType.Compose:
                 AnsiConsole.MarkupLine("[dim]Docker Compose settings:[/]");
-                composeProject = AnsiConsole.Ask("Project name:", envName);
-                composeRestart = AnsiConsole.Ask("Restart policy:", "unless-stopped");
+                composeProject = await ConsolePrompts.AskAsync("Project name:", envName, ct);
+                composeRestart = await ConsolePrompts.AskAsync("Restart policy:", "unless-stopped", ct);
                 break;
 
             case DeploymentTargetType.AwsEcs:
                 AnsiConsole.MarkupLine("[dim]AWS ECS settings:[/]");
-                ecsRegion = AnsiConsole.Ask("AWS region:", "us-east-1");
-                ecsCluster = AnsiConsole.Ask("ECS cluster name:", "deployify");
-                ecsProfile = AnsiConsole.Ask("AWS profile [dim](blank = default)[/]:", string.Empty);
-                ecsSubnets = AnsiConsole.Ask("Subnet IDs [dim](comma-separated, required for Fargate)[/]:", string.Empty);
-                ecsSecGroups = AnsiConsole.Ask("Security group IDs [dim](comma-separated)[/]:", string.Empty);
-                ecsExecRole = AnsiConsole.Ask("Execution role ARN [dim](blank = auto-detect)[/]:", string.Empty);
+                ecsRegion = await ConsolePrompts.AskAsync("AWS region:", "us-east-1", ct);
+                ecsCluster = await ConsolePrompts.AskAsync("ECS cluster name:", "deployify", ct);
+                ecsProfile = await ConsolePrompts.AskAsync("AWS profile [dim](blank = default)[/]:", string.Empty, ct);
+                ecsSubnets = await ConsolePrompts.AskAsync("Subnet IDs [dim](comma-separated, required for Fargate)[/]:", string.Empty, ct);
+                ecsSecGroups = await ConsolePrompts.AskAsync("Security group IDs [dim](comma-separated)[/]:", string.Empty, ct);
+                ecsExecRole = await ConsolePrompts.AskAsync("Execution role ARN [dim](blank = auto-detect)[/]:", string.Empty, ct);
                 break;
 
             case DeploymentTargetType.AzureContainerApps:
                 AnsiConsole.MarkupLine("[dim]Azure Container Apps settings:[/]");
-                acaSub = AnsiConsole.Ask("Subscription ID:", string.Empty);
-                acaRg = AnsiConsole.Ask("Resource group:", "deployify-rg");
-                acaLocation = AnsiConsole.Ask("Location:", "eastus");
-                acaEnv = AnsiConsole.Ask("Container Apps environment name:", "deployify-env");
-                acaAcr = AnsiConsole.Ask("ACR login server [dim](blank to skip)[/]:", string.Empty);
+                acaSub = await ConsolePrompts.AskAsync("Subscription ID:", string.Empty, ct);
+                acaRg = await ConsolePrompts.AskAsync("Resource group:", "deployify-rg", ct);
+                acaLocation = await ConsolePrompts.AskAsync("Location:", "eastus", ct);
+                acaEnv = await ConsolePrompts.AskAsync("Container Apps environment name:", "deployify-env", ct);
+                acaAcr = await ConsolePrompts.AskAsync("ACR login server [dim](blank to skip)[/]:", string.Empty, ct);
                 break;
 
             case DeploymentTargetType.NomadConsul:
                 AnsiConsole.MarkupLine("[dim]Nomad + Consul Connect settings:[/]");
-                ncNomadAddr = AnsiConsole.Ask("Nomad address:", "http://localhost:4646");
-                ncNomadNs = AnsiConsole.Ask("Nomad namespace:", "default");
-                ncNomadDc = AnsiConsole.Ask("Datacenter:", "dc1");
-                ncNomadToken = AnsiConsole.Ask("Nomad ACL token [dim](blank to skip)[/]:", string.Empty);
-                ncConsulAddr = AnsiConsole.Ask("Consul address:", "http://localhost:8500");
-                ncConsulToken = AnsiConsole.Ask("Consul ACL token [dim](blank to skip)[/]:", string.Empty);
-                ncIngress = AnsiConsole.Confirm("Enable Ingress Gateway for HTTP services?", defaultValue: false);
+                ncNomadAddr = await ConsolePrompts.AskAsync("Nomad address:", "http://localhost:4646", ct);
+                ncNomadNs = await ConsolePrompts.AskAsync("Nomad namespace:", "default", ct);
+                ncNomadDc = await ConsolePrompts.AskAsync("Datacenter:", "dc1", ct);
+                ncNomadToken = await ConsolePrompts.AskSecretAsync("Nomad ACL token [dim](blank to skip, or env:VAR_NAME)[/]:", ct);
+                ncConsulAddr = await ConsolePrompts.AskAsync("Consul address:", "http://localhost:8500", ct);
+                ncConsulToken = await ConsolePrompts.AskSecretAsync("Consul ACL token [dim](blank to skip, or env:VAR_NAME)[/]:", ct);
+                ncIngress = await ConsolePrompts.ConfirmAsync("Enable Ingress Gateway for HTTP services?", defaultValue: false, ct);
                 break;
         }
 
@@ -426,7 +665,7 @@ public static class InitCommand
             TargetConfig = BuildTargetConfig(target, nomadAddr, nomadToken, nomadNs, nomadDc,
                 nomadMode, nomadRegUser, nomadRegPass,
                 nomadRegisterServices, nomadServiceProvider, nomadHealthPath,
-                k8SContext, k8SPrefix, k8SDomain, composeProject, composeRestart,
+                kubernetesContext, kubernetesPrefix, kubernetesDomain, composeProject, composeRestart,
                 ecsRegion, ecsCluster, ecsProfile, ecsSubnets, ecsSecGroups, ecsExecRole,
                 acaSub, acaRg, acaLocation, acaEnv, acaAcr,
                 ncNomadAddr, ncNomadToken, ncNomadNs, ncNomadDc,
@@ -442,7 +681,7 @@ public static class InitCommand
         NomadDeploymentMode nomadMode,
         string? nomadRegUser, string? nomadRegPass,
         bool nomadRegisterServices, string nomadServiceProvider, string nomadHealthPath,
-        string? k8SContext, string k8SPrefix, string? k8SDomain,
+        string? kubernetesContext, string kubernetesPrefix, string? kubernetesDomain,
         string composeProject, string composeRestart,
         string ecsRegion, string ecsCluster,
         string? ecsProfile, string? ecsSubnets, string? ecsSecGroups, string? ecsExecRole,
@@ -451,86 +690,86 @@ public static class InitCommand
         string ncConsulAddr, string? ncConsulToken, bool ncIngress)
         => target switch
         {
-	        DeploymentTargetType.Nomad => new Dictionary<string, object?>
-	        {
-		        ["nomad"] = new NomadTargetConfig
-		        {
-			        Address = nomadAddr,
-			        Token = string.IsNullOrWhiteSpace(nomadToken) ? null : nomadToken,
-			        Namespace = nomadNs,
-			        Datacenters = [nomadDc],
-			        DeploymentMode = nomadMode,
-			        RegistryUsername = string.IsNullOrWhiteSpace(nomadRegUser) ? null : nomadRegUser,
-			        RegistryPassword = string.IsNullOrWhiteSpace(nomadRegPass) ? null : nomadRegPass,
-			        RegisterServices = nomadRegisterServices,
-			        ServiceProvider = nomadServiceProvider,
-			        HealthCheckPath = nomadHealthPath
-		        }
-	        },
-	        DeploymentTargetType.Kubernetes => new Dictionary<string, object?>
-	        {
-		        ["kubernetes"] = new KubernetesTargetConfig
-		        {
-			        Context = string.IsNullOrWhiteSpace(k8SContext) ? null : k8SContext,
-			        NamespacePrefix = k8SPrefix,
-			        IngressBaseDomain = string.IsNullOrWhiteSpace(k8SDomain) ? null : k8SDomain,
-			        GenerateIngress = !string.IsNullOrWhiteSpace(k8SDomain)
-		        }
-	        },
-	        DeploymentTargetType.Compose => new Dictionary<string, object?>
-	        {
-		        ["compose"] = new ComposeTargetConfig
-		        {
-			        ProjectName = composeProject,
-			        RestartPolicy = string.IsNullOrWhiteSpace(composeRestart) ? "unless-stopped" : composeRestart,
-			        GenerateProfiles = true,
-			        GenerateEnvFile = true,
-			        GenerateMergedFile = true
-		        }
-	        },
-	        DeploymentTargetType.AwsEcs => new Dictionary<string, object?>
-	        {
-		        ["ecs"] = new EcsTargetConfig
-		        {
-			        Region = string.IsNullOrWhiteSpace(ecsRegion) ? "us-east-1" : ecsRegion,
-			        ClusterName = string.IsNullOrWhiteSpace(ecsCluster) ? "deployify" : ecsCluster,
-			        AwsProfile = string.IsNullOrWhiteSpace(ecsProfile) ? null : ecsProfile,
-			        SubnetIds = string.IsNullOrWhiteSpace(ecsSubnets)
-				        ? []
-				        : [.. ecsSubnets.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)],
-			        SecurityGroupIds = string.IsNullOrWhiteSpace(ecsSecGroups)
-				        ? []
-				        : [.. ecsSecGroups.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)],
-			        ExecutionRoleArn = string.IsNullOrWhiteSpace(ecsExecRole) ? null : ecsExecRole
-		        }
-	        },
-	        DeploymentTargetType.AzureContainerApps => new Dictionary<string, object?>
-	        {
-		        ["aca"] = new AcaTargetConfig
-		        {
-			        SubscriptionId = string.IsNullOrWhiteSpace(acaSub) ? string.Empty : acaSub,
-			        ResourceGroup = string.IsNullOrWhiteSpace(acaRg) ? "deployify-rg" : acaRg,
-			        Location = string.IsNullOrWhiteSpace(acaLocation) ? "eastus" : acaLocation,
-			        EnvironmentName = string.IsNullOrWhiteSpace(acaEnv) ? "deployify-env" : acaEnv,
-			        AcrLoginServer = string.IsNullOrWhiteSpace(acaAcr) ? null : acaAcr
-		        }
-	        },
-	        DeploymentTargetType.NomadConsul => new Dictionary<string, object?>
-	        {
-		        ["nomadconsul"] = new NomadConsulTargetConfig
-		        {
-			        NomadAddress = string.IsNullOrWhiteSpace(ncNomadAddr) ? "http://localhost:4646" : ncNomadAddr,
-			        NomadToken = string.IsNullOrWhiteSpace(ncNomadToken) ? null : ncNomadToken,
-			        NomadNamespace = string.IsNullOrWhiteSpace(ncNomadNs) ? "default" : ncNomadNs,
-			        Datacenters = [string.IsNullOrWhiteSpace(ncNomadDc) ? "dc1" : ncNomadDc],
-			        ConsulAddress = string.IsNullOrWhiteSpace(ncConsulAddr) ? "http://localhost:8500" : ncConsulAddr,
-			        ConsulToken = string.IsNullOrWhiteSpace(ncConsulToken) ? null : ncConsulToken,
-			        EnableIngressGateway = ncIngress
-		        }
-	        },
-	        _ => []
+            DeploymentTargetType.Nomad => new Dictionary<string, object?>
+            {
+                ["nomad"] = new NomadTargetConfig
+                {
+                    Address = nomadAddr,
+                    Token = string.IsNullOrWhiteSpace(nomadToken) ? null : nomadToken,
+                    Namespace = nomadNs,
+                    Datacenters = [nomadDc],
+                    DeploymentMode = nomadMode,
+                    RegistryUsername = string.IsNullOrWhiteSpace(nomadRegUser) ? null : nomadRegUser,
+                    RegistryPassword = string.IsNullOrWhiteSpace(nomadRegPass) ? null : nomadRegPass,
+                    RegisterServices = nomadRegisterServices,
+                    ServiceProvider = nomadServiceProvider,
+                    HealthCheckPath = nomadHealthPath
+                }
+            },
+            DeploymentTargetType.Kubernetes => new Dictionary<string, object?>
+            {
+                ["kubernetes"] = new KubernetesTargetConfig
+                {
+                    Context = string.IsNullOrWhiteSpace(kubernetesContext) ? null : kubernetesContext,
+                    NamespacePrefix = kubernetesPrefix,
+                    IngressBaseDomain = string.IsNullOrWhiteSpace(kubernetesDomain) ? null : kubernetesDomain,
+                    GenerateIngress = !string.IsNullOrWhiteSpace(kubernetesDomain)
+                }
+            },
+            DeploymentTargetType.Compose => new Dictionary<string, object?>
+            {
+                ["compose"] = new ComposeTargetConfig
+                {
+                    ProjectName = composeProject,
+                    RestartPolicy = string.IsNullOrWhiteSpace(composeRestart) ? "unless-stopped" : composeRestart,
+                    GenerateProfiles = true,
+                    GenerateEnvFile = true,
+                    GenerateMergedFile = true
+                }
+            },
+            DeploymentTargetType.AwsEcs => new Dictionary<string, object?>
+            {
+                ["ecs"] = new EcsTargetConfig
+                {
+                    Region = string.IsNullOrWhiteSpace(ecsRegion) ? "us-east-1" : ecsRegion,
+                    ClusterName = string.IsNullOrWhiteSpace(ecsCluster) ? "deployify" : ecsCluster,
+                    AwsProfile = string.IsNullOrWhiteSpace(ecsProfile) ? null : ecsProfile,
+                    SubnetIds = string.IsNullOrWhiteSpace(ecsSubnets)
+                        ? []
+                        : [.. ecsSubnets.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)],
+                    SecurityGroupIds = string.IsNullOrWhiteSpace(ecsSecGroups)
+                        ? []
+                        : [.. ecsSecGroups.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)],
+                    ExecutionRoleArn = string.IsNullOrWhiteSpace(ecsExecRole) ? null : ecsExecRole
+                }
+            },
+            DeploymentTargetType.AzureContainerApps => new Dictionary<string, object?>
+            {
+                ["aca"] = new AcaTargetConfig
+                {
+                    SubscriptionId = string.IsNullOrWhiteSpace(acaSub) ? string.Empty : acaSub,
+                    ResourceGroup = string.IsNullOrWhiteSpace(acaRg) ? "deployify-rg" : acaRg,
+                    Location = string.IsNullOrWhiteSpace(acaLocation) ? "eastus" : acaLocation,
+                    EnvironmentName = string.IsNullOrWhiteSpace(acaEnv) ? "deployify-env" : acaEnv,
+                    AcrLoginServer = string.IsNullOrWhiteSpace(acaAcr) ? null : acaAcr
+                }
+            },
+            DeploymentTargetType.NomadConsul => new Dictionary<string, object?>
+            {
+                ["nomadconsul"] = new NomadConsulTargetConfig
+                {
+                    NomadAddress = string.IsNullOrWhiteSpace(ncNomadAddr) ? "http://localhost:4646" : ncNomadAddr,
+                    NomadToken = string.IsNullOrWhiteSpace(ncNomadToken) ? null : ncNomadToken,
+                    NomadNamespace = string.IsNullOrWhiteSpace(ncNomadNs) ? "default" : ncNomadNs,
+                    Datacenters = [string.IsNullOrWhiteSpace(ncNomadDc) ? "dc1" : ncNomadDc],
+                    ConsulAddress = string.IsNullOrWhiteSpace(ncConsulAddr) ? "http://localhost:8500" : ncConsulAddr,
+                    ConsulToken = string.IsNullOrWhiteSpace(ncConsulToken) ? null : ncConsulToken,
+                    EnableIngressGateway = ncIngress
+                }
+            },
+            _ => []
         };
 
-    private static string ResolveDirectory(string p) =>
-        File.Exists(p) ? Path.GetDirectoryName(Path.GetFullPath(p))! : Path.GetFullPath(p);
+    private static string ResolveDirectory(string p)
+        => File.Exists(p) ? Path.GetDirectoryName(Path.GetFullPath(p))! : Path.GetFullPath(p);
 }

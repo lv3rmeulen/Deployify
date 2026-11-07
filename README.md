@@ -25,10 +25,10 @@ dotnet tool install --global --add-source ./src/Deployify/nupkg deployify
 ```bash
 cd MyApp.AppHost
 
-# Initialise once — creates deployify-state.json
+# Initialize once — creates deployify-state.json
 deployify init
 
-# Generate artefacts, preview changes, then deploy
+# Generate artifacts, preview changes, then deploy
 deployify generate
 deployify plan
 deployify apply
@@ -55,21 +55,21 @@ deployify ci --skip-validate
 | `env set <name>` | Update settings on an existing environment |
 | `env remove <name>` | Remove an environment |
 
-### Artefact generation
+### Artifact generation
 
 | Command | Description |
 |---|---|
-| `generate` | Write deployment artefacts to disk without querying the cluster |
-| `validate` | Validate generated artefacts against the target platform |
+| `generate` | Write deployment artifacts to disk without querying the cluster |
+| `validate` | Validate generated artifacts against the target platform |
 
 ### Deployment
 
 | Command | Description |
 |---|---|
-| `plan` | Generate artefacts and preview what would change on the cluster |
-| `apply` | Deploy artefacts to the target (prompts for confirmation) |
+| `plan` | Generate artifacts and preview what would change on the cluster |
+| `apply` | Deploy artifacts to the target (prompts for confirmation) |
 | `package` | Zip build output and upload to an artifact store (raw_exec Nomad only) |
-| `diff` | Compare live cluster state against local artefacts |
+| `diff` | Compare live cluster state against local artifacts |
 
 ### Insight
 
@@ -94,7 +94,7 @@ deployify ci --skip-validate
 ```bash
 deployify init
 deployify init --non-interactive --target Nomad --nomad-address http://localhost:4646
-deployify init --non-interactive --target Kubernetes --k8s-context my-cluster
+deployify init --non-interactive --target Kubernetes --kubernetes-context my-cluster
 deployify init --non-interactive --target AwsEcs --ecs-region us-east-1 --ecs-cluster my-cluster
 deployify init --non-interactive --target AzureContainerApps \
     --aca-subscription 00000000-0000-0000-0000-000000000000 \
@@ -106,7 +106,7 @@ deployify init --non-interactive --target NomadConsul \
 
 ### `generate`
 
-Writes artefacts (HCL jobs, Kubernetes YAML, `docker-compose.yml`, ECS task definitions, ACA specs) to `deployify-output/` without contacting the cluster. Use this as a standalone step in CI or to inspect outputs before planning.
+Writes artifacts (HCL jobs, Kubernetes YAML, `docker-compose.yml`, ECS task definitions, ACA specs) to `deployify-output/` without contacting the cluster. Use this as a standalone step in CI or to inspect outputs before planning.
 
 ```bash
 deployify generate
@@ -115,7 +115,7 @@ deployify generate --env prod --target Kubernetes
 
 ### `plan`
 
-Generates artefacts and compares them against the live cluster state. Exits 0 even when the cluster is unreachable — the diff is best-effort.
+Generates artifacts and compares them against the live cluster state. Exits 0 even when the cluster is unreachable — the diff is best-effort.
 
 ```bash
 deployify plan
@@ -144,6 +144,9 @@ deployify package --dry-run
 
 # Specify a custom publish output directory
 deployify package --publish-dir ./out/publish
+
+# Tag the uploaded artifacts (defaults to the environment's imageTag)
+deployify package --image-tag v1.0.0
 ```
 
 After running `package`, the artifact URLs are written back to `deployify-state.json` under `serviceOverrides[name].artifactUrl`. The next `generate`/`plan`/`apply` picks them up and emits an `artifact { source = "..." }` block in the HCL.
@@ -161,7 +164,7 @@ deployify apply --auto-approve
 
 ## Artifact stores (raw_exec Nomad)
 
-When `deploymentMode` is `RawExec`, Deployify can zip your published binaries and upload them to an artifact store. Nomad then downloads and unzips the artefact before running the binary via `raw_exec`.
+When `deploymentMode` is `RawExec`, Deployify can zip your published binaries and upload them to an artifact store. Nomad then downloads and unzips the artifact before running the binary via `raw_exec`.
 
 The generated HCL looks like:
 
@@ -195,7 +198,7 @@ task "api" {
 }
 ```
 
-Artefacts are PUT to `{httpBaseUrl}/{name}-{version}.zip`.
+Artifacts are PUT to `{httpBaseUrl}/{name}-{version}.zip`.
 
 #### S3
 
@@ -290,7 +293,14 @@ deployify ci --skip-validate --skip-apply
 
 # Exit non-zero if the plan detects any drift (useful for change gating)
 deployify ci --skip-apply --fail-on-changes
+
+# Deploy without a prompt (required when there is no interactive terminal)
+deployify ci --auto-approve
 ```
+
+When `ci` reaches the apply step it asks for confirmation in an interactive terminal. In a
+non-interactive run (a CI agent) it refuses to apply unless `--auto-approve` is passed, so
+a pipeline never deploys by accident.
 
 Steps printed during a run:
 
@@ -351,12 +361,30 @@ Generates one HCL job file per service using the Docker driver. Submits jobs via
     "token": "optional-acl-token",
     "namespace": "default",
     "datacenters": ["dc1"],
-    "deploymentMode": "Docker"
+    "deploymentMode": "Docker",
+    "healthCheckType": "tcp",
+    "registryUsername": "myuser",
+    "registryPassword": "env:REGISTRY_PASSWORD"
   }
 }
 ```
 
 Init flags: `--nomad-address`, `--nomad-token`, `--nomad-namespace`, `--nomad-datacenter`
+
+Notes:
+
+- **Networking.** Docker tasks use host networking and each service gets its own static port
+  (starting at `basePort`, default 8080). Services find each other at `localhost:<port>`, which
+  assumes a single Nomad client node. For multi-node clusters use the `NomadConsul` target.
+- **Health checks.** `healthCheckType` is `tcp` (default), `http` (uses `healthCheckPath`,
+  default `/health`) or `none`. Aspire's `MapDefaultEndpoints()` only maps `/health` in the
+  Development environment, so `http` checks fail in production unless you map it yourself.
+- **Private registries.** `registryUsername` / `registryPassword` add an `auth` block for
+  images that aren't on a public registry. The password is never written to the generated
+  job file — the file holds a placeholder and the real value is filled in, in memory, when
+  the job is sent to Nomad. If `registryPassword` is empty, `DEPLOYIFY_REGISTRY_PASSWORD` is used.
+- **Ownership.** Generated jobs carry `meta { deployify-managed = "true" }`; `plan` only ever
+  proposes deleting jobs with that marker.
 
 ---
 
@@ -381,7 +409,12 @@ Generates `Deployment`, `Service`, and optionally `Ingress` manifests. Applies v
 }
 ```
 
-Init flags: `--k8s-context`, `--k8s-namespace-prefix`, `--k8s-ingress-domain`
+Init flags: `--kubernetes-context`, `--kubernetes-namespace-prefix`, `--kubernetes-ingress-domain`
+
+Probes default to `tcpSocket`; set `"healthCheckType": "http"` (with `"healthCheckPath"`) for
+`httpGet` probes, or `"none"` to omit them. An `Ingress` is only generated for HTTP endpoints
+marked external in the AppHost (`WithExternalHttpEndpoints()`). All resources carry the
+`app.kubernetes.io/managed-by=deployify` label, and only labeled namespaces are ever deleted.
 
 ---
 
@@ -397,12 +430,16 @@ Generates a `docker-compose.yml` (and optionally a merged override file and `.en
     "generateProfiles": false,
     "generateEnvFile": false,
     "generateMergedFile": true,
-    "generateHealthChecks": true
+    "generateHealthChecks": false
   }
 }
 ```
 
 Init flags: `--compose-project`, `--compose-restart`
+
+`generateHealthChecks` is off by default: the images `dotnet publish` produces contain neither
+`curl` nor `wget`, so a generated health check would mark every service unhealthy. Turn it on
+only when your images include a tool the check can use.
 
 ---
 
@@ -423,10 +460,19 @@ Generates ECS task definition JSON files and registers/updates services via the 
     "logGroupName": "/ecs/myapp",
     "defaultCpu": 256,
     "defaultMemory": 512,
-    "awsProfile": "default"
+    "awsProfile": "default",
+    "serviceConnectNamespace": "myapp.local",
+    "waitForStable": true
   }
 }
 ```
+
+- `serviceConnectNamespace` enables ECS Service Connect so services reach each other by name.
+  Without it, inter-service URLs can't be resolved on ECS.
+- `waitForStable` (default `true`) makes `apply` wait until each service reaches a steady
+  state, so a task that crash-loops is reported as a failure instead of a success.
+- The CloudWatch log group is created automatically (`awslogs-create-group`); the execution
+  role needs `logs:CreateLogGroup`.
 
 Init flags: `--ecs-region`, `--ecs-cluster`, `--ecs-profile`, `--ecs-subnets`, `--ecs-security-groups`, `--ecs-execution-role`
 
@@ -450,10 +496,18 @@ Generates Container App spec JSON files and deploys via the Azure CLI.
     "defaultCpu": 0.25,
     "defaultMemory": "0.5Gi",
     "acrLoginServer": "myregistry.azurecr.io",
+    "acrIdentityResourceId": "/subscriptions/.../userAssignedIdentities/my-acr-pull",
     "tenantId": "optional-tenant-id"
   }
 }
 ```
+
+- When `subscriptionId` is empty, the Azure CLI's current subscription (`az account show`) is used.
+- Only endpoints marked external in the AppHost get external ingress; everything else gets
+  internal ingress.
+- With `acrLoginServer` set, apps pull from ACR using a managed identity: the user-assigned
+  identity in `acrIdentityResourceId` when given, otherwise the app's system-assigned identity
+  (which needs the `AcrPull` role).
 
 Init flags: `--aca-subscription`, `--aca-resource-group`, `--aca-location`, `--aca-environment`, `--aca-acr`
 
@@ -484,6 +538,10 @@ Generates Nomad HCL jobs with Consul Connect service mesh. Every service uses `n
 ```
 
 Init flags: `--nc-nomad-address`, `--nc-nomad-token`, `--nc-nomad-namespace`, `--nc-datacenter`, `--nc-consul-address`, `--nc-consul-token`, `--nc-ingress-gateway`
+
+With `enableIngressGateway`, one extra job (named `ingressGatewayName`) runs a Consul ingress
+gateway with a TCP listener for every HTTP endpoint marked external in the AppHost.
+`healthCheckType` works as for the `Nomad` target (`tcp` by default).
 
 ---
 
@@ -633,6 +691,9 @@ When `containerRuntime` is `Docker` (the default), Deployify:
 2. If Docker is unreachable, runs `podman info`. If Podman is found, sets `DOCKER_HOST` to the Podman socket automatically — probing well-known paths like `/run/user/<uid>/podman/podman.sock` on Linux and `~/.local/share/containers/podman/machine/qemu/podman.sock` on macOS.
 3. If neither runtime is available, logs a warning and proceeds (the publish step may fail with a clear error).
 
+When Podman is used, the publish runs with `-p:LocalRegistry=podman` so the .NET SDK loads
+the image into Podman's local store rather than Docker's.
+
 ### Explicit configuration
 
 Set `containerRuntime` in the state file or pass `--container-runtime` per run:
@@ -688,7 +749,7 @@ State file:
       "targetConfig": {
         "nomad": {
           "address": "http://nomad.internal:4646",
-          "token": "secret",
+          "token": "env:NOMAD_TOKEN",
           "namespace": "production",
           "datacenters": ["prod-dc1"]
         }
@@ -697,6 +758,32 @@ State file:
   }
 }
 ```
+
+### Secrets
+
+Don't put tokens and passwords in `deployify-state.json` as plain text. Any secret field
+(Nomad and Consul tokens, registry passwords, artifact store credentials, the dashboard
+token) accepts an environment variable reference instead:
+
+```json
+"token": "env:NOMAD_TOKEN"
+```
+
+When a secret field is left empty, Deployify also falls back to the usual variable for it:
+`NOMAD_TOKEN`, `CONSUL_HTTP_TOKEN` and `DEPLOYIFY_REGISTRY_PASSWORD`. `init` masks secret
+prompts and suggests the `env:` form.
+
+Add these to your `.gitignore`:
+
+```gitignore
+deployify-state.json
+deployify-output/
+**/Properties/launchSettings.json
+```
+
+Deployify prints a warning after saving the state file when it contains a literal secret and
+git does not ignore the file. If `launchSettings.json` or the state file was already
+committed, remove it from the index with `git rm --cached <file>` and rotate any secrets it held.
 
 ### Service overrides
 
@@ -754,6 +841,7 @@ deployify apply    --env prod --auto-approve
 
 ```
 Deployify.slnx
+Directory.Packages.props                  package versions (Central Package Management)
 src/
   Deployify/                              CLI entry point
     Commands/

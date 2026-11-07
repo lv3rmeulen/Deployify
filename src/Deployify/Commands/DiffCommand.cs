@@ -12,33 +12,43 @@ public static class DiffCommand
     public static Command Build()
     {
         var cmd = new Command("diff", "Show differences between local manifest and the running target.");
-        cmd.AddOption(GlobalOptions.ProjectPath);
-        cmd.AddOption(GlobalOptions.Environment);
-        cmd.AddOption(GlobalOptions.Target);
+        cmd.Options.Add(GlobalOptions.ProjectPath);
+        cmd.Options.Add(GlobalOptions.Environment);
+        cmd.Options.Add(GlobalOptions.Target);
 
-        cmd.SetHandler(async ctx =>
+        cmd.SetAction(async (parseResult, ct) =>
         {
-            var projectPath = ctx.ParseResult.GetValueForOption(GlobalOptions.ProjectPath)!;
-            var envOverride = ctx.ParseResult.GetValueForOption(GlobalOptions.Environment);
-            var targetOpt = ctx.ParseResult.GetValueForOption(GlobalOptions.Target);
+            var projectPath = parseResult.GetValue(GlobalOptions.ProjectPath)!;
+            var envOverride = parseResult.GetValue(GlobalOptions.Environment);
+            var targetOpt = parseResult.GetValue(GlobalOptions.Target);
 
             ResolvedContext resolved;
-            try { resolved = await DependencyInjection.ResolveAsync(projectPath, envOverride, targetOpt); }
-            catch (Exception ex) { AnsiConsole.MarkupLine($"[red]✗[/] {ex.Message}"); ctx.ExitCode = 1; return; }
+            try
+            {
+                resolved = await DependencyInjection.ResolveAsync(projectPath, envOverride, targetOpt, ct);
+            }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(ex.Message)}");
+                return 1;
+            }
 
             var (_, config, envName, _, target, directory) = resolved;
             var outputDir = Path.Combine(directory, config.OutputPath);
             AnsiConsole.MarkupLine($"[dim]Environment: [cyan]{envName}[/] Target: [cyan]{target.DisplayName}[/][/]\n");
 
-            var manifest = await resolved.LoadManifestAsync();
-            if (manifest is null) { ctx.ExitCode = 1; return; }
-            
-            var entries = await target.DiffAsync(manifest, config, outputDir);
+            var manifest = await resolved.LoadManifestAsync(ct);
+            if (manifest is null)
+            {
+                return 1;
+            }
+
+            var entries = await target.DiffAsync(manifest, config, outputDir, ct);
 
             if (entries.All(e => e.Kind == DiffKind.Unchanged))
             {
                 AnsiConsole.MarkupLine("[green]No differences. Target matches local manifest.[/]");
-                return;
+                return 0;
             }
 
             var table = new Table().Border(TableBorder.Rounded)
@@ -64,6 +74,8 @@ public static class DiffCommand
             var removed = entries.Count(e => e.Kind == DiffKind.Removed);
             var changed = entries.Count(e => e.Kind == DiffKind.Changed);
             AnsiConsole.MarkupLine($"\nDiff: [green]+{added}[/] [yellow]~{changed}[/] [red]-{removed}[/]");
+
+            return 0;
         });
 
         return cmd;

@@ -1,4 +1,8 @@
+using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Deployify.Target.Nomad;
 
@@ -7,31 +11,31 @@ internal static class ProcessHelper
     public static async Task RunAsync(
         string command,
         string args,
-        CancellationToken ct = default,
-        Dictionary<string, string>? env = null)
+        Dictionary<string, string>? env = null,
+        CancellationToken ct = default)
     {
-        var (code, _, stderr) = await RunCoreAsync(command, args, ct, env);
+        var (code, _, stderr) = await RunCoreAsync(command, args, env, ct);
         if (code != 0)
         {
-	        throw new InvalidOperationException($"{command} exited with {code}: {stderr}");
+            throw new InvalidOperationException($"{command} exited with {code}: {stderr}");
         }
     }
 
     public static async Task<(int Code, string Output)> RunWithOutputAsync(
         string command,
         string args,
-        CancellationToken ct = default,
-        Dictionary<string, string>? env = null)
+        Dictionary<string, string>? env = null,
+        CancellationToken ct = default)
     {
-        var (code, stdout, stderr) = await RunCoreAsync(command, args, ct, env);
+        var (code, stdout, stderr) = await RunCoreAsync(command, args, env, ct);
         return (code, string.IsNullOrWhiteSpace(stdout) ? stderr : stdout);
     }
 
     private static async Task<(int Code, string Stdout, string Stderr)> RunCoreAsync(
         string command,
         string args,
-        CancellationToken ct,
-        Dictionary<string, string>? env)
+        Dictionary<string, string>? env,
+        CancellationToken ct)
     {
         var psi = new ProcessStartInfo(command, args)
         {
@@ -42,10 +46,10 @@ internal static class ProcessHelper
 
         if (env is not null)
         {
-	        foreach (var (key, value) in env)
-	        {
-		        psi.Environment[key] = value;
-	        }
+            foreach (var (key, value) in env)
+            {
+                psi.Environment[key] = value;
+            }
         }
 
         using var proc = Process.Start(psi)
@@ -53,9 +57,27 @@ internal static class ProcessHelper
 
         var stdoutTask = proc.StandardOutput.ReadToEndAsync(ct);
         var stderrTask = proc.StandardError.ReadToEndAsync(ct);
-        await proc.WaitForExitAsync(ct);
-        await Task.WhenAll(stdoutTask, stderrTask);
+        try
+        {
+            await proc.WaitForExitAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                proc.Kill(entireProcessTree: true);
+            }
+            catch
+            {
+                /* already exited */
+            }
 
-        return (proc.ExitCode, stdoutTask.Result, stderrTask.Result);
+            throw;
+        }
+
+        var stdout = await stdoutTask;
+        var stderr = await stderrTask;
+
+        return (proc.ExitCode, stdout, stderr);
     }
 }

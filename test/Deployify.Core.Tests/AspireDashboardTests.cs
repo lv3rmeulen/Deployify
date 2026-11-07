@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Linq;
 using Deployify.Core.Models;
 using Shouldly;
 using Xunit;
@@ -286,10 +288,10 @@ public sealed class AspireDashboardTests
 
     private static AspireManifest SimpleManifest() => new()
     {
-	    Resources = new Dictionary<string, AspireResource>
-	    {
-		    ["api"] = new() { Type = "project.v0", Path = "Api/Api.csproj" },
-		    ["redis"] = new() { Type = "container.v0", Image = "redis:7" }
-	    }
+        Resources = new Dictionary<string, AspireResource>
+        {
+            ["api"] = new() { Type = "project.v0", Path = "Api/Api.csproj" },
+            ["redis"] = new() { Type = "container.v0", Image = "redis:7" }
+        }
     };
 }

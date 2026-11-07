@@ -13,47 +13,56 @@ public static class PlanCommand
     public static Command Build()
     {
         var cmd = new Command("plan", "Preview changes that would be applied to the target.");
-        cmd.AddOption(GlobalOptions.ProjectPath);
-        cmd.AddOption(GlobalOptions.Environment);
-        cmd.AddOption(GlobalOptions.Target);
+        cmd.Options.Add(GlobalOptions.ProjectPath);
+        cmd.Options.Add(GlobalOptions.Environment);
+        cmd.Options.Add(GlobalOptions.Target);
 
-        cmd.SetHandler(async ctx =>
+        cmd.SetAction(async (parseResult, ct) =>
         {
-            var projectPath = ctx.ParseResult.GetValueForOption(GlobalOptions.ProjectPath)!;
-            var envOverride = ctx.ParseResult.GetValueForOption(GlobalOptions.Environment);
-            var targetOpt = ctx.ParseResult.GetValueForOption(GlobalOptions.Target);
+            var projectPath = parseResult.GetValue(GlobalOptions.ProjectPath)!;
+            var envOverride = parseResult.GetValue(GlobalOptions.Environment);
+            var targetOpt = parseResult.GetValue(GlobalOptions.Target);
 
             ResolvedContext resolved;
-            try { resolved = await DependencyInjection.ResolveAsync(projectPath, envOverride, targetOpt); }
-            catch (Exception ex) { AnsiConsole.MarkupLine($"[red]✗[/] {ex.Message}"); ctx.ExitCode = 1; return; }
+            try
+            {
+                resolved = await DependencyInjection.ResolveAsync(projectPath, envOverride, targetOpt, ct);
+            }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(ex.Message)}");
+                return 1;
+            }
 
             var (_, config, envName, _, target, directory) = resolved;
             var outputDir = Path.Combine(directory, config.OutputPath);
 
             AnsiConsole.MarkupLine($"[dim]Environment: [cyan]{envName}[/] Target: [cyan]{target.DisplayName}[/][/]\n");
 
-            var manifest = await resolved.LoadManifestAsync();
-            if (manifest is null) { ctx.ExitCode = 1; return; }
+            var manifest = await resolved.LoadManifestAsync(ct);
+            if (manifest is null)
+            {
+                return 1;
+            }
 
             AnsiConsole.MarkupLine("[bold]Deployify Plan[/]\n");
 
-            // PlanAsync writes artefacts to disk first, then diffs against the live cluster.
-            // We always exit 0 if generation succeeded — a cluster being unreachable is
-            // a warning, not a failure, for the plan command.
+            // PlanAsync writes artifacts to disk first, then diffs against the live cluster.
+            // Targets treat an unreachable cluster as "everything is new" and log a
+            // warning, so an exception here means planning itself failed.
             PlanResult plan;
             try
             {
-                plan = await target.PlanAsync(manifest, config, outputDir);
+                plan = await target.PlanAsync(manifest, config, outputDir, ct);
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLine($"[yellow]![/] Could not reach cluster for diff: {ex.Message}");
-                AnsiConsole.MarkupLine("[dim]Artefacts written. Run again when the cluster is reachable to see the full diff.[/]");
-                return;
+                AnsiConsole.MarkupLine($"[red]✗[/] Plan failed: {Markup.Escape(ex.Message)}");
+                return 1;
             }
 
-            PrintSection(plan.ToCreate.Select(o => o.ToString()!).ToList(), "[green]+ Create[/]", Color.Green);
-            PrintSection(plan.ToUpdate.Select(o => o.ToString()!).ToList(), "[yellow]~ Update[/]", Color.Yellow);
+            PrintSection([.. plan.ToCreate.Select(o => o.ToString()!)], "[green]+ Create[/]", Color.Green);
+            PrintSection([.. plan.ToUpdate.Select(o => o.ToString()!)], "[yellow]~ Update[/]", Color.Yellow);
             PrintSection(plan.ToDelete, "[red]- Delete[/]", Color.Red);
 
             AnsiConsole.MarkupLine(
@@ -63,8 +72,10 @@ public static class PlanCommand
 
             if (plan is { CreateCount: 0, UpdateCount: 0, DeleteCount: 0 })
             {
-	            AnsiConsole.MarkupLine("[dim]No changes. Everything is up to date.[/]");
+                AnsiConsole.MarkupLine("[dim]No changes. Everything is up to date.[/]");
             }
+
+            return 0;
         });
 
         return cmd;
@@ -74,13 +85,13 @@ public static class PlanCommand
     {
         if (items.Count == 0)
         {
-	        return;
+            return;
         }
 
         AnsiConsole.MarkupLine(heading);
         foreach (var item in items)
         {
-	        AnsiConsole.MarkupLine($"  [bold {color}]{item}[/]");
+            AnsiConsole.MarkupLine($"  [bold {color}]{Markup.Escape(item)}[/]");
         }
 
         AnsiConsole.WriteLine();

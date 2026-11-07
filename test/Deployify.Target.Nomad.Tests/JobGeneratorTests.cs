@@ -1,6 +1,8 @@
-using Deployify.Core.Models;
-using Shouldly;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Logging.Abstractions;
+using Shouldly;
 using Xunit;
 
 namespace Deployify.Target.Nomad.Tests;
@@ -28,7 +30,8 @@ public sealed class JobGeneratorTests
     [Fact]
     public void Generate_SetsImageTag_FromConfig()
     {
-        var config = Fixtures.NomadConfig(); config.ImageTag = "sha-abc";
+        var config = Fixtures.NomadConfig();
+        config.ImageTag = "sha-abc";
         var jobs = _sut.Generate(Fixtures.SingleService(), config);
         jobs[0].ImageTag.ShouldBe("sha-abc");
     }
@@ -60,7 +63,7 @@ public sealed class JobGeneratorTests
     public void Generate_RespectsOverride_Count()
     {
         var config = Fixtures.NomadConfig();
-        config.ServiceOverrides["api"] = new ServiceOverride { Count = 5 };
+        config.ServiceOverrides["api"] = new() { Count = 5 };
         _sut.Generate(Fixtures.SimpleManifest(), config)
             .Single(j => j.Name == "api").Count.ShouldBe(5);
     }
@@ -69,7 +72,7 @@ public sealed class JobGeneratorTests
     public void Generate_RespectsOverride_ImageTag()
     {
         var config = Fixtures.NomadConfig();
-        config.ServiceOverrides["api"] = new ServiceOverride { ImageTag = "canary" };
+        config.ServiceOverrides["api"] = new() { ImageTag = "canary" };
         _sut.Generate(Fixtures.SimpleManifest(), config)
             .Single(j => j.Name == "api").ImageTag.ShouldBe("canary");
     }
@@ -79,7 +82,7 @@ public sealed class JobGeneratorTests
     {
         using var dir = new TempDir();
         var jobs = _sut.Generate(Fixtures.SingleService("myservice"), Fixtures.NomadConfig());
-        var path = await _sut.WriteHclAsync(jobs[0], Fixtures.NomadConfig(), dir.Path);
+        var path = await _sut.WriteHclAsync(jobs[0], Fixtures.NomadConfig(), dir.Path, TestContext.Current.CancellationToken);
         File.Exists(path).ShouldBeTrue();
         path.ShouldEndWith("myservice.job.hcl");
     }
@@ -89,8 +92,8 @@ public sealed class JobGeneratorTests
     {
         using var dir = new TempDir();
         var jobs = _sut.Generate(Fixtures.SingleService("myservice"), Fixtures.NomadConfig());
-        var path = await _sut.WriteHclAsync(jobs[0], Fixtures.NomadConfig(), dir.Path);
-        (await File.ReadAllTextAsync(path)).ShouldContain("\"myservice\"");
+        var path = await _sut.WriteHclAsync(jobs[0], Fixtures.NomadConfig(), dir.Path, TestContext.Current.CancellationToken);
+        (await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken)).ShouldContain("\"myservice\"");
     }
 
     [Fact]
@@ -99,8 +102,8 @@ public sealed class JobGeneratorTests
         using var dir = new TempDir();
         var config = Fixtures.NomadConfig(dc: "us-east-1");
         var jobs = _sut.Generate(Fixtures.SingleService(), config);
-        var path = await _sut.WriteHclAsync(jobs[0], config, dir.Path);
-        (await File.ReadAllTextAsync(path)).ShouldContain("us-east-1");
+        var path = await _sut.WriteHclAsync(jobs[0], config, dir.Path, TestContext.Current.CancellationToken);
+        (await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken)).ShouldContain("us-east-1");
     }
 
     [Fact]
@@ -109,8 +112,8 @@ public sealed class JobGeneratorTests
         using var dir = new TempDir();
         var config = Fixtures.NomadConfig(ns: "production");
         var jobs = _sut.Generate(Fixtures.SingleService(), config);
-        var path = await _sut.WriteHclAsync(jobs[0], config, dir.Path);
-        (await File.ReadAllTextAsync(path)).ShouldContain("\"production\"");
+        var path = await _sut.WriteHclAsync(jobs[0], config, dir.Path, TestContext.Current.CancellationToken);
+        (await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken)).ShouldContain("\"production\"");
     }
 
     [Fact]
@@ -118,8 +121,8 @@ public sealed class JobGeneratorTests
     {
         using var dir = new TempDir();
         var jobs = _sut.Generate(Fixtures.SimpleManifest(), Fixtures.NomadConfig());
-        var path = await _sut.WriteHclAsync(jobs.Single(j => j.Name == "api"), Fixtures.NomadConfig(), dir.Path);
-        (await File.ReadAllTextAsync(path)).ShouldContain("ASPNETCORE_ENVIRONMENT");
+        var path = await _sut.WriteHclAsync(jobs.Single(j => j.Name == "api"), Fixtures.NomadConfig(), dir.Path, TestContext.Current.CancellationToken);
+        (await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken)).ShouldContain("ASPNETCORE_ENVIRONMENT");
     }
 
     [Fact]
@@ -129,7 +132,7 @@ public sealed class JobGeneratorTests
         var config = Fixtures.NomadConfig();
         foreach (var job in _sut.Generate(Fixtures.SimpleManifest(), config))
         {
-	        await _sut.WriteHclAsync(job, config, dir.Path);
+            await _sut.WriteHclAsync(job, config, dir.Path, TestContext.Current.CancellationToken);
         }
 
         Directory.GetFiles(dir.Path, "*.hcl").Length.ShouldBe(3);

@@ -1,7 +1,7 @@
 namespace Deployify.Target.Nomad;
 
 /// <summary>
-/// Configures where zipped build artefacts are uploaded for raw_exec Nomad deployments.
+/// Configures where zipped build artifacts are uploaded for raw_exec Nomad deployments.
 /// Set <see cref="NomadTargetConfig.ArtifactStore"/> to enable zip-and-upload for raw_exec jobs.
 /// </summary>
 public sealed class ArtifactStoreConfig
@@ -41,7 +41,7 @@ public sealed class ArtifactStoreConfig
 
     /// <summary>
     /// Base URL of the HTTP server that accepts PUT requests.
-    /// Artefacts are PUT to {HttpBaseUrl}/{name}-{version}.zip.
+    /// Artifacts are PUT to {HttpBaseUrl}/{name}-{version}.zip.
     /// </summary>
     public string? HttpBaseUrl { get; set; }
 

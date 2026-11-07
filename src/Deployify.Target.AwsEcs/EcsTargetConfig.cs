@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace Deployify.Target.AwsEcs;
 
 /// <summary>
@@ -64,6 +66,27 @@ public sealed class EcsTargetConfig
 
     /// <summary>AWS profile name from ~/.aws/credentials. Null = default credential chain.</summary>
     public string? AwsProfile { get; set; }
+
+    /// <summary>
+    /// Cloud Map namespace for ECS Service Connect. When set, each service registers its
+    /// HTTP port under its own name so other services reach it at http://name:port, which
+    /// is how Aspire placeholders are resolved for ECS. Without it, services can't
+    /// address each other by name.
+    /// </summary>
+    public string? ServiceConnectNamespace { get; set; }
+
+    /// <summary>
+    /// Wait for each service to reach a steady state after deploying, so apply fails
+    /// when tasks crash-loop instead of reporting success. Defaults to true.
+    /// </summary>
+    public bool WaitForStable { get; set; } = true;
+
+    /// <summary>Base port for services whose Aspire bindings carry no port.</summary>
+    public int BasePort { get; set; } = 8080;
 }
 
-public enum EcsLaunchType { Fargate, Ec2 }
+public enum EcsLaunchType
+{
+    Fargate,
+    Ec2
+}

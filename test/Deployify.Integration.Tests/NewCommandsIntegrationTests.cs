@@ -1,4 +1,9 @@
+using System;
+using System.Collections.Generic;
 using System.CommandLine;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
 using Deployify.Core.Models;
 using Deployify.Core.Services;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -19,7 +24,7 @@ public sealed class GenerateCommandTests
     public async Task Generate_ReturnsNonZero_WhenNoStateFile()
     {
         using var dir = new TempDir();
-        var code = await Root().InvokeAsync(["generate", "--project-path", dir.Path]);
+        var code = await Root().InvokeAsync(["generate", "--project-path", dir.Path], TestContext.Current.CancellationToken);
         code.ShouldNotBe(0);
     }
 
@@ -27,22 +32,22 @@ public sealed class GenerateCommandTests
     public async Task Generate_ReturnsZero_WithValidStateAndManifest()
     {
         using var dir = new TempDir();
-        await Harness.WriteNomadStateAsync(dir.Path);
-        await Harness.WriteManifestAsync(dir.Path);
+        await Harness.WriteNomadStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
+        await Harness.WriteManifestAsync(dir.Path, ct: TestContext.Current.CancellationToken);
 
-        var code = await Root().InvokeAsync(["generate", "--project-path", dir.Path]);
+        var code = await Root().InvokeAsync(["generate", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         code.ShouldBe(0);
     }
 
     [Fact]
-    public async Task Generate_WritesArtefactFiles()
+    public async Task Generate_WritesArtifactFiles()
     {
         using var dir = new TempDir();
-        await Harness.WriteNomadStateAsync(dir.Path);
-        await Harness.WriteManifestAsync(dir.Path);
+        await Harness.WriteNomadStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
+        await Harness.WriteManifestAsync(dir.Path, ct: TestContext.Current.CancellationToken);
 
-        await Root().InvokeAsync(["generate", "--project-path", dir.Path]);
+        await Root().InvokeAsync(["generate", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         var outputDir = Path.Combine(dir.Path, "deployify-output");
         Directory.GetFiles(outputDir, "*.job.hcl").Length.ShouldBeGreaterThan(0);
@@ -52,10 +57,10 @@ public sealed class GenerateCommandTests
     public async Task Generate_ProducesOneFilePerService()
     {
         using var dir = new TempDir();
-        await Harness.WriteNomadStateAsync(dir.Path);
-        await Harness.WriteManifestAsync(dir.Path);
+        await Harness.WriteNomadStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
+        await Harness.WriteManifestAsync(dir.Path, ct: TestContext.Current.CancellationToken);
 
-        await Root().InvokeAsync(["generate", "--project-path", dir.Path]);
+        await Root().InvokeAsync(["generate", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         var outputDir = Path.Combine(dir.Path, "deployify-output");
         Directory.GetFiles(outputDir, "*.job.hcl").Length.ShouldBe(3);
@@ -65,11 +70,11 @@ public sealed class GenerateCommandTests
     public async Task Generate_ReturnsNonZero_WhenEnvOverrideMissing()
     {
         using var dir = new TempDir();
-        await Harness.WriteNomadStateAsync(dir.Path);
-        await Harness.WriteManifestAsync(dir.Path);
+        await Harness.WriteNomadStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
+        await Harness.WriteManifestAsync(dir.Path, ct: TestContext.Current.CancellationToken);
 
         var code = await Root().InvokeAsync(
-	        ["generate", "--project-path", dir.Path, "--env", "ghost"]);
+            ["generate", "--project-path", dir.Path, "--env", "ghost"], TestContext.Current.CancellationToken);
 
         code.ShouldNotBe(0);
     }
@@ -78,12 +83,12 @@ public sealed class GenerateCommandTests
     public async Task Generate_IsIdempotent()
     {
         using var dir = new TempDir();
-        await Harness.WriteNomadStateAsync(dir.Path);
-        await Harness.WriteManifestAsync(dir.Path);
+        await Harness.WriteNomadStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
+        await Harness.WriteManifestAsync(dir.Path, ct: TestContext.Current.CancellationToken);
         var root = Root();
 
-        await root.InvokeAsync(["generate", "--project-path", dir.Path]);
-        await root.InvokeAsync(["generate", "--project-path", dir.Path]);
+        await root.InvokeAsync(["generate", "--project-path", dir.Path], TestContext.Current.CancellationToken);
+        await root.InvokeAsync(["generate", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         var outputDir = Path.Combine(dir.Path, "deployify-output");
         Directory.GetFiles(outputDir, "*.job.hcl").Length.ShouldBe(3);
@@ -93,10 +98,10 @@ public sealed class GenerateCommandTests
     public async Task Generate_WorksWithKubernetesTarget()
     {
         using var dir = new TempDir();
-        await Harness.WriteK8SStateAsync(dir.Path);
-        await Harness.WriteManifestAsync(dir.Path);
+        await Harness.WriteKubernetesStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
+        await Harness.WriteManifestAsync(dir.Path, ct: TestContext.Current.CancellationToken);
 
-        var code = await Root().InvokeAsync(["generate", "--project-path", dir.Path]);
+        var code = await Root().InvokeAsync(["generate", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         code.ShouldBe(0);
         var outputDir = Path.Combine(dir.Path, "deployify-output");
@@ -107,10 +112,10 @@ public sealed class GenerateCommandTests
     public async Task Generate_WorksWithComposeTarget()
     {
         using var dir = new TempDir();
-        await Harness.WriteComposeStateAsync(dir.Path);
-        await Harness.WriteManifestAsync(dir.Path);
+        await Harness.WriteComposeStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
+        await Harness.WriteManifestAsync(dir.Path, ct: TestContext.Current.CancellationToken);
 
-        var code = await Root().InvokeAsync(["generate", "--project-path", dir.Path]);
+        var code = await Root().InvokeAsync(["generate", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         code.ShouldBe(0);
         var outputDir = Path.Combine(dir.Path, "deployify-output");
@@ -121,10 +126,10 @@ public sealed class GenerateCommandTests
     public async Task Generate_WorksWithNomadConsulTarget()
     {
         using var dir = new TempDir();
-        await Harness.WriteNomadConsulStateAsync(dir.Path);
-        await Harness.WriteManifestAsync(dir.Path);
+        await Harness.WriteNomadConsulStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
+        await Harness.WriteManifestAsync(dir.Path, ct: TestContext.Current.CancellationToken);
 
-        var code = await Root().InvokeAsync(["generate", "--project-path", dir.Path]);
+        var code = await Root().InvokeAsync(["generate", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         code.ShouldBe(0);
         var outputDir = Path.Combine(dir.Path, "deployify-output");
@@ -144,7 +149,7 @@ public sealed class CiCommandTests
     public async Task Ci_ReturnsNonZero_WhenNoStateFile()
     {
         using var dir = new TempDir();
-        var code = await Root().InvokeAsync(["ci", "--project-path", dir.Path]);
+        var code = await Root().InvokeAsync(["ci", "--project-path", dir.Path], TestContext.Current.CancellationToken);
         code.ShouldNotBe(0);
     }
 
@@ -152,24 +157,24 @@ public sealed class CiCommandTests
     public async Task Ci_SkipApply_ReturnsZero_WithValidStateAndManifest()
     {
         using var dir = new TempDir();
-        await Harness.WriteNomadStateAsync(dir.Path);
-        await Harness.WriteManifestAsync(dir.Path);
+        await Harness.WriteNomadStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
+        await Harness.WriteManifestAsync(dir.Path, ct: TestContext.Current.CancellationToken);
 
         var code = await Root().InvokeAsync(
-	        ["ci", "--project-path", dir.Path, "--skip-validate", "--skip-apply"]);
+            ["ci", "--project-path", dir.Path, "--skip-validate", "--skip-apply"], TestContext.Current.CancellationToken);
 
         code.ShouldBe(0);
     }
 
     [Fact]
-    public async Task Ci_SkipApply_WritesArtefacts()
+    public async Task Ci_SkipApply_WritesArtifacts()
     {
         using var dir = new TempDir();
-        await Harness.WriteNomadStateAsync(dir.Path);
-        await Harness.WriteManifestAsync(dir.Path);
+        await Harness.WriteNomadStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
+        await Harness.WriteManifestAsync(dir.Path, ct: TestContext.Current.CancellationToken);
 
         await Root().InvokeAsync(
-	        ["ci", "--project-path", dir.Path, "--skip-validate", "--skip-apply"]);
+            ["ci", "--project-path", dir.Path, "--skip-validate", "--skip-apply"], TestContext.Current.CancellationToken);
 
         var outputDir = Path.Combine(dir.Path, "deployify-output");
         Directory.GetFiles(outputDir, "*.job.hcl").Length.ShouldBe(3);
@@ -179,12 +184,12 @@ public sealed class CiCommandTests
     public async Task Ci_SkipValidate_DoesNotRequireClusterReachable()
     {
         using var dir = new TempDir();
-        await Harness.WriteNomadStateAsync(dir.Path, address: "http://127.0.0.1:19999");
-        await Harness.WriteManifestAsync(dir.Path);
+        await Harness.WriteNomadStateAsync(dir.Path, address: "http://127.0.0.1:19999", ct: TestContext.Current.CancellationToken);
+        await Harness.WriteManifestAsync(dir.Path, ct: TestContext.Current.CancellationToken);
 
         // With --skip-validate we skip the ping-dependent step
         var code = await Root().InvokeAsync(
-	        ["ci", "--project-path", dir.Path, "--skip-validate", "--skip-apply"]);
+            ["ci", "--project-path", dir.Path, "--skip-validate", "--skip-apply"], TestContext.Current.CancellationToken);
 
         code.ShouldBe(0);
     }
@@ -194,13 +199,13 @@ public sealed class CiCommandTests
     {
         using var dir = new TempDir();
         // Use unreachable Nomad so all services are "new" (ToCreate) in the plan
-        await Harness.WriteNomadStateAsync(dir.Path, address: "http://127.0.0.1:19999");
-        await Harness.WriteManifestAsync(dir.Path);
+        await Harness.WriteNomadStateAsync(dir.Path, address: "http://127.0.0.1:19999", ct: TestContext.Current.CancellationToken);
+        await Harness.WriteManifestAsync(dir.Path, ct: TestContext.Current.CancellationToken);
 
         var code = await Root().InvokeAsync([
-	        "ci", "--project-path", dir.Path,
+            "ci", "--project-path", dir.Path,
             "--skip-validate", "--skip-apply", "--fail-on-changes"
-        ]);
+        ], TestContext.Current.CancellationToken);
 
         code.ShouldNotBe(0);
     }
@@ -209,11 +214,11 @@ public sealed class CiCommandTests
     public async Task Ci_ReturnsNonZero_WhenEnvOverrideMissing()
     {
         using var dir = new TempDir();
-        await Harness.WriteNomadStateAsync(dir.Path);
-        await Harness.WriteManifestAsync(dir.Path);
+        await Harness.WriteNomadStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
+        await Harness.WriteManifestAsync(dir.Path, ct: TestContext.Current.CancellationToken);
 
         var code = await Root().InvokeAsync(
-	        ["ci", "--project-path", dir.Path, "--env", "ghost"]);
+            ["ci", "--project-path", dir.Path, "--env", "ghost"], TestContext.Current.CancellationToken);
 
         code.ShouldNotBe(0);
     }
@@ -222,12 +227,12 @@ public sealed class CiCommandTests
     public async Task Ci_WorksWithKubernetesTarget()
     {
         using var dir = new TempDir();
-        await Harness.WriteK8SStateAsync(dir.Path);
-        await Harness.WriteManifestAsync(dir.Path);
+        await Harness.WriteKubernetesStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
+        await Harness.WriteManifestAsync(dir.Path, ct: TestContext.Current.CancellationToken);
 
         var code = await Root().InvokeAsync([
-	        "ci", "--project-path", dir.Path, "--skip-validate", "--skip-apply"
-        ]);
+            "ci", "--project-path", dir.Path, "--skip-validate", "--skip-apply"
+        ], TestContext.Current.CancellationToken);
 
         code.ShouldBe(0);
     }
@@ -236,12 +241,12 @@ public sealed class CiCommandTests
     public async Task Ci_WorksWithNomadConsulTarget()
     {
         using var dir = new TempDir();
-        await Harness.WriteNomadConsulStateAsync(dir.Path);
-        await Harness.WriteManifestAsync(dir.Path);
+        await Harness.WriteNomadConsulStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
+        await Harness.WriteManifestAsync(dir.Path, ct: TestContext.Current.CancellationToken);
 
         var code = await Root().InvokeAsync([
-	        "ci", "--project-path", dir.Path, "--skip-validate", "--skip-apply"
-        ]);
+            "ci", "--project-path", dir.Path, "--skip-validate", "--skip-apply"
+        ], TestContext.Current.CancellationToken);
 
         code.ShouldBe(0);
     }
@@ -260,7 +265,7 @@ public sealed class WatchCommandTests
     {
         // With no state file, watch should fail at resolve and exit non-zero immediately.
         using var dir = new TempDir();
-        var code = await Root().InvokeAsync(["watch", "--project-path", dir.Path]);
+        var code = await Root().InvokeAsync(["watch", "--project-path", dir.Path], TestContext.Current.CancellationToken);
         code.ShouldNotBe(0);
     }
 
@@ -268,23 +273,23 @@ public sealed class WatchCommandTests
     public void Watch_Command_IsRegistered()
     {
         var root = Root();
-        root.Children.OfType<Command>().Select(c => c.Name).ShouldContain("watch");
+        root.Subcommands.Select(c => c.Name).ShouldContain("watch");
     }
 
     [Fact]
     public void Watch_Command_HasDebounceOption()
     {
         var root = Root();
-        var watch = root.Children.OfType<Command>().Single(c => c.Name == "watch");
-        watch.Options.Select(o => o.Name).ShouldContain("debounce");
+        var watch = root.Subcommands.Single(c => c.Name == "watch");
+        watch.Options.Select(o => o.Name).ShouldContain("--debounce");
     }
 
     [Fact]
     public void Watch_Command_HasNoGenerateOption()
     {
         var root = Root();
-        var watch = root.Children.OfType<Command>().Single(c => c.Name == "watch");
-        watch.Options.Select(o => o.Name).ShouldContain("no-generate");
+        var watch = root.Subcommands.Single(c => c.Name == "watch");
+        watch.Options.Select(o => o.Name).ShouldContain("--no-generate");
     }
 }
 
@@ -357,12 +362,12 @@ public sealed class PublisherPodmanDetectionTests
         var config = new EnvironmentConfig { ContainerRuntime = ContainerRuntime.Docker };
 
         await Should.NotThrowAsync(() =>
-            publisher.PublishAsync(manifest, config, "/tmp/fake-apphost"));
+            publisher.PublishAsync(manifest, config, "/tmp/fake-apphost", TestContext.Current.CancellationToken));
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Generate → CI pipeline integration (end-to-end artefact flow)
+// Generate → CI pipeline integration (end-to-end artifact flow)
 // ─────────────────────────────────────────────────────────────────────────────
 
 public sealed class GenerateCiPipelineTests
@@ -373,46 +378,46 @@ public sealed class GenerateCiPipelineTests
     public async Task Generate_Then_Ci_SkipApply_Succeeds()
     {
         using var dir = new TempDir();
-        await Harness.WriteNomadStateAsync(dir.Path);
-        await Harness.WriteManifestAsync(dir.Path);
+        await Harness.WriteNomadStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
+        await Harness.WriteManifestAsync(dir.Path, ct: TestContext.Current.CancellationToken);
         var root = Root();
 
-        // First generate artefacts explicitly
-        var genCode = await root.InvokeAsync(["generate", "--project-path", dir.Path]);
+        // First generate artifacts explicitly
+        var genCode = await root.InvokeAsync(["generate", "--project-path", dir.Path], TestContext.Current.CancellationToken);
         genCode.ShouldBe(0);
 
-        // Then run CI (artefacts already present, no regeneration needed from manifest)
+        // Then run CI (artifacts already present, no regeneration needed from manifest)
         var ciCode = await root.InvokeAsync([
-	        "ci", "--project-path", dir.Path, "--skip-validate", "--skip-apply"
-        ]);
+            "ci", "--project-path", dir.Path, "--skip-validate", "--skip-apply"
+        ], TestContext.Current.CancellationToken);
         ciCode.ShouldBe(0);
     }
 
     [Fact]
-    public async Task Ci_ArtefactsArePresent_AfterSkipApplyRun()
+    public async Task Ci_ArtifactsArePresent_AfterSkipApplyRun()
     {
         using var dir = new TempDir();
-        await Harness.WriteNomadConsulStateAsync(dir.Path);
-        await Harness.WriteManifestAsync(dir.Path);
+        await Harness.WriteNomadConsulStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
+        await Harness.WriteManifestAsync(dir.Path, ct: TestContext.Current.CancellationToken);
 
         await Root().InvokeAsync([
-	        "ci", "--project-path", dir.Path, "--skip-validate", "--skip-apply"
-        ]);
+            "ci", "--project-path", dir.Path, "--skip-validate", "--skip-apply"
+        ], TestContext.Current.CancellationToken);
 
         var outputDir = Path.Combine(dir.Path, "deployify-output");
         Directory.GetFiles(outputDir, "*.job.hcl").Length.ShouldBe(3);
     }
 
     [Fact]
-    public async Task Generate_ArtefactsMatchPlan_ArtefactsForNomad()
+    public async Task Generate_ArtifactsMatchPlan_ArtifactsForNomad()
     {
         using var dir = new TempDir();
-        await Harness.WriteNomadStateAsync(dir.Path);
-        await Harness.WriteManifestAsync(dir.Path);
+        await Harness.WriteNomadStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
+        await Harness.WriteManifestAsync(dir.Path, ct: TestContext.Current.CancellationToken);
         var root = Root();
 
-        await root.InvokeAsync(["generate", "--project-path", dir.Path]);
-        await root.InvokeAsync(["plan", "--project-path", dir.Path]);
+        await root.InvokeAsync(["generate", "--project-path", dir.Path], TestContext.Current.CancellationToken);
+        await root.InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         var outputDir = Path.Combine(dir.Path, "deployify-output");
         var files = Directory.GetFiles(outputDir, "*.job.hcl").Select(Path.GetFileName).ToList();

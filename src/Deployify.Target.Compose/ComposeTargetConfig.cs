@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace Deployify.Target.Compose;
 
 /// <summary>
@@ -32,7 +34,17 @@ public sealed class ComposeTargetConfig
     /// <summary>
     /// Generate health checks for services that have HTTP bindings.
     /// </summary>
-    public bool GenerateHealthChecks { get; set; } = true;
+    /// <remarks>
+    /// Kept for compatibility; Deployify no longer writes healthchecks. A Compose
+    /// healthcheck runs a command inside the container, and the .NET runtime images (and
+    /// many others) ship without wget, curl or nc, so every check would fail and every
+    /// <c>service_healthy</c> dependency would block forever. Dependencies now wait for
+    /// <c>service_started</c>.
+    /// </remarks>
+    public bool GenerateHealthChecks { get; set; } = false;
+
+    /// <summary>Base port for services whose Aspire bindings carry no port.</summary>
+    public int BasePort { get; set; } = 8080;
 
     /// <summary>
     /// Generate an .env file alongside the compose files.

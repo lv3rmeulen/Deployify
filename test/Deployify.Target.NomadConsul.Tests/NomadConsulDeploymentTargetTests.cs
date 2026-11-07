@@ -1,3 +1,6 @@
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -9,7 +12,9 @@ namespace Deployify.Target.NomadConsul.Tests;
 
 public sealed class NomadConsulDeploymentTargetTests
 {
-    private static NomadConsulDeploymentTarget Target() => new(Substitute.For<IPublisher>(), NullLogger<NomadConsulDeploymentTarget>.Instance, NullLoggerFactory.Instance);
+    private static NomadConsulDeploymentTarget Target()
+        => new(Substitute.For<IPublisher>(), NullLogger<NomadConsulDeploymentTarget>.Instance,
+            NullLoggerFactory.Instance);
 
     // ── Identity ──────────────────────────────────────────────────────────────
 
@@ -38,9 +43,8 @@ public sealed class NomadConsulDeploymentTargetTests
 
         paths.Count.ShouldBe(3);
         foreach (var p in paths)
-
         {
-	        File.Exists(p).ShouldBeTrue();
+            File.Exists(p).ShouldBeTrue();
         }
     }
 
@@ -52,10 +56,8 @@ public sealed class NomadConsulDeploymentTargetTests
             Fixtures.SimpleManifest(), Fixtures.EnvConfig(), dir.Path, TestContext.Current.CancellationToken);
 
         foreach (var p in paths)
-
-
         {
-	        p.ShouldEndWith(".job.hcl");
+            p.ShouldEndWith(".job.hcl");
         }
     }
 
@@ -80,7 +82,7 @@ public sealed class NomadConsulDeploymentTargetTests
 
         foreach (var file in Directory.GetFiles(dir.Path, "*.job.hcl"))
         {
-	        (await File.ReadAllTextAsync(file, TestContext.Current.CancellationToken)).ShouldContain("mode = \"bridge\"");
+            (await File.ReadAllTextAsync(file, TestContext.Current.CancellationToken)).ShouldContain("mode = \"bridge\"");
         }
     }
 
@@ -129,17 +131,15 @@ public sealed class NomadConsulDeploymentTargetTests
     }
 
     [Fact]
-    public async Task ValidateAsync_ArtefactNames_EndWith_JobHcl()
+    public async Task ValidateAsync_ArtifactNames_EndWith_JobHcl()
     {
         using var dir = new Fixtures.TempDir();
         var results = await Target().ValidateAsync(
             Fixtures.SimpleManifest(), Fixtures.EnvConfig(), dir.Path, TestContext.Current.CancellationToken);
 
         foreach (var r in results)
-
-
         {
-	        r.ArtefactName.ShouldEndWith(".job.hcl");
+            r.ArtifactName.ShouldEndWith(".job.hcl");
         }
     }
 
@@ -150,7 +150,7 @@ public sealed class NomadConsulDeploymentTargetTests
         // and should treat connectivity failure as "no errors" (offline validation)
         using var dir = new Fixtures.TempDir();
         var act = async () => await Target().ValidateAsync(
-            Fixtures.SimpleManifest(), Fixtures.EnvConfig(), dir.Path);
+            Fixtures.SimpleManifest(), Fixtures.EnvConfig(), dir.Path, TestContext.Current.CancellationToken);
 
         await Should.NotThrowAsync(act);
     }
@@ -185,7 +185,7 @@ public sealed class NomadConsulDeploymentTargetTests
     {
         using var dir = new Fixtures.TempDir();
         var act = async () => await Target().PlanAsync(
-            Fixtures.SimpleManifest(), Fixtures.EnvConfig(), dir.Path);
+            Fixtures.SimpleManifest(), Fixtures.EnvConfig(), dir.Path, TestContext.Current.CancellationToken);
 
         await Should.NotThrowAsync(act);
     }
@@ -206,7 +206,8 @@ public sealed class NomadConsulDeploymentTargetTests
     public async Task ApplyAsync_ReturnsFailure_WithClearMessage_WhenHclFileMissing()
     {
         using var dir = new Fixtures.TempDir();
-        var results = await Target().ApplyAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), dir.Path, TestContext.Current.CancellationToken);
+        var results = await Target().ApplyAsync(
+            Fixtures.SimpleManifest(), Fixtures.EnvConfig(), dir.Path, TestContext.Current.CancellationToken);
 
         foreach (var r in results)
         {
@@ -223,11 +224,12 @@ public sealed class NomadConsulDeploymentTargetTests
         await target.PlanAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), dir.Path, TestContext.Current.CancellationToken);
 
         // Apply will fail to reach Nomad, but should NOT fail with "run plan first"
-        var results = await target.ApplyAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), dir.Path, TestContext.Current.CancellationToken);
+        var results = await target.ApplyAsync(
+            Fixtures.SimpleManifest(), Fixtures.EnvConfig(), dir.Path, TestContext.Current.CancellationToken);
 
         foreach (var r in results)
         {
-	        r.Error?.ShouldNotContain("plan");
+            r.Error?.ShouldNotContain("plan");
         }
     }
 
@@ -238,7 +240,8 @@ public sealed class NomadConsulDeploymentTargetTests
         var target = Target();
         await target.PlanAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), dir.Path, TestContext.Current.CancellationToken);
 
-        var act = async () => await target.ApplyAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), dir.Path, TestContext.Current.CancellationToken);
+        var act = async () => await target.ApplyAsync(
+            Fixtures.SimpleManifest(), Fixtures.EnvConfig(), dir.Path, TestContext.Current.CancellationToken);
 
         await Should.NotThrowAsync(act);
     }
@@ -315,7 +318,7 @@ public sealed class NomadConsulDeploymentTargetTests
                     Fixtures.DefaultConsulCfg(ingress: true)));
 
         var explanations = Target().Explain(
-            Fixtures.SingleService("api", "project.v0", 8080, "http"), cfg);
+            Fixtures.SingleService("api", "project.v0", 8080, "http", external: true), cfg);
 
         explanations[0].AdditionalInfo["ingressGateway"].ShouldNotBe("disabled");
     }
@@ -355,7 +358,7 @@ public sealed class NomadConsulDeploymentTargetTests
     {
         using var dir = new Fixtures.TempDir();
         var act = async () => await Target().DiffAsync(
-            Fixtures.SimpleManifest(), Fixtures.EnvConfig(), dir.Path);
+            Fixtures.SimpleManifest(), Fixtures.EnvConfig(), dir.Path, TestContext.Current.CancellationToken);
 
         await Should.NotThrowAsync(act);
     }

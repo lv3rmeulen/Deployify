@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace Deployify.Target.Compose;
 
 /// <summary>
@@ -51,5 +53,16 @@ public sealed class ComposePort
     public int HostPort { get; set; }
     public int ContainerPort { get; set; }
     public string Protocol { get; set; } = "tcp";
-    public bool IsHttp => ContainerPort is 80 or 443 or 8080 or 8443;
+
+    /// <summary>
+    /// True when the port serves HTTP. Set from the Aspire binding's scheme; when not set
+    /// explicitly, falls back to guessing from the port number.
+    /// </summary>
+    public bool IsHttp
+    {
+        get => _isHttp ?? ContainerPort is 80 or 443 or 8080 or 8443;
+        set => _isHttp = value;
+    }
+
+    private bool? _isHttp;
 }

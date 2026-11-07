@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Linq;
 using Deployify.Core.Models;
 using Shouldly;
 using Xunit;
@@ -71,7 +73,7 @@ public sealed class DaprTests
         var result = manifest.WithDaprIfEnabled(config);
         foreach (var r in result.Resources.Values)
         {
-	        r.HasDaprSidecar.ShouldBeFalse();
+            r.HasDaprSidecar.ShouldBeFalse();
         }
     }
 
@@ -85,7 +87,7 @@ public sealed class DaprTests
         var result = manifest.WithDaprIfEnabled(config);
         foreach (var r in result.Resources.Values)
         {
-	        r.HasDaprSidecar.ShouldBeTrue();
+            r.HasDaprSidecar.ShouldBeTrue();
         }
     }
 
@@ -353,16 +355,16 @@ public sealed class DaprTests
 
     private static AspireManifest SimpleManifest() => new()
     {
-	    Resources = new Dictionary<string, AspireResource>
-	    {
-		    ["api"] = new()
-		    {
-			    Type = "project.v0",
-			    Path = "Api/Api.csproj",
-			    Bindings = new Dictionary<string, AspireBinding> { ["http"] = new() { Scheme = "http", ContainerPort = 8080 } }
-		    },
-		    ["worker"] = new() { Type = "project.v0", Path = "Worker/Worker.csproj" },
-		    ["redis"] = new() { Type = "container.v0", Image = "redis:7" }
-	    }
+        Resources = new Dictionary<string, AspireResource>
+        {
+            ["api"] = new()
+            {
+                Type = "project.v0",
+                Path = "Api/Api.csproj",
+                Bindings = new() { ["http"] = new() { Scheme = "http", ContainerPort = 8080 } }
+            },
+            ["worker"] = new() { Type = "project.v0", Path = "Worker/Worker.csproj" },
+            ["redis"] = new() { Type = "container.v0", Image = "redis:7" }
+        }
     };
 }

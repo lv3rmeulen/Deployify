@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace Deployify.Target.NomadConsul;
 
 /// <summary>
@@ -48,6 +50,18 @@ public sealed class ConsulJob
     /// <summary>True for project.v0 resources; false for container.v0.</summary>
     public bool IsProjectService { get; set; }
 
+    /// <summary>Container arguments from the manifest (placeholders already resolved).</summary>
+    public List<string> Args { get; set; } = [];
+
+    /// <summary>
+    /// True for the single synthetic job that runs the Consul ingress gateway in front of
+    /// every service with <see cref="ExposeViaIngressGateway"/> set.
+    /// </summary>
+    public bool IsIngressGateway { get; set; }
+
+    /// <summary>Listeners of the ingress gateway job: one per exposed service.</summary>
+    public List<IngressListener> IngressListeners { get; set; } = [];
+
     /// <summary>Path written by the generator, set after WriteHclAsync.</summary>
     public string? HclPath { get; set; }
 
@@ -66,6 +80,16 @@ public sealed class ConsulPort
     public string Label { get; set; } = string.Empty;
     public int ContainerPort { get; set; }
     public string Protocol { get; set; } = "tcp";
+
+    /// <summary>The binding carries HTTP traffic (decides the health check type).</summary>
+    public bool IsHttp { get; set; }
+}
+
+/// <summary>One ingress gateway listener forwarding a host port to a mesh service.</summary>
+public sealed class IngressListener
+{
+    public string ServiceName { get; set; } = string.Empty;
+    public int Port { get; set; }
 }
 
 /// <summary>

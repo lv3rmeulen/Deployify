@@ -1,3 +1,6 @@
+using System;
+using System.IO;
+using System.Threading.Tasks;
 using Deployify.Core.Models;
 using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
@@ -22,12 +25,13 @@ public sealed class ArtifactStoreTests
         };
         var jobs = _sut.Generate(Fixtures.SingleService(), config);
         var hcl = await File.ReadAllTextAsync(
-            await _sut.WriteHclAsync(jobs[0], config, dir.Path));
+            await _sut.WriteHclAsync(jobs[0], config, dir.Path, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
 
         hcl.ShouldContain("artifact {");
-        hcl.ShouldContain("source      = \"https://artifacts.example.com/api-v1.0.0.zip\"");
+        hcl.ShouldContain("source = \"https://artifacts.example.com/api-v1.0.0.zip\"");
         hcl.ShouldContain("destination = \"local/\"");
-        hcl.ShouldContain("archive = true");
+        // go-getter takes the archive format here; "true" leaves the zip packed.
+        hcl.ShouldContain("archive = \"zip\"");
     }
 
     [Fact]
@@ -37,7 +41,7 @@ public sealed class ArtifactStoreTests
         var config = Fixtures.NomadConfigWithMode(NomadDeploymentMode.RawExec);
         var jobs = _sut.Generate(Fixtures.SingleService(), config);
         var hcl = await File.ReadAllTextAsync(
-            await _sut.WriteHclAsync(jobs[0], config, dir.Path));
+            await _sut.WriteHclAsync(jobs[0], config, dir.Path, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
 
         hcl.ShouldNotContain("artifact {");
     }
@@ -53,7 +57,7 @@ public sealed class ArtifactStoreTests
         };
         var jobs = _sut.Generate(Fixtures.SingleService(), config);
         var hcl = await File.ReadAllTextAsync(
-            await _sut.WriteHclAsync(jobs[0], config, dir.Path));
+            await _sut.WriteHclAsync(jobs[0], config, dir.Path, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
 
         hcl.ShouldContain("command = \"local/myapp\"");
     }
@@ -69,7 +73,7 @@ public sealed class ArtifactStoreTests
         };
         var jobs = _sut.Generate(Fixtures.SingleService(), config);
         var hcl = await File.ReadAllTextAsync(
-            await _sut.WriteHclAsync(jobs[0], config, dir.Path));
+            await _sut.WriteHclAsync(jobs[0], config, dir.Path, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
 
         // Docker mode should use image = not artifact + command =
         hcl.ShouldNotContain("artifact {");
@@ -77,7 +81,7 @@ public sealed class ArtifactStoreTests
     }
 
     [Fact]
-    public async Task Hcl_ArtifactUrl_ReadFromServiceOverrides()
+    public void Hcl_ArtifactUrl_ReadFromServiceOverrides()
     {
         using var dir = new TempDir();
         var config = Fixtures.NomadConfigWithMode(NomadDeploymentMode.RawExec);
@@ -156,7 +160,7 @@ public sealed class ArtifactStoreTests
     {
         var store = new HttpArtifactStore(new ArtifactStoreConfig(), NullLogger.Instance);
         await Should.ThrowAsync<InvalidOperationException>(() =>
-            store.UploadAsync("api", "v1", "fake.zip"));
+            store.UploadAsync("api", "v1", "fake.zip", TestContext.Current.CancellationToken));
     }
 
     // ── S3 URL format ─────────────────────────────────────────────────────────
@@ -187,14 +191,14 @@ public sealed class ArtifactStoreTests
                 {
                     ServiceOverrides =
                     {
-                        ["myapp"] = new ServiceOverride { ArtifactUrl = "https://example.com/api-v1.zip" }
+                        ["api"] = new ServiceOverride { ArtifactUrl = "https://example.com/api-v1.zip" }
                     }
                 }
             }
         };
         var json = System.Text.Json.JsonSerializer.Serialize(state);
         var back = System.Text.Json.JsonSerializer.Deserialize<DeployifyStateFile>(json)!;
-        back.Environments["prod"].ServiceOverrides["myapp"].ArtifactUrl
+        back.Environments["prod"].ServiceOverrides["api"].ArtifactUrl
             .ShouldBe("https://example.com/api-v1.zip");
     }
 }

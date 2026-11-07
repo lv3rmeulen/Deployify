@@ -1,6 +1,13 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 
 namespace Deployify.Target.Kubernetes;
@@ -15,26 +22,55 @@ public sealed class KubernetesApiClient : IDisposable
     private readonly HttpClient _http;
     private readonly ILogger _logger;
 
-    public KubernetesApiClient(KubernetesTargetConfig config, ILogger logger)
+    /// <summary>Creates a client, reading the service account credentials asynchronously.</summary>
+    public static async Task<KubernetesApiClient> CreateAsync(
+        KubernetesTargetConfig config, ILogger logger, CancellationToken ct = default)
+    {
+        var (server, token, caCert) = await ResolveCredentialsAsync(config, ct);
+        return new KubernetesApiClient(server, token, caCert, logger);
+    }
+
+    private KubernetesApiClient(string server, string? token, string? caCert, ILogger logger)
     {
         _logger = logger;
 
-        var (server, token, caCert) = ResolveCredentials(config);
-
         var handler = new HttpClientHandler();
-
         if (caCert is not null)
         {
-            handler.ServerCertificateCustomValidationCallback = (_, cert, _, _) =>
-                cert?.Issuer.Contains("kubernetes", StringComparison.OrdinalIgnoreCase) == true;
+            // Trust exactly the cluster CA: build the chain against it instead of the
+            // system store, and require the chain to end in that certificate.
+            var ca = System.Security.Cryptography.X509Certificates.X509Certificate2.CreateFromPem(caCert);
+            handler.ServerCertificateCustomValidationCallback = (_, cert, _, errors) =>
+            {
+                if (cert is null)
+                {
+                    return false;
+                }
+
+                if (errors == System.Net.Security.SslPolicyErrors.None)
+                {
+                    return true;
+                }
+
+                if ((errors & System.Net.Security.SslPolicyErrors.RemoteCertificateNameMismatch) != 0)
+                {
+                    return false;
+                }
+
+                using var chain = new System.Security.Cryptography.X509Certificates.X509Chain();
+                chain.ChainPolicy.TrustMode = System.Security.Cryptography.X509Certificates.X509ChainTrustMode.CustomRootTrust;
+                chain.ChainPolicy.CustomTrustStore.Add(ca);
+                chain.ChainPolicy.RevocationMode = System.Security.Cryptography.X509Certificates.X509RevocationMode.NoCheck;
+                return chain.Build(cert);
+            };
         }
 
         _http = new HttpClient(handler) { BaseAddress = new Uri(server.TrimEnd('/') + "/") };
 
         if (!string.IsNullOrWhiteSpace(token))
         {
-	        _http.DefaultRequestHeaders.Authorization =
-		        new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            _http.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
         }
     }
 
@@ -73,11 +109,11 @@ public sealed class KubernetesApiClient : IDisposable
 
         if (resp.IsSuccessStatusCode)
         {
-	        return (true, null);
+            return (true, null);
         }
 
         var body = await resp.Content.ReadAsStringAsync(ct);
-        _logger.LogError("K8s API error {Status}: {Body}", resp.StatusCode, body);
+        _logger.LogError("Kubernetes API error {Status}: {Body}", resp.StatusCode, body);
         return (false, $"HTTP {(int)resp.StatusCode}: {body}");
     }
 
@@ -86,12 +122,15 @@ public sealed class KubernetesApiClient : IDisposable
     {
         try
         {
-            var resp = await _http.GetFromJsonAsync<JsonElement>("api/v1/namespaces", ct);
+            var resp = await _http.GetFromJsonAsync<JsonElement>(
+                "api/v1/namespaces?labelSelector=" + Uri.EscapeDataString(KubectlRunner.ManagedBySelector), ct);
             var items = resp.GetProperty("items");
-            return items.EnumerateArray()
-                .Select(i => i.GetProperty("metadata").GetProperty("name").GetString() ?? "")
-                .Where(n => n.StartsWith(prefix + "-", StringComparison.OrdinalIgnoreCase))
-                .ToList();
+            return
+            [
+                .. items.EnumerateArray()
+                    .Select(i => i.GetProperty("metadata").GetProperty("name").GetString() ?? "")
+                    .Where(n => n.StartsWith(prefix + "-", StringComparison.OrdinalIgnoreCase))
+            ];
         }
         catch (Exception ex)
         {
@@ -108,11 +147,16 @@ public sealed class KubernetesApiClient : IDisposable
             var resp = await _http.GetFromJsonAsync<JsonElement>(
                 $"apis/apps/v1/namespaces/{namespaceName}/deployments", ct);
             var items = resp.GetProperty("items");
-            return items.EnumerateArray()
-                .Select(i => i.GetProperty("metadata").GetProperty("name").GetString() ?? "")
-                .ToList();
+            return
+            [
+                .. items.EnumerateArray()
+                    .Select(i => i.GetProperty("metadata").GetProperty("name").GetString() ?? "")
+            ];
         }
-        catch { return []; }
+        catch
+        {
+            return [];
+        }
     }
 
     public void Dispose() => _http.Dispose();
@@ -140,62 +184,30 @@ public sealed class KubernetesApiClient : IDisposable
         _ => kind.ToLowerInvariant() + "s"
     };
 
-    private static (string Server, string? Token, string? CaCert) ResolveCredentials(
-        KubernetesTargetConfig config)
+    /// <summary>
+    /// The API fallback only runs inside a cluster, with the pod's service account.
+    /// Outside a cluster kubectl is required: a kubeconfig can hold many contexts, client
+    /// certificates and exec credential plugins, and guessing at those risks deploying to
+    /// the wrong cluster.
+    /// </summary>
+    private static async Task<(string Server, string? Token, string? CaCert)> ResolveCredentialsAsync(
+        KubernetesTargetConfig config, CancellationToken ct)
     {
-        // Try kubeconfig file
-        var kubeconfigPath = config.KubeConfigPath
-            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                ".kube", "config");
-
-        if (File.Exists(kubeconfigPath))
-        {
-            var (server, token) = ParseKubeconfig(kubeconfigPath, config.Context);
-            if (server is not null)
-            {
-	            return (server, token, null);
-            }
-        }
-
-        // Try in-cluster service account
         const string tokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token";
         const string caCertPath = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt";
 
-        if (File.Exists(tokenPath))
+        if (File.Exists(tokenPath) && File.Exists(caCertPath))
         {
-            var token = File.ReadAllText(tokenPath).Trim();
-            var caCert = File.Exists(caCertPath) ? File.ReadAllText(caCertPath) : null;
-            return ("https://kubernetes.default.svc", token, caCert);
+            var host = Environment.GetEnvironmentVariable("KUBERNETES_SERVICE_HOST") ?? "kubernetes.default.svc";
+            var port = Environment.GetEnvironmentVariable("KUBERNETES_SERVICE_PORT") ?? "443";
+            var token = await File.ReadAllTextAsync(tokenPath, ct);
+            var caCert = await File.ReadAllTextAsync(caCertPath, ct);
+            return ($"https://{host}:{port}", token.Trim(), caCert);
         }
 
-        return ("https://localhost:6443", null, null);
-    }
-
-    private static (string? Server, string? Token) ParseKubeconfig(string path, string? contextName)
-    {
-        try
-        {
-            // Minimal kubeconfig YAML parsing — reads server + token for the active/named context
-            var yaml = File.ReadAllText(path);
-            var lines = yaml.Split('\n');
-
-            // Find current-context if not specified
-            if (contextName is null)
-            {
-                var ccLine = lines.FirstOrDefault(l => l.StartsWith("current-context:"));
-                contextName = ccLine?.Split(':', 2).LastOrDefault()?.Trim().Trim('"');
-            }
-
-            // Extract server - very naive but covers standard kubeconfig format
-            var serverLine = lines.SkipWhile(l => !l.Contains("server:")).FirstOrDefault();
-            var server = serverLine?.Split("server:", 2).LastOrDefault()?.Trim();
-
-            // Extract token if present
-            var tokenLine = lines.SkipWhile(l => !l.Contains("token:")).FirstOrDefault();
-            var token = tokenLine?.Split("token:", 2).LastOrDefault()?.Trim();
-
-            return (server, token);
-        }
-        catch { return (null, null); }
+        throw new InvalidOperationException(
+            "kubectl was not found on PATH. Install kubectl (it reads your kubeconfig" +
+            (config.Context is null ? "" : $" and context '{config.Context}'") +
+            "), or run deployify inside the cluster with a service account.");
     }
 }
