@@ -35,3 +35,10 @@ jobs:
           "dotnet test --solution Deployify.slnx --configuration Release --no-build --report-github"
           --output-format cobertura
           --output ./artifacts/coverage.cobertura.xml
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: ./artifacts/coverage.cobertura.xml
+          if-no-files-found: error
