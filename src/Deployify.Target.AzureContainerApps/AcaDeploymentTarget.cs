@@ -29,7 +29,7 @@ namespace Deployify.Target.AzureContainerApps;
 /// </summary>
 public sealed class AcaDeploymentTarget(
     IPublisher publisher,
-    ILogger<AcaDeploymentTarget> logger) : IDeploymentTarget, ISecretStoreProvider
+    ILogger<AcaDeploymentTarget> logger) : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget
 {
     private readonly AcaManifestGenerator _generator = new();
 
@@ -98,7 +98,7 @@ public sealed class AcaDeploymentTarget(
         }
 
         var cfg = GetConfig(config);
-        var client = new AcaCliClient(cfg, logger);
+        var client = Client(cfg);
         return await client.PingAsync(ct);
     }
 
@@ -132,7 +132,7 @@ public sealed class AcaDeploymentTarget(
         var cfg = GetConfig(config);
         var apps = _generator.Generate(manifest, config, cfg);
         var results = new List<ValidationResult>();
-        var client = new AcaCliClient(cfg, logger);
+        var client = Client(cfg);
 
         foreach (var app in apps)
         {
@@ -168,7 +168,7 @@ public sealed class AcaDeploymentTarget(
         }
 
         var desired = apps.Select(a => a.Name).ToHashSet();
-        var client = new AcaCliClient(cfg, logger);
+        var client = Client(cfg);
         HashSet<string> running;
         try
         {
@@ -198,59 +198,158 @@ public sealed class AcaDeploymentTarget(
     {
         var cfg = GetConfig(config);
         var apps = _generator.Generate(manifest, config, cfg);
-        var client = new AcaCliClient(cfg, logger);
+        var client = Client(cfg);
         var results = new List<DeploymentResult>();
 
         foreach (var app in apps)
         {
-            var specPath = Path.Combine(outputDirectory, $"{app.Name}.containerapp.json");
-            if (!File.Exists(specPath))
-            {
-                results.Add(new DeploymentResult
-                {
-                    ServiceName = app.Name,
-                    Success = false,
-                    Error = $"App spec not found: {specPath}. Run 'deployify plan' first."
-                });
-                continue;
-            }
-
-            try
-            {
-                // Secrets first: a new revision reads its Key Vault references when it starts.
-                var secretsChanged = await SyncSecretsAsync(app, config, cfg, new AzureCliKeyVaultClient(cfg.SubscriptionId), ct);
-                var resourceId = await client.DeployAppAsync(specPath, app.Name, ct);
-                logger.LogInformation("Deployed Container App '{Name}' → {Id}", app.Name, resourceId);
-
-                // An unchanged spec makes no new revision, and Container Apps only re-reads
-                // Key Vault references periodically, so restart to pick up new values now.
-                if (secretsChanged && await client.GetLatestRevisionAsync(app.Name, ct) is { } revision &&
-                    !await client.RestartRevisionAsync(app.Name, revision, ct))
-                {
-                    logger.LogWarning("Secrets of {Name} changed but revision {Revision} could not be restarted.", app.Name, revision);
-                }
-
-                results.Add(new DeploymentResult
-                {
-                    ServiceName = app.Name,
-                    DeploymentId = resourceId,
-                    Success = true
-                });
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Failed to deploy Container App '{Name}'.", app.Name);
-                results.Add(new DeploymentResult
-                {
-                    ServiceName = app.Name,
-                    Success = false,
-                    Error = ex.Message
-                });
-            }
+            results.Add(await ApplyOneAsync(app, config, cfg, client, outputDirectory, ct));
         }
 
         return results;
     }
+
+    private async Task<DeploymentResult> ApplyOneAsync(
+        AcaApp app, EnvironmentConfig config, AcaTargetConfig cfg, AcaCliClient client, string outputDirectory,
+        CancellationToken ct)
+    {
+        var specPath = Path.Combine(outputDirectory, $"{app.Name}.containerapp.json");
+        if (!File.Exists(specPath))
+        {
+            return new DeploymentResult
+            {
+                ServiceName = app.Name,
+                Success = false,
+                Error = $"App spec not found: {specPath}. Run 'deployify plan' first."
+            };
+        }
+
+        try
+        {
+            // Secrets first: a new revision reads its Key Vault references when it starts.
+            var secretsChanged = await SyncSecretsAsync(app, config, cfg, new AzureCliKeyVaultClient(cfg.SubscriptionId), ct);
+            var resourceId = await client.DeployAppAsync(specPath, app.Name, ct);
+            logger.LogInformation("Deployed Container App '{Name}' → {Id}", app.Name, resourceId);
+
+            // An unchanged spec makes no new revision, and Container Apps only re-reads
+            // Key Vault references periodically, so restart to pick up new values now.
+            if (secretsChanged && await client.GetLatestRevisionAsync(app.Name, ct) is { } revision &&
+                !await client.RestartRevisionAsync(app.Name, revision, ct))
+            {
+                logger.LogWarning("Secrets of {Name} changed but revision {Revision} could not be restarted.", app.Name, revision);
+            }
+
+            return new DeploymentResult
+            {
+                ServiceName = app.Name,
+                DeploymentId = resourceId,
+                Success = true
+            };
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to deploy Container App '{Name}'.", app.Name);
+            return new DeploymentResult
+            {
+                ServiceName = app.Name,
+                Success = false,
+                Error = ex.Message
+            };
+        }
+    }
+
+    // ── Rollout (health-gated apply) ──────────────────────────────────────────
+
+    /// <summary>Process runner for the az CLI; tests swap in a fake.</summary>
+    internal Deployify.Core.Processes.IProcessRunner? Runner { get; init; }
+
+    private AcaCliClient Client(AcaTargetConfig cfg) => new(cfg, logger, Runner);
+
+    /// <summary>Records the revision that serves traffic now (the latest ready one).</summary>
+    public async Task<ServiceSnapshot> CaptureAsync(
+        AspireManifest manifest, EnvironmentConfig config, string service, CancellationToken ct = default)
+    {
+        var app = await Client(GetConfig(config)).GetAppAsync(service, ct);
+        var revision = app?.LatestReadyRevision ?? app?.LatestRevision;
+        return app is null || revision is null
+            ? new ServiceSnapshot { ServiceName = service, Existed = app is not null }
+            : new ServiceSnapshot { ServiceName = service, Existed = true, Revision = revision };
+    }
+
+    public async Task<AppliedRevision> ApplyServiceAsync(
+        AspireManifest manifest, EnvironmentConfig config, string outputDirectory, string service,
+        CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var app = _generator.Generate(manifest, config, cfg).FirstOrDefault(a => a.Name == service);
+        if (app is null)
+        {
+            return new AppliedRevision { ServiceName = service, Success = false, Error = "not a Container App in this manifest" };
+        }
+
+        var client = Client(cfg);
+        var result = await ApplyOneAsync(app, config, cfg, client, outputDirectory, ct);
+        if (!result.Success)
+        {
+            return new AppliedRevision { ServiceName = service, Success = false, Error = result.Error };
+        }
+
+        // `containerapp update` waits for the revision to be created, so the app names it now.
+        var status = await client.GetAppAsync(service, ct);
+        return status?.LatestRevision is { } latest
+            ? new AppliedRevision { ServiceName = service, Success = true, Revision = latest }
+            : new AppliedRevision { ServiceName = service, Success = false, Error = "Azure reported no revision after the deploy" };
+    }
+
+    public async Task<HealthObservation> ObserveAsync(
+        EnvironmentConfig config, string service, string revision, CancellationToken ct = default)
+    {
+        var client = Client(GetConfig(config));
+        var app = await client.GetAppAsync(service, ct);
+        var rev = app is null ? null : await client.GetRevisionAsync(service, revision, ct);
+        return AcaRolloutHealth.Evaluate(app, rev, revision);
+    }
+
+    /// <summary>
+    /// Copies the captured revision into a new one, which Container Apps then rolls out; returns
+    /// the new revision's name. An app this rollout created is deleted.
+    /// </summary>
+    public async Task<string?> RestoreAsync(EnvironmentConfig config, ServiceSnapshot snapshot, CancellationToken ct = default)
+    {
+        var client = Client(GetConfig(config));
+        var service = snapshot.ServiceName;
+        var app = await client.GetAppAsync(service, ct);
+
+        if (snapshot is not { Existed: true, Revision: { } previous })
+        {
+            if (app is not null && !snapshot.Existed)
+            {
+                await client.DeleteAppAsync(service, ct);
+                logger.LogInformation("Deleted new Container App {Name}.", service);
+            }
+
+            return null;
+        }
+
+        if (app is null)
+        {
+            throw new InvalidOperationException($"Container App '{service}' no longer exists, so it can't be rolled back.");
+        }
+
+        if (app.LatestRevision == previous)
+        {
+            return previous; // the rollout never made a new revision
+        }
+
+        await client.CopyRevisionAsync(service, previous, ct);
+        var after = await client.GetAppAsync(service, ct);
+        var restored = after?.LatestRevision
+                       ?? throw new InvalidOperationException($"Azure reported no revision for '{service}' after the copy.");
+        logger.LogInformation("Rolled {Name} back to {Previous} as new revision {Restored}.", service, previous, restored);
+        return restored;
+    }
+
+    public bool HasNativeRollback(EnvironmentConfig config) => false;
 
     // ── Publish ───────────────────────────────────────────────────────────────
 
@@ -320,7 +419,7 @@ public sealed class AcaDeploymentTarget(
     {
         var cfg = GetConfig(config);
         var apps = _generator.Generate(manifest, config, cfg);
-        var client = new AcaCliClient(cfg, logger);
+        var client = Client(cfg);
         var entries = new List<DiffEntry>();
 
         HashSet<string> running;

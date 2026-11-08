@@ -60,6 +60,14 @@ public interface IRolloutTarget
     /// </summary>
     Task<string?> GetUnavailableReasonAsync(EnvironmentConfig config, CancellationToken ct = default)
         => Task.FromResult<string?>(null);
+
+    /// <summary>
+    /// Runs once after every service passed its health gate, for clean-up a whole-project apply
+    /// would have done (Compose removes containers of services no longer in the manifest). A
+    /// failure here is reported as a warning; the rollout itself has already succeeded.
+    /// </summary>
+    Task CompleteAsync(AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
+        => Task.CompletedTask;
 }
 
 /// <summary>What ran for one service before a rollout touched it.</summary>

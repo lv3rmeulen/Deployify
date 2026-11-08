@@ -171,6 +171,77 @@ public sealed class ComposeRunner(ComposeTargetConfig config, ILogger logger, IP
         }
     }
 
+    // ── Rollout ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The project's containers for one service, running or not. Throws when the Docker daemon
+    /// can't be asked, so "unreachable" is never taken for "new service".
+    /// </summary>
+    public async Task<IReadOnlyList<ComposeContainerStatus>> GetServiceContainersAsync(
+        string service, CancellationToken ct = default)
+    {
+        var ps = await RunDockerAsync(
+        [
+            "ps", "-a", "-q",
+            "--filter", $"label=com.docker.compose.project={config.ProjectName}",
+            "--filter", $"label=com.docker.compose.service={service}"
+        ], ct);
+        if (!ps.Ok)
+        {
+            throw new InvalidOperationException($"docker could not list the containers of '{service}': {ps.Stderr.Trim()}");
+        }
+
+        var ids = ps.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (ids.Length == 0)
+        {
+            return [];
+        }
+
+        var inspect = await RunDockerAsync(["inspect", .. ids], ct);
+        if (!inspect.Ok)
+        {
+            throw new InvalidOperationException($"docker could not inspect the containers of '{service}': {inspect.Stderr.Trim()}");
+        }
+
+        return ComposeContainerStatus.ParseInspect(inspect.Stdout);
+    }
+
+    /// <summary>
+    /// Brings up one service from the given compose files without touching its dependencies
+    /// (<c>up -d --no-deps service</c>).
+    /// </summary>
+    public async Task<(bool Ok, string Output)> UpServiceAsync(
+        IReadOnlyList<string> composeFiles, string service, IEnumerable<string>? profiles = null,
+        CancellationToken ct = default)
+    {
+        var args = new List<string> { "-p", config.ProjectName };
+        args.AddRange(ProfileArgs(profiles));
+        foreach (var file in composeFiles)
+        {
+            args.AddRange(["-f", file]);
+        }
+
+        args.AddRange(["up", "-d", "--no-deps", service]);
+        var result = await RunAsync(args, ct);
+        return (result.ExitCode == 0, result.ExitCode == 0 ? result.Stdout : result.Stderr);
+    }
+
+    /// <summary>Force-removes containers (stopping them first).</summary>
+    public async Task RemoveContainersAsync(IEnumerable<string> ids, CancellationToken ct = default)
+    {
+        var list = ids.ToList();
+        if (list.Count == 0)
+        {
+            return;
+        }
+
+        var result = await RunDockerAsync(["rm", "-f", .. list], ct);
+        if (!result.Ok)
+        {
+            throw new InvalidOperationException($"docker could not remove containers: {result.Stderr.Trim()}");
+        }
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private async Task<ProcessResult> RunAsync(IEnumerable<string> args, CancellationToken ct)

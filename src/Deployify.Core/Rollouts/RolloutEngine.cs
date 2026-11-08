@@ -168,6 +168,18 @@ public sealed class RolloutEngine
 
         if (failure is null)
         {
+            try
+            {
+                await rollout.CompleteAsync(manifest, config, request.OutputDirectory, ct);
+            }
+            catch (Exception ex)
+            {
+                var warning = $"Clean-up after the rollout failed: {ex.Message}";
+                warnings.Add(warning);
+                Report(RolloutProgressKind.Warning, null, warning);
+                await journal.LogAsync(null, warning);
+            }
+
             return await FinishAsync(journal, RolloutState.Succeeded, RolloutOutcome.Succeeded, null, warnings);
         }
 

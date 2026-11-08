@@ -194,6 +194,73 @@ public sealed class AcaCliClient(AcaTargetConfig config, ILogger logger, IProces
         return exit == 0;
     }
 
+    // ── Rollout ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The app's latest and latest-ready revision, or null when the app doesn't exist. Throws
+    /// when Azure can't be asked, so "unreachable" is never taken for "new app".
+    /// </summary>
+    public async Task<AcaAppStatus?> GetAppAsync(string appName, CancellationToken ct = default)
+    {
+        var (exit, output) = await RunAsync(BuildArgs(
+            "containerapp", "show", "--name", appName, "--resource-group", config.ResourceGroup, "--output", "json"), ct);
+        if (exit != 0)
+        {
+            return IsNotFound(output)
+                ? null
+                : throw new InvalidOperationException($"Failed to read Container App '{appName}': {output.Trim()}");
+        }
+
+        return AcaAppStatus.Parse(output);
+    }
+
+    /// <summary>One revision's state, or null when it doesn't exist (yet).</summary>
+    public async Task<AcaRevisionStatus?> GetRevisionAsync(string appName, string revision, CancellationToken ct = default)
+    {
+        var (exit, output) = await RunAsync(BuildArgs(
+            "containerapp", "revision", "show", "--name", appName, "--resource-group", config.ResourceGroup,
+            "--revision", revision, "--output", "json"), ct);
+        if (exit != 0)
+        {
+            return IsNotFound(output)
+                ? null
+                : throw new InvalidOperationException($"Failed to read revision '{revision}' of '{appName}': {output.Trim()}");
+        }
+
+        return AcaRevisionStatus.Parse(output);
+    }
+
+    /// <summary>
+    /// Creates a new revision from an earlier one's template (<c>az containerapp revision copy</c>),
+    /// which is how an app goes back to what it ran before.
+    /// </summary>
+    public async Task CopyRevisionAsync(string appName, string fromRevision, CancellationToken ct = default)
+    {
+        var (exit, output) = await RunAsync(BuildArgs(
+            "containerapp", "revision", "copy", "--name", appName, "--resource-group", config.ResourceGroup,
+            "--from-revision", fromRevision, "--output", "json"), ct);
+        if (exit != 0)
+        {
+            throw new InvalidOperationException(
+                $"Failed to copy revision '{fromRevision}' of '{appName}': {output.Trim()}");
+        }
+    }
+
+    public async Task DeleteAppAsync(string appName, CancellationToken ct = default)
+    {
+        var (exit, output) = await RunAsync(BuildArgs(
+            "containerapp", "delete", "--name", appName, "--resource-group", config.ResourceGroup, "--yes"), ct);
+        if (exit != 0 && !IsNotFound(output))
+        {
+            throw new InvalidOperationException($"Failed to delete Container App '{appName}': {output.Trim()}");
+        }
+    }
+
+    private static bool IsNotFound(string output)
+        => output.Contains("ResourceNotFound", StringComparison.OrdinalIgnoreCase) ||
+           output.Contains("was not found", StringComparison.OrdinalIgnoreCase) ||
+           output.Contains("could not be found", StringComparison.OrdinalIgnoreCase);
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     /// <summary>

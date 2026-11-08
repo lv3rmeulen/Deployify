@@ -33,7 +33,7 @@ namespace Deployify.Target.Compose;
 /// </summary>
 public sealed class ComposeDeploymentTarget(
     IPublisher publisher,
-    ILogger<ComposeDeploymentTarget> logger) : IDeploymentTarget
+    ILogger<ComposeDeploymentTarget> logger) : IDeploymentTarget, IRolloutTarget
 {
     private readonly ComposeFileGenerator _generator = new();
 
@@ -293,6 +293,148 @@ public sealed class ComposeDeploymentTarget(
         [
             .. services.Select(s => new DeploymentResult { ServiceName = s.Name, DeploymentId = $"{cfg.ProjectName}/{s.Name}", Success = nowRunning.Contains(s.Name), Error = nowRunning.Contains(s.Name) ? null : "Service did not start — check logs." })
         ];
+    }
+
+    // ── Rollout (health-gated apply) ──────────────────────────────────────────
+
+    private const string ConfigFilesKey = "configFiles";
+
+    private static IEnumerable<string>? Profiles(ComposeTargetConfig cfg) => cfg.GenerateProfiles ? new[] { "prod" } : null;
+
+    public async Task<string?> GetUnavailableReasonAsync(EnvironmentConfig config, CancellationToken ct = default)
+        => await CliAvailableAsync(ct) ? null : "neither 'docker compose' nor 'docker-compose' is installed";
+
+    /// <summary>
+    /// Records the image ID the service's containers run, and the compose files they were
+    /// created from (Compose keeps those paths in a container label).
+    /// </summary>
+    public async Task<ServiceSnapshot> CaptureAsync(
+        AspireManifest manifest, EnvironmentConfig config, string service, CancellationToken ct = default)
+    {
+        var containers = await Runner(GetConfig(config)).GetServiceContainersAsync(service, ct);
+        var current = containers.FirstOrDefault(c => c.Status == "running") ?? containers.FirstOrDefault();
+        if (current is null)
+        {
+            return new ServiceSnapshot { ServiceName = service, Existed = false };
+        }
+
+        var data = new Dictionary<string, string>();
+        if (current.ConfigFiles is { } files)
+        {
+            data[ConfigFilesKey] = files;
+        }
+
+        return new ServiceSnapshot { ServiceName = service, Existed = true, Revision = current.ImageId, Data = data };
+    }
+
+    public async Task<AppliedRevision> ApplyServiceAsync(
+        AspireManifest manifest, EnvironmentConfig config, string outputDirectory, string service,
+        CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var mergedPath = Path.Combine(outputDirectory, "compose.yml");
+        if (!File.Exists(mergedPath))
+        {
+            return new AppliedRevision
+            {
+                ServiceName = service, Success = false,
+                Error = $"compose.yml not found at {mergedPath}. Run 'deployify plan' first."
+            };
+        }
+
+        var runner = Runner(cfg);
+        await runner.EnsureNetworkAsync(ct);
+        if (cfg.Volumes.Count > 0)
+        {
+            await runner.EnsureVolumesAsync(cfg.Volumes.Keys, ct);
+        }
+
+        var (ok, output) = await runner.UpServiceAsync([mergedPath], service, Profiles(cfg), ct);
+        if (!ok)
+        {
+            return new AppliedRevision { ServiceName = service, Success = false, Error = output.Trim() };
+        }
+
+        var containers = await runner.GetServiceContainersAsync(service, ct);
+        var container = containers.FirstOrDefault(c => c.Status == "running") ?? containers.FirstOrDefault();
+        return container is null
+            ? new AppliedRevision { ServiceName = service, Success = false, Error = "no container was created" }
+            : new AppliedRevision { ServiceName = service, Success = true, Revision = container.ImageId };
+    }
+
+    public async Task<HealthObservation> ObserveAsync(
+        EnvironmentConfig config, string service, string revision, CancellationToken ct = default)
+        => ComposeRolloutHealth.Evaluate(await Runner(GetConfig(config)).GetServiceContainersAsync(service, ct), revision);
+
+    /// <summary>
+    /// Brings the service back up on its previous image ID, through a small override file next to
+    /// the compose file that pins the image and never pulls. A service this rollout created has its
+    /// containers removed. The old image must still be in the local image store.
+    /// </summary>
+    public async Task<string?> RestoreAsync(EnvironmentConfig config, ServiceSnapshot snapshot, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var runner = Runner(cfg);
+        var service = snapshot.ServiceName;
+        var containers = await runner.GetServiceContainersAsync(service, ct);
+
+        if (snapshot is not { Existed: true, Revision: { } previous })
+        {
+            if (!snapshot.Existed)
+            {
+                await runner.RemoveContainersAsync(containers.Select(c => c.Id), ct);
+                logger.LogInformation("Removed the containers of new service {Name}.", service);
+            }
+
+            return null;
+        }
+
+        if (containers.Count > 0 && containers.All(c => c.ImageId == previous))
+        {
+            return previous; // the rollout never changed the image
+        }
+
+        var files = (snapshot.Data.TryGetValue(ConfigFilesKey, out var raw) ? raw : "")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList();
+        if (files.Count == 0 || !files.All(File.Exists))
+        {
+            throw new InvalidOperationException(
+                $"The compose files {service} was created from are gone ({(files.Count == 0 ? "not recorded" : string.Join(", ", files))}), " +
+                "so it can't be brought back up.");
+        }
+
+        var overridePath = Path.Combine(Path.GetDirectoryName(files[0])!, $"rollback.{service}.override.yml");
+        await File.WriteAllTextAsync(overridePath, ComposeRolloutHealth.PinImageOverride(service, previous), ct);
+
+        var (ok, output) = await runner.UpServiceAsync([.. files, overridePath], service, Profiles(cfg), ct);
+        if (!ok)
+        {
+            throw new InvalidOperationException(
+                $"Could not bring {service} back up on {ComposeRolloutHealth.Short(previous)}: {output.Trim()}");
+        }
+
+        logger.LogInformation("Brought {Name} back up on image {Image}.", service, previous);
+        return previous; // image IDs are immutable: wait for this very one
+    }
+
+    public bool HasNativeRollback(EnvironmentConfig config) => false;
+
+    /// <summary>
+    /// The rollout brings services up one at a time with --no-deps, so finish with the same
+    /// whole-project up as a plain apply, which removes containers of services no longer in
+    /// the manifest. Every remaining service is already up to date, so nothing else changes.
+    /// </summary>
+    public async Task CompleteAsync(
+        AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var (ok, output) = await Runner(cfg).UpAsync(
+            Path.Combine(outputDirectory, "compose.yml"), Profiles(cfg), forceRecreate: false, ct: ct);
+        if (!ok)
+        {
+            throw new InvalidOperationException(output.Trim());
+        }
     }
 
     // ── Publish ───────────────────────────────────────────────────────────────

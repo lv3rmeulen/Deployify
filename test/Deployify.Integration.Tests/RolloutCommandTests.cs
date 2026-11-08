@@ -57,10 +57,11 @@ public sealed class RolloutCommandTests
     }
 
     [Fact]
-    public async Task Rollback_OnATargetWithoutRollouts_ReturnsOne()
+    public async Task Rollback_OfARolloutToAnotherTarget_IsRefused()
     {
         using var dir = new TempDir();
         await Harness.WriteComposeStateAsync(dir.Path, ct: Ct);
+        await WriteJournalAsync(dir.Path, ServiceRolloutState.Healthy); // recorded against ECS
 
         (await Root().InvokeAsync(["rollback", "--project-path", dir.Path, "--auto-approve"], Ct)).ShouldBe(1);
     }

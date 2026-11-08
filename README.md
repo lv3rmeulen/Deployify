@@ -135,7 +135,7 @@ deployify apply --dry-run               # generate + plan only, no changes appli
 
 #### Health-gated rollouts
 
-On targets that support it (**AWS ECS**, **Nomad**, **Nomad + Consul** and **Kubernetes**), `apply` and `ci` deploy services in
+On every target (**AWS ECS**, **Nomad**, **Nomad + Consul**, **Kubernetes**, **Azure Container Apps** and **Docker Compose**), `apply` and `ci` deploy services in
 dependency order, one wave at a time, and wait for each wave to become healthy before moving on.
 If a service fails, doesn't become healthy within the timeout, or the run is cancelled with
 Ctrl+C, every service the rollout touched is put back on the revision it ran before, in reverse
@@ -180,6 +180,25 @@ the rollout created is scaled to zero. Like Nomad's secrets, the ConfigMap and S
 memory only, so `deployify rollback` later restores the pod template and replicas but not them.
 Kubernetes keeps 10 old ReplicaSets by default (`revisionHistoryLimit`); older revisions can't be
 rolled back to.
+
+On Azure Container Apps, a revision is the Container Apps revision name. A revision is healthy once
+it is provisioned, active and running (scaled to zero counts), isn't reported unhealthy, and the
+app has made it its latest ready revision. Rolling back runs `az containerapp revision copy` from
+the captured revision, which creates a new revision with the old template, and waits for that one;
+an app the rollout created is deleted. App-level settings outside the revision template (ingress,
+secret definitions) are not rolled back. Without probes, Container Apps can only report whether
+containers start, so add probes to get a meaningful gate.
+
+On Docker Compose, a revision is the image ID (`sha256:…`) the service's containers run, so a
+rollback works even with a `latest` tag as long as the old image is still in the local image store
+(don't `docker image prune` between deploys). Services are brought up one at a time with
+`up -d --no-deps`, and once all are healthy a final whole-project `up -d --remove-orphans` removes
+services no longer in the manifest, as a plain apply does. A service is healthy when its containers
+run the new image, aren't restarting, and pass their healthcheck if they have one
+(`generateHealthChecks`); a container that exits, restarts twice or turns unhealthy fails the
+rollout. Rolling back brings the service back up from the same compose files with a small
+`rollback.<service>.override.yml` next to them that pins the old image ID; a service the rollout
+created has its containers removed. Environment changes are not rolled back, only the image.
 
 ```bash
 deployify status                        # recent rollouts in this environment
