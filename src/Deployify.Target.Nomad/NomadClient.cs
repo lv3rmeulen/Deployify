@@ -240,6 +240,27 @@ public sealed class NomadClient : IDisposable
         return items;
     }
 
+    /// <summary>Paths of the variables under <paramref name="prefix"/> (GET /v1/vars?prefix=…). No values.</summary>
+    public async Task<IReadOnlyList<string>> ListVariablePathsAsync(string prefix, CancellationToken ct = default)
+    {
+        var resp = await _http.GetAsync($"v1/vars?prefix={Uri.EscapeDataString(prefix)}&{Ns}", ct);
+        await EnsureSuccessAsync(resp, $"list variables under {prefix}", ct);
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+        var paths = new List<string>();
+        if (doc.RootElement.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var v in doc.RootElement.EnumerateArray())
+            {
+                if (v.TryGetProperty("Path", out var p) && p.GetString() is { } path)
+                {
+                    paths.Add(path);
+                }
+            }
+        }
+
+        return paths;
+    }
+
     public async Task DeleteVariableAsync(string path, CancellationToken ct = default)
     {
         var resp = await _http.DeleteAsync($"v1/var/{EscapePath(path)}?{Ns}", ct);

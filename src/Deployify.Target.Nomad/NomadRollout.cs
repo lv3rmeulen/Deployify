@@ -18,19 +18,39 @@ namespace Deployify.Target.Nomad;
 public sealed class NomadRollout(ILogger logger)
 {
     /// <summary>
-    /// Job secrets (Nomad Variables) as they were before the rollout, kept in memory only so no
-    /// secret reaches the journal. A rollback in a later process can't restore them.
+    /// Job secrets (Nomad Variables) as they were before the rollout, held in memory for a rollback
+    /// in the same run. For later rollbacks a copy is also kept in Nomad itself, under
+    /// <see cref="BackupRoot"/>, and the journal records only its path.
     /// </summary>
     private readonly ConcurrentDictionary<string, Dictionary<string, string>?> _variablesBefore = new();
+
+    /// <summary>Where copies of job secrets are kept for rollbacks: <c>deployify/rollback/{job}/v{version}</c>.</summary>
+    public const string BackupRoot = "deployify/rollback";
+
+    /// <summary>Backups kept per job; older ones are deleted when a new one is written.</summary>
+    public const int BackupsKept = 5;
+
+    private const string SecretsBackupKey = "secretsBackup";
+    private const string SecretsBeforeKey = "secretsBefore";
 
     public async Task<ServiceSnapshot> CaptureAsync(NomadClient client, string @namespace, string job, CancellationToken ct)
     {
         var info = await client.GetJobAsync(job, ct);
 
         var key = VariableKey(@namespace, job);
+        var data = new Dictionary<string, string>();
         try
         {
-            _variablesBefore[key] = await client.GetVariableItemsAsync(NomadVariables.JobPath(job), ct);
+            var before = await client.GetVariableItemsAsync(NomadVariables.JobPath(job), ct);
+            _variablesBefore[key] = before;
+            if (before is null)
+            {
+                data[SecretsBeforeKey] = "none";
+            }
+            else if (await BackUpAsync(client, job, info, before, ct) is { } backupPath)
+            {
+                data[SecretsBackupKey] = backupPath;
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -40,13 +60,49 @@ public sealed class NomadRollout(ILogger logger)
         }
 
         return info is null || info.Stop
-            ? new ServiceSnapshot { ServiceName = job, Existed = false }
+            ? new ServiceSnapshot { ServiceName = job, Existed = false, Data = data }
             : new ServiceSnapshot
             {
                 ServiceName = job,
                 Existed = true,
-                Revision = info.Version.ToString(CultureInfo.InvariantCulture)
+                Revision = info.Version.ToString(CultureInfo.InvariantCulture),
+                Data = data
             };
+    }
+
+    /// <summary>
+    /// Copies the job's secrets to <c>deployify/rollback/{job}/v{version}</c>, a path the job's
+    /// own tasks can't read, and deletes all but the newest <see cref="BackupsKept"/> copies.
+    /// Returns the path, or null when the copy couldn't be written (the rollback then only works
+    /// in the same run).
+    /// </summary>
+    private async Task<string?> BackUpAsync(
+        NomadClient client, string job, NomadJobInfo? info, Dictionary<string, string> items, CancellationToken ct)
+    {
+        var prefix = $"{BackupRoot}/{job}/";
+        var path = prefix + (info is null ? "new" : $"v{info.Version.ToString(CultureInfo.InvariantCulture)}");
+        try
+        {
+            await client.PutVariableAsync(path, items, ct);
+
+            var backups = await client.ListVariablePathsAsync(prefix, ct);
+            foreach (var old in backups
+                         .Select(p => (Path: p, Version: long.TryParse(p[prefix.Length..].TrimStart('v'),
+                             NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) ? v : -1))
+                         .OrderByDescending(b => b.Version)
+                         .Skip(BackupsKept))
+            {
+                await client.DeleteVariableAsync(old.Path, ct);
+            }
+
+            return path;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning("Could not keep a copy of the secrets of {Job} in Nomad ({Message}); only a rollback " +
+                              "in this run will restore them.", job, ex.Message);
+            return null;
+        }
     }
 
     /// <summary>The version Nomad registered for the job just submitted.</summary>
@@ -71,7 +127,7 @@ public sealed class NomadRollout(ILogger logger)
         var job = snapshot.ServiceName;
 
         // Secrets first, so the reverted allocations render the old values.
-        await RestoreVariablesAsync(client, @namespace, job, ct);
+        await RestoreVariablesAsync(client, @namespace, snapshot, ct);
 
         var info = await client.GetJobAsync(job, ct);
         if (snapshot is not { Existed: true, Revision: { } revision })
@@ -102,11 +158,29 @@ public sealed class NomadRollout(ILogger logger)
         return reverted;
     }
 
-    private async Task RestoreVariablesAsync(NomadClient client, string @namespace, string job, CancellationToken ct)
+    private async Task RestoreVariablesAsync(
+        NomadClient client, string @namespace, ServiceSnapshot snapshot, CancellationToken ct)
     {
-        if (!_variablesBefore.TryGetValue(VariableKey(@namespace, job), out var before))
+        var job = snapshot.ServiceName;
+        Dictionary<string, string>? before;
+        if (_variablesBefore.TryGetValue(VariableKey(@namespace, job), out var inMemory))
         {
-            return; // never captured (for example a rollback from a later process)
+            before = inMemory;
+        }
+        else if (snapshot.Data.TryGetValue(SecretsBeforeKey, out var marker) && marker == "none")
+        {
+            before = null;
+        }
+        else if (snapshot.Data.TryGetValue(SecretsBackupKey, out var backupPath))
+        {
+            // A rollback from a later process: read the copy kept in Nomad.
+            before = await client.GetVariableItemsAsync(backupPath, ct)
+                     ?? throw new InvalidOperationException(
+                         $"The copy of {job}'s secrets at {backupPath} is gone, so they can't be restored.");
+        }
+        else
+        {
+            return; // never captured
         }
 
         var path = NomadVariables.JobPath(job);

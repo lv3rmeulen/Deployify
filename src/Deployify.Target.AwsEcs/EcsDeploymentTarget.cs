@@ -262,10 +262,21 @@ public sealed class EcsDeploymentTarget(
     public async Task<ServiceSnapshot> CaptureAsync(
         AspireManifest manifest, EnvironmentConfig config, string service, CancellationToken ct = default)
     {
-        var status = await ClientFor(GetConfig(config)).DescribeServiceAsync(service, ct);
+        var cfg = GetConfig(config);
+        var client = ClientFor(cfg);
+        var status = await client.DescribeServiceAsync(service, ct);
         if (status is null || status.Status == "INACTIVE" || status.TaskDefinition is null)
         {
             return new ServiceSnapshot { ServiceName = service, Existed = false };
+        }
+
+        var data = new Dictionary<string, string>
+        {
+            [DesiredCountKey] = status.DesiredCount.ToString(CultureInfo.InvariantCulture)
+        };
+        if (await CaptureSsmVersionsAsync(client, cfg, service, ct) is { } versions)
+        {
+            data[SsmVersionsKey] = versions;
         }
 
         return new ServiceSnapshot
@@ -273,10 +284,7 @@ public sealed class EcsDeploymentTarget(
             ServiceName = service,
             Existed = true,
             Revision = status.TaskDefinition,
-            Data = new Dictionary<string, string>
-            {
-                [DesiredCountKey] = status.DesiredCount.ToString(CultureInfo.InvariantCulture)
-            }
+            Data = data
         };
     }
 
@@ -319,6 +327,9 @@ public sealed class EcsDeploymentTarget(
 
         if (snapshot is { Existed: true, Revision: { } previous })
         {
+            // Secrets first: the restored tasks read their SSM parameters when they start.
+            await RestoreSsmVersionsAsync(client, snapshot, ct);
+
             var count = snapshot.Data.TryGetValue(DesiredCountKey, out var raw) &&
                         int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n)
                 ? n
@@ -341,6 +352,57 @@ public sealed class EcsDeploymentTarget(
     public bool HasNativeRollback(EnvironmentConfig config) => GetConfig(config).DeploymentCircuitBreaker;
 
     private const string DesiredCountKey = "desiredCount";
+    private const string SsmVersionsKey = "ssmVersions";
+
+    /// <summary>
+    /// The version of every SSM parameter under the service's secrets path, as JSON. Versions
+    /// only, never values, so it can go in the journal. Null when there are none or they can't be read.
+    /// </summary>
+    private async Task<string?> CaptureSsmVersionsAsync(
+        EcsCliClient client, EcsTargetConfig cfg, string service, CancellationToken ct)
+    {
+        try
+        {
+            var parameters = await client.GetParametersByPathAsync(
+                $"{EcsTaskDefinitionGenerator.SecretsPrefix(cfg)}/{service}", ct);
+            return parameters.Count == 0
+                ? null
+                : JsonSerializer.Serialize(parameters.ToDictionary(kv => kv.Key, kv => kv.Value.Version));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning("Could not read the SSM parameters of {Name} ({Message}); a rollback will not restore them.",
+                service, ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Writes each parameter's captured version back as its newest version. SSM keeps the last
+    /// 100 versions of a parameter, so this works from a later process too.
+    /// </summary>
+    private async Task RestoreSsmVersionsAsync(EcsCliClient client, ServiceSnapshot snapshot, CancellationToken ct)
+    {
+        if (!snapshot.Data.TryGetValue(SsmVersionsKey, out var raw))
+        {
+            return;
+        }
+
+        var versions = JsonSerializer.Deserialize<Dictionary<string, long>>(raw) ?? new Dictionary<string, long>();
+        foreach (var (name, version) in versions)
+        {
+            var current = await client.GetParameterAsync(name, ct);
+            if (current?.Version == version)
+            {
+                continue;
+            }
+
+            var old = await client.GetParameterAsync($"{name}:{version.ToString(CultureInfo.InvariantCulture)}", ct)
+                      ?? throw new InvalidOperationException($"SSM parameter {name} no longer has version {version}.");
+            await client.PutSecureStringParameterAsync(name, old.Value.Reveal(), ct);
+            logger.LogInformation("Restored SSM parameter {Name} to version {Version}'s value.", name, version);
+        }
+    }
 
     // ── Publish ───────────────────────────────────────────────────────────────
 

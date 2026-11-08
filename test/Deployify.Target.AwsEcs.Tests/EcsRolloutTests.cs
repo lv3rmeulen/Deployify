@@ -189,6 +189,73 @@ public sealed class EcsRolloutTests
         args.ShouldNotContain("--task-definition");
     }
 
+    // ── SSM parameter versions ───────────────────────────────────────────────
+
+    private const string DbParam = "/deployify/test-cluster/api/DB";
+    private const string SsmVersions = "{\"" + DbParam + "\":3}";
+
+    private static ProcessResult Parameter(string value, long version)
+        => Ok("{\"Parameter\":{\"Name\":\"" + DbParam + "\",\"Value\":\"" + value + "\",\"Version\":" + version + "}}");
+
+    [Fact]
+    public async Task Capture_RecordsSsmVersions_NotValues()
+    {
+        var fake = new FakeProcessRunner()
+            .When(["describe-services"], Ok(Describe(Old, 1, Deployment("PRIMARY", Old, "COMPLETED", 1, 1))))
+            .When(["get-parameters-by-path"],
+                Ok("{\"Parameters\":[{\"Name\":\"" + DbParam + "\",\"Value\":\"s3cret\",\"Version\":3}]}"));
+
+        var snap = await Target(fake).CaptureAsync(new(), EcsFixtures.EcsConfig(), "api", Ct);
+
+        snap.Data["ssmVersions"].ShouldBe(SsmVersions);
+        snap.Data.Values.ShouldNotContain(v => v.Contains("s3cret"));
+        fake.Single("get-parameters-by-path").Args.ShouldContain("/deployify/test-cluster/api");
+    }
+
+    [Fact]
+    public async Task Restore_WritesTheCapturedVersionsValueBack_BeforeTheServiceRestarts()
+    {
+        string? written = null;
+        var fake = new FakeProcessRunner()
+            .When(["get-parameter", "--name", DbParam], Parameter("new", 4))
+            .When(["get-parameter", "--name", DbParam + ":3"], Parameter("old", 3))
+            .When(spec => spec.Args.Contains("put-parameter"), spec =>
+            {
+                var file = spec.Args[spec.Args.ToList().IndexOf("--cli-input-json") + 1]["file://".Length..];
+                written = System.IO.File.ReadAllText(file);
+                return Ok("""{"Version":5}""");
+            })
+            .When(["update-service"], Ok("""{"service":{"serviceArn":"arn:svc/api"}}"""));
+        var snapshot = new ServiceSnapshot
+        {
+            ServiceName = "api", Existed = true, Revision = Old,
+            Data = new() { ["desiredCount"] = "1", ["ssmVersions"] = SsmVersions }
+        };
+
+        await Target(fake).RestoreAsync(EcsFixtures.EcsConfig(), snapshot, Ct);
+
+        written!.ShouldContain("\"Value\":\"old\"");
+        fake.Calls.FindIndex(c => c.Args.Contains("put-parameter"))
+            .ShouldBeLessThan(fake.Calls.FindIndex(c => c.Args.Contains("update-service")));
+    }
+
+    [Fact]
+    public async Task Restore_UnchangedParameter_IsNotRewritten()
+    {
+        var fake = new FakeProcessRunner()
+            .When(["get-parameter", "--name", DbParam], Parameter("old", 3))
+            .When(["update-service"], Ok("""{"service":{"serviceArn":"arn:svc/api"}}"""));
+        var snapshot = new ServiceSnapshot
+        {
+            ServiceName = "api", Existed = true, Revision = Old,
+            Data = new() { ["desiredCount"] = "1", ["ssmVersions"] = SsmVersions }
+        };
+
+        await Target(fake).RestoreAsync(EcsFixtures.EcsConfig(), snapshot, Ct);
+
+        fake.Calls.ShouldNotContain(c => c.Args.Contains("put-parameter"));
+    }
+
     // ── Circuit breaker ──────────────────────────────────────────────────────
 
     [Fact]

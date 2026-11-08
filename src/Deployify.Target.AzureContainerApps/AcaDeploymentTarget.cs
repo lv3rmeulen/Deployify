@@ -227,7 +227,7 @@ public sealed class AcaDeploymentTarget(
         try
         {
             // Secrets first: a new revision reads its Key Vault references when it starts.
-            var secretsChanged = await SyncSecretsAsync(app, config, cfg, new AzureCliKeyVaultClient(cfg.SubscriptionId), ct);
+            var secretsChanged = await SyncSecretsAsync(app, config, cfg, KeyVaultClientFactory(cfg.SubscriptionId), ct);
             var resourceId = await client.DeployAppAsync(specPath, app.Name, ct);
             logger.LogInformation("Deployed Container App '{Name}' → {Id}", app.Name, resourceId);
 
@@ -265,15 +265,115 @@ public sealed class AcaDeploymentTarget(
 
     private AcaCliClient Client(AcaTargetConfig cfg) => new(cfg, logger, Runner);
 
-    /// <summary>Records the revision that serves traffic now (the latest ready one).</summary>
+    /// <summary>Creates Key Vault clients (by subscription); replaceable in tests.</summary>
+    internal Func<string, IKeyVaultClient> KeyVaultClientFactory { get; init; } =
+        subscription => new AzureCliKeyVaultClient(subscription);
+
+    private const string KeyVaultVersionsKey = "keyVaultVersions";
+
+    /// <summary>
+    /// Records the revision that serves traffic now (the latest ready one) and, with the Key
+    /// Vault backend, the version of each of the app's secrets: versions only, never values.
+    /// </summary>
     public async Task<ServiceSnapshot> CaptureAsync(
         AspireManifest manifest, EnvironmentConfig config, string service, CancellationToken ct = default)
     {
-        var app = await Client(GetConfig(config)).GetAppAsync(service, ct);
+        var cfg = GetConfig(config);
+        var app = await Client(cfg).GetAppAsync(service, ct);
         var revision = app?.LatestReadyRevision ?? app?.LatestRevision;
-        return app is null || revision is null
-            ? new ServiceSnapshot { ServiceName = service, Existed = app is not null }
-            : new ServiceSnapshot { ServiceName = service, Existed = true, Revision = revision };
+        if (app is null || revision is null)
+        {
+            return new ServiceSnapshot { ServiceName = service, Existed = app is not null };
+        }
+
+        var data = new Dictionary<string, string>();
+        if (await CaptureKeyVaultVersionsAsync(manifest, config, cfg, service, ct) is { } versions)
+        {
+            data[KeyVaultVersionsKey] = versions;
+        }
+
+        return new ServiceSnapshot { ServiceName = service, Existed = true, Revision = revision, Data = data };
+    }
+
+    private async Task<string?> CaptureKeyVaultVersionsAsync(
+        AspireManifest manifest, EnvironmentConfig config, AcaTargetConfig cfg, string service, CancellationToken ct)
+    {
+        if (config.Secrets.Backend != SecretBackendType.KeyVault)
+        {
+            return null;
+        }
+
+        var app = _generator.Generate(manifest, config, cfg).FirstOrDefault(a => a.Name == service);
+        if (app is null || app.SecretEnv.Count == 0)
+        {
+            return null;
+        }
+
+        var keyVault = config.Secrets.KeyVault;
+        var vaultName = KeyVaultSecrets.VaultName(keyVault);
+        var client = KeyVaultClientFactory(cfg.SubscriptionId);
+        var names = AcaManifestGenerator.SecretNames(app);
+        var versions = new Dictionary<string, string>();
+        try
+        {
+            foreach (var key in app.SecretEnv.Keys)
+            {
+                var name = AcaKeyVault.AppSecretName(keyVault, cfg, app.Name, names[key]);
+                if (await client.GetSecretAsync(vaultName, name, ct) is { } secret)
+                {
+                    versions[name] = secret.Version;
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning("Could not read the Key Vault secrets of {Name} ({Message}); a rollback will not restore them.",
+                service, ex.Message);
+            return null;
+        }
+
+        return versions.Count == 0 ? null : JsonSerializer.Serialize(versions);
+    }
+
+    /// <summary>
+    /// Writes each captured secret version back as the newest version, since apps reference
+    /// secrets without a version. Returns true when anything was written.
+    /// </summary>
+    private async Task<bool> RestoreKeyVaultVersionsAsync(
+        EnvironmentConfig config, AcaTargetConfig cfg, ServiceSnapshot snapshot, CancellationToken ct)
+    {
+        if (!snapshot.Data.TryGetValue(KeyVaultVersionsKey, out var raw))
+        {
+            return false;
+        }
+
+        var versions = JsonSerializer.Deserialize<Dictionary<string, string>>(raw) ?? new Dictionary<string, string>();
+        var keyVault = config.Secrets.KeyVault;
+        var vaultName = KeyVaultSecrets.VaultName(keyVault);
+        var client = KeyVaultClientFactory(cfg.SubscriptionId);
+        var tags = new Dictionary<string, string>
+        {
+            [KeyVaultSecrets.StoreTag] = AcaKeyVault.Prefix(keyVault, cfg),
+            [KeyVaultSecrets.AppTag] = snapshot.ServiceName
+        };
+
+        var changed = false;
+        foreach (var (name, version) in versions)
+        {
+            var current = await client.GetSecretAsync(vaultName, name, ct);
+            if (current?.Version == version)
+            {
+                continue;
+            }
+
+            var old = await client.GetSecretVersionAsync(vaultName, name, version, ct)
+                      ?? throw new InvalidOperationException($"Key Vault secret {name} no longer has version {version}.");
+            await client.SetSecretAsync(vaultName, name, old.Value.Reveal(), tags, ct);
+            logger.LogInformation("Restored Key Vault secret {Name} to version {Version}'s value.", name, version);
+            changed = true;
+        }
+
+        return changed;
     }
 
     public async Task<AppliedRevision> ApplyServiceAsync(
@@ -336,9 +436,19 @@ public sealed class AcaDeploymentTarget(
             throw new InvalidOperationException($"Container App '{service}' no longer exists, so it can't be rolled back.");
         }
 
+        // Secrets first: the copied revision reads its Key Vault references when it starts.
+        var cfg = GetConfig(config);
+        var secretsRestored = await RestoreKeyVaultVersionsAsync(config, cfg, snapshot, ct);
+
         if (app.LatestRevision == previous)
         {
-            return previous; // the rollout never made a new revision
+            // The rollout never made a new revision; restart it if its secrets went back.
+            if (secretsRestored && !await client.RestartRevisionAsync(service, previous, ct))
+            {
+                logger.LogWarning("Secrets of {Name} were restored but revision {Revision} could not be restarted.", service, previous);
+            }
+
+            return previous;
         }
 
         await client.CopyRevisionAsync(service, previous, ct);

@@ -15,7 +15,8 @@ public sealed record ComposeContainerStatus(
     string? Health,
     int RestartCount,
     int ExitCode,
-    string? ConfigFiles)
+    string? ConfigFiles,
+    IReadOnlyList<string>? Env = null)
 {
     public const string ConfigFilesLabel = "com.docker.compose.project.config_files";
 
@@ -34,10 +35,18 @@ public sealed record ComposeContainerStatus(
             }
 
             string? configFiles = null;
-            if (c.TryGetProperty("Config", out var cfg) && cfg.ValueKind == JsonValueKind.Object &&
-                cfg.TryGetProperty("Labels", out var labels) && labels.ValueKind == JsonValueKind.Object)
+            List<string>? env = null;
+            if (c.TryGetProperty("Config", out var cfg) && cfg.ValueKind == JsonValueKind.Object)
             {
-                configFiles = Str(labels, ConfigFilesLabel);
+                if (cfg.TryGetProperty("Labels", out var labels) && labels.ValueKind == JsonValueKind.Object)
+                {
+                    configFiles = Str(labels, ConfigFilesLabel);
+                }
+
+                if (cfg.TryGetProperty("Env", out var envArray) && envArray.ValueKind == JsonValueKind.Array)
+                {
+                    env = [.. envArray.EnumerateArray().Select(e => e.GetString()).OfType<string>()];
+                }
             }
 
             result.Add(new ComposeContainerStatus(
@@ -47,7 +56,8 @@ public sealed record ComposeContainerStatus(
                 health,
                 Int(c, "RestartCount"),
                 Int(state, "ExitCode"),
-                configFiles));
+                configFiles,
+                env));
         }
 
         return result;
@@ -119,8 +129,13 @@ internal static class ComposeRolloutHealth
             $"{ours.Count} container(s) running" + (checkedHealth ? ", healthy" : " (no healthcheck)"));
     }
 
-    /// <summary>An override file that pins one service to an image ID and never pulls it.</summary>
-    public static string PinImageOverride(string service, string imageId)
+    /// <summary>
+    /// An override file that pins one service to an image ID, never pulls it and, when
+    /// <paramref name="environment"/> is given, replaces the service's environment with exactly those
+    /// <c>NAME=value</c> entries (<c>!override</c> needs Docker Compose 2.24.4 or later). Values are
+    /// escaped so Compose doesn't interpolate <c>$</c> in them.
+    /// </summary>
+    public static string PinImageOverride(string service, string imageId, IReadOnlyList<string>? environment = null)
     {
         var sb = new StringBuilder();
         sb.AppendLine("# Written by deployify while rolling back; not used by a normal apply.");
@@ -128,11 +143,30 @@ internal static class ComposeRolloutHealth
         sb.AppendLine($"  {Quote(service)}:");
         sb.AppendLine($"    image: {Quote(imageId)}");
         sb.AppendLine("    pull_policy: never");
+        if (environment is not null)
+        {
+            sb.AppendLine("    environment: !override");
+            foreach (var entry in environment)
+            {
+                var eq = entry.IndexOf('=');
+                var (name, value) = eq < 0 ? (entry, "") : (entry[..eq], entry[(eq + 1)..]);
+                sb.AppendLine($"      {Quote(name)}: {Quote(value.Replace("$", "$$"))}");
+            }
+        }
+
         return sb.ToString();
+    }
+
+    /// <summary>The first 12 hex digits of an image ID, for file names.</summary>
+    public static string ShortHex(string imageId)
+    {
+        var hex = imageId.StartsWith("sha256:", StringComparison.Ordinal) ? imageId[7..] : imageId;
+        return hex.Length > 12 ? hex[..12] : hex;
     }
 
     public static string Short(string imageId)
         => imageId.StartsWith("sha256:", StringComparison.Ordinal) && imageId.Length > 19 ? imageId[..19] : imageId;
 
-    private static string Quote(string value) => "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+    /// <summary>A YAML double-quoted scalar (JSON string syntax is valid YAML).</summary>
+    private static string Quote(string value) => JsonSerializer.Serialize(value);
 }

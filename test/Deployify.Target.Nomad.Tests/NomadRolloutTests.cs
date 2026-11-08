@@ -122,7 +122,7 @@ public sealed class NomadRolloutTests
         nomad.Variable!["DB"].ShouldBe("old");
         var revert = nomad.Requests.Single(r => r.Path == "/v1/job/api/revert");
         Prop(JsonDocument.Parse(revert.Body).RootElement, "JobVersion").GetInt64().ShouldBe(4);
-        nomad.Requests.FindIndex(r => r.Method == "PUT" && r.Path.StartsWith("/v1/var/"))
+        nomad.Requests.FindIndex(r => r.Method == "PUT" && r.Path == "/v1/var/nomad/jobs/api")
             .ShouldBeLessThan(nomad.Requests.FindIndex(r => r.Path == "/v1/job/api/revert"));
     }
 
@@ -138,7 +138,58 @@ public sealed class NomadRolloutTests
 
         waitFor.ShouldBe("4");
         nomad.Requests.ShouldNotContain(r => r.Path == "/v1/job/api/revert");
-        nomad.Requests.ShouldNotContain(r => r.Method == "PUT");
+        nomad.Requests.ShouldNotContain(r => r.Method == "PUT" && r.Path == "/v1/var/nomad/jobs/api");
+    }
+
+    [Fact]
+    public async Task Capture_KeepsACopyOfTheSecretsInNomad_WhichALaterRollbackRestores()
+    {
+        using var nomad = new FakeNomadApi { JobVersion = 4, Variable = new() { ["DB"] = "old" } };
+        using var client = Client(nomad);
+
+        var snapshot = await new NomadRollout(NullLogger.Instance).CaptureAsync(client, "default", "api", Ct);
+        nomad.JobVersion = 5;
+        nomad.Variable = new() { ["DB"] = "new" };
+
+        // A new instance has nothing in memory, like `deployify rollback` in a later process.
+        var waitFor = await new NomadRollout(NullLogger.Instance).RestoreAsync(client, "default", snapshot, Ct);
+
+        snapshot.Data["secretsBackup"].ShouldBe("deployify/rollback/api/v4");
+        nomad.Vars["deployify/rollback/api/v4"]["DB"].ShouldBe("old");
+        nomad.Variable!["DB"].ShouldBe("old");
+        waitFor.ShouldBe("6");
+    }
+
+    [Fact]
+    public async Task Capture_KeepsOnlyTheNewestBackups()
+    {
+        using var nomad = new FakeNomadApi { JobVersion = 7, Variable = new() { ["DB"] = "x" } };
+        for (var v = 1; v <= 6; v++)
+        {
+            nomad.Vars[$"deployify/rollback/api/v{v}"] = new() { ["DB"] = $"v{v}" };
+        }
+
+        using var client = Client(nomad);
+        await new NomadRollout(NullLogger.Instance).CaptureAsync(client, "default", "api", Ct);
+
+        nomad.Vars.Keys.Where(k => k.StartsWith("deployify/rollback/api/")).Order().ToList()
+            .ShouldBe(["deployify/rollback/api/v3", "deployify/rollback/api/v4", "deployify/rollback/api/v5",
+                "deployify/rollback/api/v6", "deployify/rollback/api/v7"]);
+    }
+
+    [Fact]
+    public async Task LaterRollback_OfAJobThatHadNoSecrets_RemovesThem()
+    {
+        using var nomad = new FakeNomadApi { JobVersion = 4 };
+        using var client = Client(nomad);
+        var snapshot = await new NomadRollout(NullLogger.Instance).CaptureAsync(client, "default", "api", Ct);
+        nomad.JobVersion = 5;
+        nomad.Variable = new() { ["DB"] = "new" };
+
+        await new NomadRollout(NullLogger.Instance).RestoreAsync(client, "default", snapshot, Ct);
+
+        snapshot.Data["secretsBefore"].ShouldBe("none");
+        nomad.Variable.ShouldBeNull();
     }
 
     [Fact]
@@ -192,7 +243,29 @@ public sealed class NomadRolloutTests
 
         public bool JobExists { get; set; } = true;
         public long JobVersion { get; set; } = 1;
-        public Dictionary<string, string>? Variable { get; set; }
+
+        /// <summary>Every Nomad Variable, by path.</summary>
+        public Dictionary<string, Dictionary<string, string>> Vars { get; } = [];
+
+        /// <summary>The job's own secrets variable.</summary>
+        public Dictionary<string, string>? Variable
+        {
+            get => Vars.TryGetValue(JobVarPath, out var v) ? v : null;
+            set
+            {
+                if (value is null)
+                {
+                    Vars.Remove(JobVarPath);
+                }
+                else
+                {
+                    Vars[JobVarPath] = value;
+                }
+            }
+        }
+
+        private const string JobVarPath = "nomad/jobs/api";
+
         public List<(string Method, string Path, string Body)> Requests { get; } = [];
 
         public FakeNomadApi()
@@ -223,13 +296,14 @@ public sealed class NomadRolloutTests
                 using var reader = new StreamReader(ctx.Request.InputStream);
                 var body = await reader.ReadToEndAsync();
                 var method = ctx.Request.HttpMethod;
-                var path = ctx.Request.Url!.AbsolutePath;
+                var path = Uri.UnescapeDataString(ctx.Request.Url!.AbsolutePath);
+                var prefix = ctx.Request.QueryString["prefix"];
                 int status;
                 string response;
                 lock (_gate)
                 {
                     Requests.Add((method, path, body));
-                    (status, response) = Handle(method, path, body);
+                    (status, response) = Handle(method, path, body, prefix);
                 }
 
                 var bytes = Encoding.UTF8.GetBytes(response);
@@ -240,8 +314,34 @@ public sealed class NomadRolloutTests
             }
         }
 
-        private (int, string) Handle(string method, string path, string body)
+        private (int, string) Handle(string method, string path, string body, string? prefix)
         {
+            if (path == "/v1/vars" && method == "GET")
+            {
+                return (200, JsonSerializer.Serialize(
+                    Vars.Keys.Where(k => prefix is null || k.StartsWith(prefix, StringComparison.Ordinal))
+                        .Select(k => new { Path = k })));
+            }
+
+            if (path.StartsWith("/v1/var/", StringComparison.Ordinal))
+            {
+                var varPath = path["/v1/var/".Length..];
+                switch (method)
+                {
+                    case "GET":
+                        return Vars.TryGetValue(varPath, out var items)
+                            ? (200, JsonSerializer.Serialize(new { Path = varPath, Items = items }))
+                            : (404, "variable not found");
+                    case "PUT":
+                        Vars[varPath] = Prop(JsonDocument.Parse(body).RootElement, "Items").EnumerateObject()
+                            .ToDictionary(p => p.Name, p => p.Value.GetString() ?? "");
+                        return (200, body);
+                    case "DELETE":
+                        Vars.Remove(varPath);
+                        return (200, "");
+                }
+            }
+
             switch (method, path)
             {
                 case ("GET", "/v1/job/api"):
@@ -253,17 +353,6 @@ public sealed class NomadRolloutTests
                     return (200, "{\"EvalID\":\"e1\"}");
                 case ("DELETE", "/v1/job/api"):
                     return (200, "{\"EvalID\":\"e2\"}");
-                case ("GET", "/v1/var/nomad/jobs/api"):
-                    return Variable is null
-                        ? (404, "variable not found")
-                        : (200, JsonSerializer.Serialize(new { Path = "nomad/jobs/api", Items = Variable }));
-                case ("PUT", "/v1/var/nomad/jobs/api"):
-                    Variable = Prop(JsonDocument.Parse(body).RootElement, "Items").EnumerateObject()
-                        .ToDictionary(p => p.Name, p => p.Value.GetString() ?? "");
-                    return (200, body);
-                case ("DELETE", "/v1/var/nomad/jobs/api"):
-                    Variable = null;
-                    return (200, "");
                 default:
                     return (404, "not found");
             }

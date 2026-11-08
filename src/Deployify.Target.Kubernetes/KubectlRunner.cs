@@ -258,6 +258,29 @@ public sealed class KubectlRunner(KubernetesTargetConfig config, ILogger logger,
         }
     }
 
+    /// <summary>Names of the objects of one kind matching a label selector.</summary>
+    public async Task<IReadOnlyList<string>> ListNamesAsync(
+        string kind, string namespaceName, string selector, CancellationToken ct = default)
+    {
+        var result = await RunAsync(ct, "get", kind, "-n", namespaceName, "-l", selector,
+            "-o", "jsonpath={.items[*].metadata.name}");
+        if (!result.Ok)
+        {
+            throw new InvalidOperationException($"kubectl could not list {kind} in {namespaceName}: {result.Stderr.Trim()}");
+        }
+
+        return result.Stdout.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+
+    public async Task DeleteAsync(string kind, string namespaceName, string name, CancellationToken ct = default)
+    {
+        var result = await RunAsync(ct, "delete", kind, name, "-n", namespaceName, "--ignore-not-found");
+        if (!result.Ok)
+        {
+            throw new InvalidOperationException($"kubectl could not delete {kind} {namespaceName}/{name}: {result.Stderr.Trim()}");
+        }
+    }
+
     /// <summary>A ConfigMap's data, or null when it doesn't exist.</summary>
     public async Task<Dictionary<string, string>?> GetConfigMapDataAsync(
         string namespaceName, string name, CancellationToken ct = default)

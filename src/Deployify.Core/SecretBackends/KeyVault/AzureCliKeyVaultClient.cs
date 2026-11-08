@@ -39,6 +39,28 @@ public sealed class AzureCliKeyVaultClient(string? subscriptionId = null, IProce
     }
 
     /// <inheritdoc />
+    public async Task<KeyVaultSecret?> GetSecretVersionAsync(
+        string vaultName, string name, string version, CancellationToken ct = default)
+    {
+        // Output holds the secret value: it's parsed and wrapped, never logged.
+        var (exit, output) = await RunAsync(BuildArgs(
+            "keyvault", "secret", "show", "--vault-name", vaultName, "--name", name, "--version", version,
+            "--output", "json"), ct);
+        if (exit != 0)
+        {
+            if (output.Contains("SecretNotFound", StringComparison.Ordinal) ||
+                output.Contains("was not found", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            throw new InvalidOperationException($"Failed to read version {version} of Key Vault secret {name}: {FirstLine(output)}");
+        }
+
+        return ParseSecret(output);
+    }
+
+    /// <inheritdoc />
     public async Task<IReadOnlyList<KeyVaultSecretInfo>> ListSecretsAsync(string vaultName, CancellationToken ct = default)
     {
         var (exit, output) = await RunAsync(BuildArgs("keyvault", "secret", "list", "--vault-name", vaultName, "--output", "json"), ct);

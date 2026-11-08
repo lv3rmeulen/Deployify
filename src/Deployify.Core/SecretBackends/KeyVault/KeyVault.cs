@@ -23,6 +23,10 @@ public interface IKeyVaultClient
     /// <summary>Lists the vault's secrets: names and tags only.</summary>
     Task<IReadOnlyList<KeyVaultSecretInfo>> ListSecretsAsync(string vaultName, CancellationToken ct = default);
 
+    /// <summary>Reads one specific version of a secret, or null when it doesn't exist.</summary>
+    Task<KeyVaultSecret?> GetSecretVersionAsync(string vaultName, string name, string version, CancellationToken ct = default)
+        => throw new NotSupportedException("This Key Vault client can't read secret versions.");
+
     /// <summary>Writes a new version of a secret. Returns the version id.</summary>
     Task<string> SetSecretAsync(
         string vaultName, string name, string value, IReadOnlyDictionary<string, string> tags, CancellationToken ct = default);

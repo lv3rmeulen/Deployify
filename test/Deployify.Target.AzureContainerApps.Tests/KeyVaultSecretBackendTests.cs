@@ -36,8 +36,17 @@ internal sealed class FakeKeyVault : IKeyVaultClient
         Sets.Add(name);
         var version = $"v{++_version}";
         Secrets[name] = (value, version, new Dictionary<string, string>(tags));
+        History[(name, version)] = value;
         return Task.FromResult(version);
     }
+
+    /// <summary>Every version ever written, by name and version.</summary>
+    public Dictionary<(string Name, string Version), string> History { get; } = [];
+
+    public Task<KeyVaultSecret?> GetSecretVersionAsync(string vaultName, string name, string version, CancellationToken ct = default)
+        => Task.FromResult(History.TryGetValue((name, version), out var value)
+            ? new KeyVaultSecret(name, new SensitiveValue(value), version)
+            : null);
 }
 
 public sealed class KeyVaultSecretBackendTests

@@ -115,7 +115,9 @@ internal static class KubernetesRolloutHealth
     }
 
     /// <summary>A ConfigMap object for server-side apply, holding only <paramref name="data"/>.</summary>
-    public static string ConfigMapJson(string namespaceName, string name, IReadOnlyDictionary<string, string> data)
+    public static string ConfigMapJson(
+        string namespaceName, string name, IReadOnlyDictionary<string, string> data,
+        IReadOnlyDictionary<string, string>? labels = null)
     {
         var dataNode = new JsonObject();
         foreach (var (k, v) in data.OrderBy(kv => kv.Key, StringComparer.Ordinal))
@@ -123,11 +125,23 @@ internal static class KubernetesRolloutHealth
             dataNode[k] = v;
         }
 
+        var metadata = new JsonObject { ["name"] = name, ["namespace"] = namespaceName };
+        if (labels is not null)
+        {
+            var labelNode = new JsonObject();
+            foreach (var (k, v) in labels)
+            {
+                labelNode[k] = v;
+            }
+
+            metadata["labels"] = labelNode;
+        }
+
         return new JsonObject
         {
             ["apiVersion"] = "v1",
             ["kind"] = "ConfigMap",
-            ["metadata"] = new JsonObject { ["name"] = name, ["namespace"] = namespaceName },
+            ["metadata"] = metadata,
             ["data"] = dataNode
         }.ToJsonString();
     }

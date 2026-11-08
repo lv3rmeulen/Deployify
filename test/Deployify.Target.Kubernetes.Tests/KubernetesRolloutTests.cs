@@ -178,11 +178,51 @@ public sealed class KubernetesRolloutTests
         var undo = fake.Single("rollout", "undo").Args;
         undo.ShouldContain("--to-revision=3");
         undo.ShouldContain("test-api");
-        var applyConfig = fake.Calls.FindIndex(c => c.Args.Contains("--server-side"));
+        var applyConfig = fake.Calls.FindIndex(c => c.Args.Contains("--server-side") && c.Stdin!.Contains("\"name\":\"api-config\""));
         applyConfig.ShouldBeGreaterThanOrEqualTo(0);
         fake.Calls[applyConfig].Stdin!.ShouldContain("\"MODE\":\"old\"");
         applyConfig.ShouldBeLessThan(fake.Calls.FindIndex(c => c.Args.Contains("undo")));
         fake.Calls.ShouldNotContain(c => c.Args.Contains("scale"));
+    }
+
+    [Fact]
+    public async Task Capture_KeepsACopyOfTheConfigMapInTheNamespace()
+    {
+        var fake = new FakeProcessRunner()
+            .When(["get", "deployment", "api"], Ok(Deployment(7, 7, 3, 2, 2, 2, 2)))
+            .When(["get", "configmap", "api-config"], Ok("""{"data":{"MODE":"old"}}"""))
+            .When(["get", "configmap", "-n"], Ok(string.Join(' ', Enumerable.Range(1, 7).Select(g => $"api-config-rollback-g{g}"))));
+
+        var snap = await Target(fake).CaptureAsync(Fixtures.SingleService("api"), Fixtures.KubernetesConfig(), "api", Ct);
+
+        snap.Data["configBackup"].ShouldBe("api-config-rollback-g7");
+        var backup = fake.Calls.Single(c => c.Args.Contains("--server-side"));
+        backup.Stdin!.ShouldContain("\"name\":\"api-config-rollback-g7\"");
+        backup.Stdin!.ShouldContain("\"deployify/rollback-of\":\"api\"");
+        // Seven copies listed, five kept: the two oldest go.
+        fake.Calls.Where(c => c.Args.Contains("delete")).Select(c => c.Args[2])
+            .ShouldBe(["api-config-rollback-g2", "api-config-rollback-g1"]);
+    }
+
+    [Fact]
+    public async Task LaterRollback_RestoresTheConfigMapFromItsCopy()
+    {
+        var fake = new FakeProcessRunner()
+            .When(["get", "configmap", "api-config"], Ok("""{"data":{"MODE":"new"}}"""))
+            .When(["get", "configmap", "api-config-rollback-g7"], Ok("""{"data":{"MODE":"old"}}"""))
+            .When(["get", "deployment", "api"], Ok(Deployment(7, 7, 3, 2, 2, 2, 2)));
+        var snapshot = new ServiceSnapshot
+        {
+            ServiceName = "api", Existed = true, Revision = "7",
+            Data = new() { ["namespace"] = "test-api", ["configBackup"] = "api-config-rollback-g7" }
+        };
+
+        // A fresh target has nothing in memory, like `deployify rollback` in a later process.
+        await Target(fake).RestoreAsync(Fixtures.KubernetesConfig(), snapshot, Ct);
+
+        var restore = fake.Calls.Single(c => c.Args.Contains("--server-side"));
+        restore.Stdin!.ShouldContain("\"name\":\"api-config\"");
+        restore.Stdin!.ShouldContain("\"MODE\":\"old\"");
     }
 
     [Fact]

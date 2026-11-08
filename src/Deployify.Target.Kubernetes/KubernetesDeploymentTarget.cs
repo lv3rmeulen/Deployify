@@ -507,6 +507,8 @@ public sealed class KubernetesDeploymentTarget(
             data[RolloutRevisionKey] = rev.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
 
+        await BackUpConfigAsync(kubectl, svc.Namespace, service, status.Generation, configMap, secretCaptured, secret, data, ct);
+
         return new ServiceSnapshot
         {
             ServiceName = service,
@@ -587,7 +589,7 @@ public sealed class KubernetesDeploymentTarget(
         var service = snapshot.ServiceName;
         var ns = snapshot.Data.TryGetValue(NamespaceKey, out var n) ? n : KubernetesManifestGenerator.NamespaceFor(cfg, service);
 
-        await RestoreConfigAsync(kubectl, ns, service, ct);
+        await RestoreConfigAsync(kubectl, ns, snapshot, ct);
 
         var json = await kubectl.GetDeploymentJsonAsync(service, ns, ct);
         if (snapshot is not { Existed: true, Revision: { } revision })
@@ -633,11 +635,90 @@ public sealed class KubernetesDeploymentTarget(
         return generation.ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
 
-    private async Task RestoreConfigAsync(KubectlRunner kubectl, string ns, string service, CancellationToken ct)
+    private const string ConfigBackupKey = "configBackup";
+    private const string SecretBackupKey = "secretBackup";
+    private const string RollbackOfLabel = "deployify/rollback-of";
+
+    /// <summary>Copies kept per service and kind; older ones are deleted when a new one is written.</summary>
+    internal const int BackupsKept = 5;
+
+    /// <summary>
+    /// Keeps a copy of the ConfigMap and Secret in the service's own namespace
+    /// (<c>{service}-config-rollback-g{generation}</c>, <c>{service}-secrets-rollback-g{generation}</c>),
+    /// so a rollback in a later process can restore them. The journal records only their names.
+    /// A copy that can't be written is skipped with a warning.
+    /// </summary>
+    private async Task BackUpConfigAsync(
+        KubectlRunner kubectl, string ns, string service, long generation,
+        Dictionary<string, string>? configMap, bool secretCaptured, IReadOnlyDictionary<string, SensitiveValue>? secret,
+        Dictionary<string, string> data, CancellationToken ct)
     {
+        var gen = generation.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var labels = new Dictionary<string, string> { [RollbackOfLabel] = service, ["app.kubernetes.io/managed-by"] = "deployify" };
+        try
+        {
+            if (configMap is not null)
+            {
+                var name = $"{service}-config-rollback-g{gen}";
+                await kubectl.ServerSideApplyAsync(KubernetesRolloutHealth.ConfigMapJson(ns, name, configMap, labels), ct);
+                data[ConfigBackupKey] = name;
+                await PruneAsync(kubectl, "configmap", ns, service, ct);
+            }
+
+            if (secretCaptured && secret is not null)
+            {
+                var name = $"{service}-secrets-rollback-g{gen}";
+                await kubectl.ServerSideApplyAsync(KubernetesSecretManifest.Build(ns, name, secret, labels), ct);
+                data[SecretBackupKey] = name;
+                await PruneAsync(kubectl, "secret", ns, service, ct);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning("Could not keep a copy of the config of {Name} ({Message}); only a rollback in this run " +
+                              "will restore it.", service, ex.Message);
+        }
+    }
+
+    private static async Task PruneAsync(KubectlRunner kubectl, string kind, string ns, string service, CancellationToken ct)
+    {
+        var names = await kubectl.ListNamesAsync(kind, ns, $"{RollbackOfLabel}={service}", ct);
+        foreach (var old in names
+                     .OrderByDescending(n => long.TryParse(n[(n.LastIndexOf("-g", StringComparison.Ordinal) + 2)..],
+                         System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var g) ? g : -1)
+                     .Skip(BackupsKept))
+        {
+            await kubectl.DeleteAsync(kind, ns, old, ct);
+        }
+    }
+
+    private async Task RestoreConfigAsync(
+        KubectlRunner kubectl, string ns, ServiceSnapshot snapshot, CancellationToken ct)
+    {
+        var service = snapshot.ServiceName;
         if (!_configBefore.TryGetValue($"{ns}/{service}", out var before))
         {
-            return; // never captured (for example a rollback from a later process)
+            // A rollback from a later process: read the copies kept in the cluster.
+            Dictionary<string, string>? configMap = null;
+            IReadOnlyDictionary<string, SensitiveValue>? secret = null;
+            if (snapshot.Data.TryGetValue(ConfigBackupKey, out var configBackup))
+            {
+                configMap = await kubectl.GetConfigMapDataAsync(ns, configBackup, ct)
+                            ?? throw new InvalidOperationException($"The copy {ns}/{configBackup} is gone, so the ConfigMap can't be restored.");
+            }
+
+            if (snapshot.Data.TryGetValue(SecretBackupKey, out var secretBackup))
+            {
+                secret = await kubectl.GetSecretDataAsync(ns, secretBackup, ct)
+                         ?? throw new InvalidOperationException($"The copy {ns}/{secretBackup} is gone, so the Secret can't be restored.");
+            }
+
+            if (configMap is null && secret is null)
+            {
+                return; // nothing was captured
+            }
+
+            before = new CapturedConfig(configMap, secret is not null, secret);
         }
 
         var configMapName = $"{service}-config";

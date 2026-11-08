@@ -322,9 +322,58 @@ public sealed class ComposeDeploymentTarget(
         if (current.ConfigFiles is { } files)
         {
             data[ConfigFilesKey] = files;
+            if (current.Env is { } env && await BackUpEnvironmentAsync(files, service, current.ImageId, env, ct) is { } backup)
+            {
+                data[EnvBackupKey] = backup;
+            }
         }
 
         return new ServiceSnapshot { ServiceName = service, Existed = true, Revision = current.ImageId, Data = data };
+    }
+
+    private const string EnvBackupKey = "envBackup";
+    private const int EnvBackupsKept = 5;
+
+    /// <summary>
+    /// Saves the container's environment next to the compose files, in
+    /// <c>.deployify-rollback/{service}.{image}.json</c>, readable by the owner only like the
+    /// generated .env files, since it holds the same secrets. The journal records only the path.
+    /// </summary>
+    private async Task<string?> BackUpEnvironmentAsync(
+        string configFiles, string service, string imageId, IReadOnlyList<string> env, CancellationToken ct)
+    {
+        try
+        {
+            var first = configFiles.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)[0];
+            var dir = Path.Combine(Path.GetDirectoryName(first)!, ".deployify-rollback");
+            Directory.CreateDirectory(dir);
+            var path = Path.Combine(dir, $"{service}.{ComposeRolloutHealth.ShortHex(imageId)}.json");
+            await WriteOwnerOnlyAsync(path, JsonSerializer.Serialize(env), ct);
+
+            // Keep the newest few per service.
+            foreach (var old in new DirectoryInfo(dir).GetFiles($"{service}.*.json")
+                         .OrderByDescending(f => f.LastWriteTimeUtc).Skip(EnvBackupsKept))
+            {
+                old.Delete();
+            }
+
+            return path;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning("Could not save the environment of {Name} ({Message}); a rollback will restore its image only.",
+                service, ex.Message);
+            return null;
+        }
+    }
+
+    private static async Task WriteOwnerOnlyAsync(string path, string content, CancellationToken ct)
+    {
+        await File.WriteAllTextAsync(path, content, ct);
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
     }
 
     public async Task<AppliedRevision> ApplyServiceAsync(
@@ -404,8 +453,22 @@ public sealed class ComposeDeploymentTarget(
                 "so it can't be brought back up.");
         }
 
+        IReadOnlyList<string>? environment = null;
+        if (snapshot.Data.TryGetValue(EnvBackupKey, out var envBackup))
+        {
+            if (File.Exists(envBackup))
+            {
+                environment = JsonSerializer.Deserialize<List<string>>(await File.ReadAllTextAsync(envBackup, ct));
+            }
+            else
+            {
+                logger.LogWarning("The saved environment of {Name} ({Path}) is gone; restoring its image only.", service, envBackup);
+            }
+        }
+
+        // Owner-only: with the environment it holds the same secrets as the .env files.
         var overridePath = Path.Combine(Path.GetDirectoryName(files[0])!, $"rollback.{service}.override.yml");
-        await File.WriteAllTextAsync(overridePath, ComposeRolloutHealth.PinImageOverride(service, previous), ct);
+        await WriteOwnerOnlyAsync(overridePath, ComposeRolloutHealth.PinImageOverride(service, previous, environment), ct);
 
         var (ok, output) = await runner.UpServiceAsync([.. files, overridePath], service, Profiles(cfg), ct);
         if (!ok)

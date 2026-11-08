@@ -161,14 +161,19 @@ already point at the new image. The rollout warns when it sees a mutable tag.
 On ECS the deployment circuit breaker with rollback is turned on by default
 (`"deploymentCircuitBreaker": false` under `targetConfig.ecs` turns it off). When ECS reverts a
 service itself, Deployify waits for the old task definition to be healthy instead of rolling back
-a second time.
+a second time. Rolling back also puts the service's SSM parameters back: the journal records each
+parameter's version (never its value), and the rollback writes that version's value back as the
+newest version before the tasks restart. SSM keeps a parameter's last 100 versions.
 
 On Nomad, jobs get `auto_revert = true` in their update block by default (`"autoRevert": false`
 under `targetConfig.nomad` or `targetConfig.nomadconsul` turns it off). A revision is a job
 version; rolling back reverts the job, which Nomad registers as a new version, and Deployify waits
-for that one. Job secrets in Nomad Variables are put back too, but only within the same run: they
-are kept in memory, never in the journal, so `deployify rollback` later restores the job version
-but not its secrets. With Nomad + Consul, a service that registers a Consul check must also have a
+for that one. Job secrets in Nomad Variables are put back first. Nomad keeps no history of a
+variable, so before a rollout changes a job, Deployify copies its secrets to
+`deployify/rollback/<job>/v<version>` (a path the job's own tasks can't read; the newest 5 copies
+are kept) and the journal records only that path, which lets `deployify rollback` restore them
+later too. The Deployify token needs write access to `deployify/*` variables; without it, secrets
+are only restored by a rollback in the same run. With Nomad + Consul, a service that registers a Consul check must also have a
 passing instance in Consul before it counts as healthy.
 
 On Kubernetes, rollouts need `kubectl` (without it, `apply` uses the API fallback as before, with no
@@ -176,17 +181,22 @@ health gate). A service is healthy when its Deployment has caught up with the ch
 is updated and available, the same test `kubectl rollout status` uses; a Deployment that exceeds its
 progress deadline fails. Rolling back puts the service's ConfigMap and Secret back first, then runs
 `kubectl rollout undo` to the captured revision and restores the replica count; a Deployment that
-the rollout created is scaled to zero. Like Nomad's secrets, the ConfigMap and Secret are kept in
-memory only, so `deployify rollback` later restores the pod template and replicas but not them.
-Kubernetes keeps 10 old ReplicaSets by default (`revisionHistoryLimit`); older revisions can't be
+the rollout created is scaled to zero. So that a later `deployify rollback` can restore them too,
+the rollout keeps copies of the ConfigMap and Secret in the service's namespace
+(`<service>-config-rollback-g<generation>`, `<service>-secrets-rollback-g<generation>`, labelled
+`deployify/rollback-of=<service>`; the newest 5 are kept), and the journal records only their
+names. Key Vault–backed Secrets are managed by the CSI driver and aren't copied. Kubernetes keeps 10 old ReplicaSets by default (`revisionHistoryLimit`); older revisions can't be
 rolled back to.
 
 On Azure Container Apps, a revision is the Container Apps revision name. A revision is healthy once
 it is provisioned, active and running (scaled to zero counts), isn't reported unhealthy, and the
 app has made it its latest ready revision. Rolling back runs `az containerapp revision copy` from
 the captured revision, which creates a new revision with the old template, and waits for that one;
-an app the rollout created is deleted. App-level settings outside the revision template (ingress,
-secret definitions) are not rolled back. Without probes, Container Apps can only report whether
+an app the rollout created is deleted. With the Key Vault secret backend, the app's secrets are put
+back first: the journal records each secret's version (never its value), and the rollback writes
+that version's value back as the newest version, since apps reference secrets without a version.
+Other app-level settings outside the revision template (ingress, secret definitions) are not
+rolled back. Without probes, Container Apps can only report whether
 containers start, so add probes to get a meaningful gate.
 
 On Docker Compose, a revision is the image ID (`sha256:…`) the service's containers run, so a
@@ -198,7 +208,11 @@ run the new image, aren't restarting, and pass their healthcheck if they have on
 (`generateHealthChecks`); a container that exits, restarts twice or turns unhealthy fails the
 rollout. Rolling back brings the service back up from the same compose files with a small
 `rollback.<service>.override.yml` next to them that pins the old image ID; a service the rollout
-created has its containers removed. Environment changes are not rolled back, only the image.
+created has its containers removed. The environment comes back too: before changing a service,
+the rollout saves its container's environment to `.deployify-rollback/<service>.<image>.json` next
+to the compose files (owner-readable only, like the generated `.env` files, since it holds the same
+secrets; the newest 5 per service are kept), and the override replaces the service's environment
+with it. That uses Compose's `!override` tag, which needs Docker Compose 2.24.4 or later.
 
 ```bash
 deployify status                        # recent rollouts in this environment

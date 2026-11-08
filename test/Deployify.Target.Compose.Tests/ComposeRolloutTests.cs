@@ -29,7 +29,7 @@ public sealed class ComposeRolloutTests
         int restarts = 0, int exitCode = 0)
         => new("c1", image, status, health, restarts, exitCode, null);
 
-    private static string Inspect(string image, string? configFiles = null, string status = "running")
+    private static string Inspect(string image, string? configFiles = null, string status = "running", string[]? env = null)
     {
         var labels = new JsonObject { ["com.docker.compose.service"] = "api" };
         if (configFiles is not null)
@@ -43,7 +43,11 @@ public sealed class ComposeRolloutTests
             ["Image"] = image,
             ["RestartCount"] = 0,
             ["State"] = new JsonObject { ["Status"] = status, ["ExitCode"] = 0 },
-            ["Config"] = new JsonObject { ["Labels"] = labels }
+            ["Config"] = new JsonObject
+            {
+                ["Labels"] = labels,
+                ["Env"] = env is null ? null : new JsonArray([.. env.Select(e => (JsonNode?)JsonValue.Create(e))])
+            }
         }).ToJsonString();
     }
 
@@ -142,6 +146,31 @@ public sealed class ComposeRolloutTests
         var up = fake.Single("up", "-d", "--no-deps", "api").Args.ToList();
         up[up.IndexOf("-f") + 1].ShouldBe(composeFile);
         up[up.LastIndexOf("-f") + 1].ShouldBe(overridePath);
+    }
+
+    [Fact]
+    public async Task CaptureThenRestore_BringsTheOldEnvironmentBack()
+    {
+        using var dir = new TempDir();
+        var composeFile = Path.Combine(dir.Path, "compose.yml");
+        await File.WriteAllTextAsync(composeFile, "services: {}", Ct);
+        var fake = new FakeProcessRunner()
+            .When(["ps", "-a", "-q"], Ok("c1\n"))
+            .When(["inspect", "c1"], Ok(Inspect(Old, composeFile, env: ["MODE=old", "PRICE=$5", "EMPTY="])));
+        var target = Target(fake);
+
+        var snap = await target.CaptureAsync(Fixtures.SingleService("api"), Fixtures.ComposeConfig(), "api", Ct);
+        fake.When(["inspect", "c1"], Ok(Inspect(New, composeFile, env: ["MODE=new"])));
+        await target.RestoreAsync(Fixtures.ComposeConfig(), snap, Ct);
+
+        File.Exists(snap.Data["envBackup"]).ShouldBeTrue();
+        Path.GetDirectoryName(snap.Data["envBackup"]).ShouldBe(Path.Combine(dir.Path, ".deployify-rollback"));
+        var pinned = await File.ReadAllTextAsync(Path.Combine(dir.Path, "rollback.api.override.yml"), Ct);
+        pinned.ShouldContain("environment: !override");
+        pinned.ShouldContain("\"MODE\": \"old\"");
+        pinned.ShouldContain("\"PRICE\": \"$$5\"");   // not interpolated by Compose
+        pinned.ShouldContain("\"EMPTY\": \"\"");
+        pinned.ShouldNotContain("new");
     }
 
     [Fact]
