@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -8,6 +9,7 @@ using System.Threading.Tasks;
 using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
+using Deployify.Core.Processes;
 using Deployify.Core.SecretBackends;
 using Microsoft.Extensions.Logging;
 
@@ -30,9 +32,23 @@ namespace Deployify.Target.AwsEcs;
 /// </summary>
 public sealed class EcsDeploymentTarget(
     IPublisher publisher,
-    ILogger<EcsDeploymentTarget> logger) : IDeploymentTarget, ISecretStoreProvider
+    ILogger<EcsDeploymentTarget> logger) : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget
 {
     private readonly EcsTaskDefinitionGenerator _generator = new();
+
+    /// <summary>Process runner for the aws CLI; tests swap in a fake.</summary>
+    internal IProcessRunner? Runner { get; init; }
+
+    private EcsCliClient ClientFor(EcsTargetConfig cfg, IEnumerable<EcsService>? services = null)
+    {
+        var client = new EcsCliClient(cfg, logger, Runner);
+        foreach (var svc in services ?? Enumerable.Empty<EcsService>())
+        {
+            client.ServicePorts[svc.Name] = [.. svc.PortMappings.Select(p => (p.Name, p.ContainerPort))];
+        }
+
+        return client;
+    }
 
     // ── Secrets ───────────────────────────────────────────────────────────────
 
@@ -84,7 +100,7 @@ public sealed class EcsDeploymentTarget(
         }
 
         var cfg = GetConfig(config);
-        var client = new EcsCliClient(cfg, logger);
+        var client = ClientFor(cfg);
         return await client.PingAsync(ct);
     }
 
@@ -118,7 +134,7 @@ public sealed class EcsDeploymentTarget(
         var cfg = GetConfig(config);
         var services = _generator.Generate(manifest, config, cfg);
         var results = new List<ValidationResult>();
-        var client = new EcsCliClient(cfg, logger);
+        var client = ClientFor(cfg);
 
         foreach (var svc in services)
         {
@@ -148,7 +164,7 @@ public sealed class EcsDeploymentTarget(
         }
 
         var desired = services.Select(s => s.Name).ToHashSet();
-        var client = new EcsCliClient(cfg, logger);
+        var client = ClientFor(cfg);
         HashSet<string> running;
         try
         {
@@ -178,64 +194,151 @@ public sealed class EcsDeploymentTarget(
     {
         var cfg = GetConfig(config);
         var services = _generator.Generate(manifest, config, cfg);
-        var client = new EcsCliClient(cfg, logger);
-        foreach (var svc in services)
-        {
-            client.ServicePorts[svc.Name] = [.. svc.PortMappings.Select(p => (p.Name, p.ContainerPort))];
-        }
-
+        var client = ClientFor(cfg, services);
         var results = new List<DeploymentResult>();
 
         foreach (var svc in services)
         {
-            var taskDefPath = Path.Combine(outputDirectory, $"{svc.Name}.taskdef.json");
-            if (!File.Exists(taskDefPath))
-            {
-                results.Add(new DeploymentResult
-                {
-                    ServiceName = svc.Name,
-                    Success = false,
-                    Error = $"Task definition not found: {taskDefPath}. Run 'deployify plan' first."
-                });
-                continue;
-            }
-
-            try
-            {
-                await SyncSecretsAsync(svc, config, cfg, client, ct);
-
-                var taskDefArn = await client.RegisterTaskDefinitionAsync(taskDefPath, ct);
-                logger.LogInformation("Registered task definition: {Arn}", taskDefArn);
-
-                var serviceArn = await client.UpsertServiceAsync(
-                    svc.Name, taskDefArn, svc.DesiredCount, ct);
-
-                if (cfg.WaitForStable)
-                {
-                    await client.WaitForStableAsync(svc.Name, ct);
-                }
-
-                results.Add(new DeploymentResult
-                {
-                    ServiceName = svc.Name,
-                    DeploymentId = serviceArn,
-                    Success = true
-                });
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Failed to deploy ECS service '{Name}'.", svc.Name);
-                results.Add(new DeploymentResult
-                {
-                    ServiceName = svc.Name,
-                    Success = false,
-                    Error = ex.Message
-                });
-            }
+            var (result, _) = await ApplyOneAsync(svc, config, cfg, client, outputDirectory, cfg.WaitForStable, ct);
+            results.Add(result);
         }
 
         return results;
     }
+
+    /// <summary>Registers the task definition and creates or updates one service.</summary>
+    private async Task<(DeploymentResult Result, string? TaskDefinitionArn)> ApplyOneAsync(
+        EcsService svc, EnvironmentConfig config, EcsTargetConfig cfg, EcsCliClient client,
+        string outputDirectory, bool waitForStable, CancellationToken ct)
+    {
+        var taskDefPath = Path.Combine(outputDirectory, $"{svc.Name}.taskdef.json");
+        if (!File.Exists(taskDefPath))
+        {
+            return (new DeploymentResult
+            {
+                ServiceName = svc.Name,
+                Success = false,
+                Error = $"Task definition not found: {taskDefPath}. Run 'deployify plan' first."
+            }, null);
+        }
+
+        string? taskDefArn = null;
+        try
+        {
+            await SyncSecretsAsync(svc, config, cfg, client, ct);
+
+            taskDefArn = await client.RegisterTaskDefinitionAsync(taskDefPath, ct);
+            logger.LogInformation("Registered task definition: {Arn}", taskDefArn);
+
+            var serviceArn = await client.UpsertServiceAsync(
+                svc.Name, taskDefArn, svc.DesiredCount, ct);
+
+            if (waitForStable)
+            {
+                await client.WaitForStableAsync(svc.Name, ct);
+            }
+
+            return (new DeploymentResult
+            {
+                ServiceName = svc.Name,
+                DeploymentId = serviceArn,
+                Success = true
+            }, taskDefArn);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to deploy ECS service '{Name}'.", svc.Name);
+            return (new DeploymentResult
+            {
+                ServiceName = svc.Name,
+                Success = false,
+                Error = ex.Message
+            }, taskDefArn);
+        }
+    }
+
+    // ── Rollout (health-gated apply) ──────────────────────────────────────────
+
+    public async Task<ServiceSnapshot> CaptureAsync(
+        AspireManifest manifest, EnvironmentConfig config, string service, CancellationToken ct = default)
+    {
+        var status = await ClientFor(GetConfig(config)).DescribeServiceAsync(service, ct);
+        if (status is null || status.Status == "INACTIVE" || status.TaskDefinition is null)
+        {
+            return new ServiceSnapshot { ServiceName = service, Existed = false };
+        }
+
+        return new ServiceSnapshot
+        {
+            ServiceName = service,
+            Existed = true,
+            Revision = status.TaskDefinition,
+            Data = new Dictionary<string, string>
+            {
+                [DesiredCountKey] = status.DesiredCount.ToString(CultureInfo.InvariantCulture)
+            }
+        };
+    }
+
+    public async Task<AppliedRevision> ApplyServiceAsync(
+        AspireManifest manifest, EnvironmentConfig config, string outputDirectory, string service,
+        CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var services = _generator.Generate(manifest, config, cfg);
+        var svc = services.FirstOrDefault(s => s.Name == service);
+        if (svc is null)
+        {
+            return new AppliedRevision { ServiceName = service, Success = false, Error = "not an ECS service in this manifest" };
+        }
+
+        // The rollout engine does its own health gate, so don't block on services-stable here.
+        var (result, taskDefArn) = await ApplyOneAsync(
+            svc, config, cfg, ClientFor(cfg, services), outputDirectory, waitForStable: false, ct);
+        return new AppliedRevision
+        {
+            ServiceName = service,
+            Success = result.Success,
+            Revision = taskDefArn,
+            Error = result.Error
+        };
+    }
+
+    public async Task<HealthObservation> ObserveAsync(
+        EnvironmentConfig config, string service, string revision, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var status = await ClientFor(cfg).DescribeServiceAsync(service, ct);
+        return EcsRolloutHealth.Evaluate(status, revision, cfg.DeploymentCircuitBreaker);
+    }
+
+    public async Task RestoreAsync(EnvironmentConfig config, ServiceSnapshot snapshot, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var client = ClientFor(cfg);
+
+        if (snapshot is { Existed: true, Revision: { } previous })
+        {
+            var count = snapshot.Data.TryGetValue(DesiredCountKey, out var raw) &&
+                        int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n)
+                ? n
+                : cfg.DefaultDesiredCount;
+            await client.RestoreServiceAsync(snapshot.ServiceName, previous, count, ct);
+            logger.LogInformation("Rolled {Name} back to {Arn}.", snapshot.ServiceName, previous);
+            return;
+        }
+
+        // A service this rollout created has nothing to go back to: stop its tasks.
+        if (await client.DescribeServiceAsync(snapshot.ServiceName, ct) is { Status: not "INACTIVE" })
+        {
+            await client.ScaleServiceAsync(snapshot.ServiceName, 0, ct);
+            logger.LogInformation("Scaled new service {Name} to zero.", snapshot.ServiceName);
+        }
+    }
+
+    public bool HasNativeRollback(EnvironmentConfig config) => GetConfig(config).DeploymentCircuitBreaker;
+
+    private const string DesiredCountKey = "desiredCount";
 
     // ── Publish ───────────────────────────────────────────────────────────────
 
@@ -302,7 +405,7 @@ public sealed class EcsDeploymentTarget(
     {
         var cfg = GetConfig(config);
         var services = _generator.Generate(manifest, config, cfg);
-        var client = new EcsCliClient(cfg, logger);
+        var client = ClientFor(cfg);
         var entries = new List<DiffEntry>();
 
         HashSet<string> running;

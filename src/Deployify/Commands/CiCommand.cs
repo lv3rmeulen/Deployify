@@ -18,7 +18,8 @@ namespace Deployify.Commands;
 ///   3. plan — diff local artifacts against the live cluster
 ///   4. apply — deploy to the target (skippable with --skip-apply)
 ///
-/// Any step failure aborts the pipeline and exits non-zero.
+/// Any step failure aborts the pipeline and exits non-zero. With a health-gated rollout the
+/// exit code tells what happened: 1 failed, 2 failed and rolled back, 3 rollback incomplete.
 /// </summary>
 public static class CiCommand
 {
@@ -54,6 +55,7 @@ public static class CiCommand
         cmd.Options.Add(skipApply);
         cmd.Options.Add(failOnChanges);
         cmd.Options.Add(autoApprove);
+        RolloutCli.AddTo(cmd);
 
         cmd.SetAction(async (parseResult, ct) =>
         {
@@ -165,6 +167,35 @@ public static class CiCommand
             {
                 AnsiConsole.MarkupLine("[yellow]Apply cancelled.[/]");
                 return 0;
+            }
+            else if (RolloutCli.Resolve(parseResult, target) is { } gated)
+            {
+                AnsiConsole.MarkupLine("[bold] 4/4 Apply (health-gated)[/]");
+                try
+                {
+                    await resolved.SaveGeneratedSecretsAsync(ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    AnsiConsole.MarkupLineInterpolated($"[red] {ex.Message}[/]");
+                    return 1;
+                }
+
+                var rolloutResult = await RolloutCli.RunAsync(
+                    resolved, gated, manifest, outputDir, RolloutCli.ReadOptions(parseResult), ct);
+                try
+                {
+                    await resolved.SaveSecretReferencesAsync(CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    AnsiConsole.MarkupLineInterpolated($"[yellow]![/] Could not record secret references: {ex.Message}");
+                }
+
+                if (rolloutResult.ExitCode != 0)
+                {
+                    return rolloutResult.ExitCode;
+                }
             }
             else if (!await StepAsync("4/4 Apply", async stepCt =>
             {

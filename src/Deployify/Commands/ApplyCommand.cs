@@ -2,6 +2,7 @@ using System;
 using System.CommandLine;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using Spectre.Console;
 
 namespace Deployify.Commands;
@@ -22,6 +23,7 @@ public static class ApplyCommand
         cmd.Options.Add(GlobalOptions.Target);
         cmd.Options.Add(GlobalOptions.DryRun);
         cmd.Options.Add(autoApprove);
+        RolloutCli.AddTo(cmd);
 
         cmd.SetAction(async (parseResult, ct) =>
         {
@@ -91,6 +93,24 @@ public static class ApplyCommand
             {
                 AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {ex.Message}");
                 return 1;
+            }
+
+            if (RolloutCli.Resolve(parseResult, target) is { } rollout)
+            {
+                var rolloutResult = await RolloutCli.RunAsync(
+                    resolved, rollout, manifest, outputDir, RolloutCli.ReadOptions(parseResult), ct);
+
+                // Not cancellable: a cancelled rollout has still changed (and maybe restored) secrets.
+                try
+                {
+                    await resolved.SaveSecretReferencesAsync(CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    AnsiConsole.MarkupLineInterpolated($"[yellow]![/] Could not record secret references: {ex.Message}");
+                }
+
+                return rolloutResult.ExitCode;
             }
 
             var results = await target.ApplyAsync(manifest, config, outputDir, ct);

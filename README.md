@@ -133,6 +133,36 @@ deployify apply --env prod --auto-approve
 deployify apply --dry-run               # generate + plan only, no changes applied
 ```
 
+#### Health-gated rollouts
+
+On targets that support it (currently **AWS ECS**), `apply` and `ci` deploy services in
+dependency order, one wave at a time, and wait for each wave to become healthy before moving on.
+If a service fails, doesn't become healthy within the timeout, or the run is cancelled with
+Ctrl+C, every service the rollout touched is put back on the revision it ran before, in reverse
+order, and each restored service is checked for health again.
+
+```bash
+deployify apply --auto-approve --health-timeout 300   # seconds per service (default 600)
+deployify apply --auto-approve --no-rollback          # gate on health, leave a failure in place
+deployify apply --auto-approve --no-health-gate       # old behaviour: deploy and return
+deployify apply --auto-approve --rollback-timeout 600 # budget for the whole rollback (default 900)
+```
+
+Exit codes: `0` healthy, `1` failed (nothing rolled back), `2` failed and rolled back,
+`3` failed and the rollback did not complete — check the services listed in the output.
+
+Every rollout writes a journal to `.deployify/rollouts/<id>.json` next to `deployify-state.json`
+with what ran before, what was deployed and what happened; a lock file there stops two rollouts
+to the same environment from running at once. Add `.deployify/` to your `.gitignore`.
+
+Use a unique image tag per release: with `latest`, a rollback re-deploys the same tag, which may
+already point at the new image. The rollout warns when it sees a mutable tag.
+
+On ECS the deployment circuit breaker with rollback is turned on by default
+(`"deploymentCircuitBreaker": false` under `targetConfig.ecs` turns it off). When ECS reverts a
+service itself, Deployify waits for the old task definition to be healthy instead of rolling back
+a second time.
+
 ### `package`
 
 Zips the published build output for each project service and uploads it to the configured artifact store. Only applicable for Nomad `RawExec` deployments.

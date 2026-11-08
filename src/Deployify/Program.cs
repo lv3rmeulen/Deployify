@@ -1,3 +1,4 @@
+using System;
 using System.CommandLine;
 using Deployify.Commands;
 
@@ -18,4 +19,9 @@ var root = new RootCommand("deployify – deploy .NET Aspire AppHost projects to
     DiffCommand.Build(),
 };
 
-return await root.Parse(args).InvokeAsync();
+// Ctrl+C cancels the running command's token. The default gives a command two seconds to
+// stop before the process is killed, which would cut a rollback short; give it time instead.
+return await root.Parse(args).InvokeAsync(new InvocationConfiguration
+{
+    ProcessTerminationTimeout = TimeSpan.FromMinutes(30)
+});

@@ -1,0 +1,104 @@
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Deployify.Core.Models;
+
+namespace Deployify.Core.Interfaces;
+
+/// <summary>
+/// Optional capability of an <see cref="IDeploymentTarget"/>: deploy one service at a time,
+/// report whether it became healthy, and put back what ran before. A target that implements
+/// it gets health-gated rollouts with automatic rollback from <c>RolloutEngine</c>; the engine
+/// owns ordering, polling, timeouts and the verdict, the target only talks to its platform.
+/// </summary>
+public interface IRolloutTarget
+{
+    /// <summary>
+    /// Records what is running for <paramref name="service"/> right now, before anything is
+    /// changed. The snapshot is written to the rollout journal, so it must never hold a secret
+    /// value: store references (an ARN, a job version, an image digest), not contents.
+    /// </summary>
+    Task<ServiceSnapshot> CaptureAsync(
+        AspireManifest manifest, EnvironmentConfig config, string service, CancellationToken ct = default);
+
+    /// <summary>
+    /// Deploys one service from the artifacts plan wrote, without waiting for it to become
+    /// healthy. Returns the revision that was deployed, which <see cref="ObserveAsync"/> then
+    /// watches.
+    /// </summary>
+    Task<AppliedRevision> ApplyServiceAsync(
+        AspireManifest manifest, EnvironmentConfig config, string outputDirectory, string service,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Takes one look at <paramref name="revision"/> of <paramref name="service"/>. It must not
+    /// block or poll: the engine calls it repeatedly and applies its own timeouts.
+    /// </summary>
+    Task<HealthObservation> ObserveAsync(
+        EnvironmentConfig config, string service, string revision, CancellationToken ct = default);
+
+    /// <summary>
+    /// Puts the service back the way <paramref name="snapshot"/> recorded it. For a service that
+    /// did not exist before, the target decides what "back" means (for example scaling it to zero).
+    /// Must be safe to call more than once.
+    /// </summary>
+    Task RestoreAsync(EnvironmentConfig config, ServiceSnapshot snapshot, CancellationToken ct = default);
+
+    /// <summary>
+    /// True when the platform reverts a failed deployment by itself (ECS deployment circuit
+    /// breaker, Nomad <c>auto_revert</c>). The engine then waits for the platform instead of
+    /// restoring a second time.
+    /// </summary>
+    bool HasNativeRollback(EnvironmentConfig config);
+}
+
+/// <summary>What ran for one service before a rollout touched it.</summary>
+public sealed class ServiceSnapshot
+{
+    public string ServiceName { get; init; } = string.Empty;
+
+    /// <summary>False when the service did not exist yet, so there is nothing to go back to.</summary>
+    public bool Existed { get; init; }
+
+    /// <summary>The running revision (task definition ARN, job version, …), or null when none.</summary>
+    public string? Revision { get; init; }
+
+    /// <summary>Anything else the target needs to restore, such as the desired count. No secrets.</summary>
+    public Dictionary<string, string> Data { get; init; } = [];
+}
+
+/// <summary>The result of deploying one service.</summary>
+public sealed class AppliedRevision
+{
+    public string ServiceName { get; init; } = string.Empty;
+    public bool Success { get; init; }
+
+    /// <summary>The revision now rolling out, which the health gate watches.</summary>
+    public string? Revision { get; init; }
+
+    public string? Error { get; init; }
+}
+
+public enum HealthState
+{
+    /// <summary>Still rolling out; look again later.</summary>
+    Progressing,
+
+    /// <summary>The revision is serving and stable.</summary>
+    Healthy,
+
+    /// <summary>The revision will not become healthy; roll back.</summary>
+    Failed,
+
+    /// <summary>The platform already reverted to an earlier revision on its own.</summary>
+    RevertedByPlatform
+}
+
+/// <summary>One look at a revision's health, with a short human-readable reason.</summary>
+public sealed record HealthObservation(HealthState State, string? Detail = null)
+{
+    public static HealthObservation Progressing(string? detail = null) => new(HealthState.Progressing, detail);
+    public static HealthObservation Healthy(string? detail = null) => new(HealthState.Healthy, detail);
+    public static HealthObservation Failed(string detail) => new(HealthState.Failed, detail);
+    public static HealthObservation Reverted(string detail) => new(HealthState.RevertedByPlatform, detail);
+}

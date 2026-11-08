@@ -81,6 +81,14 @@ public sealed class EcsTargetConfig
     /// </summary>
     public bool WaitForStable { get; set; } = true;
 
+    /// <summary>
+    /// Turns on the ECS deployment circuit breaker with rollback for every service, so ECS
+    /// itself goes back to the last working task definition when a deployment's tasks keep
+    /// failing. Deployify's health-gated rollout notices that and doesn't roll back twice.
+    /// Defaults to true.
+    /// </summary>
+    public bool DeploymentCircuitBreaker { get; set; } = true;
+
     /// <summary>Base port for services whose Aspire bindings carry no port.</summary>
     public int BasePort { get; set; } = 8080;
 

@@ -291,7 +291,48 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger, IProces
         }
     }
 
+    // ── Rollout ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Describes one service with its deployments. Returns null when the service doesn't exist;
+    /// throws when ECS can't be asked, so "unreachable" is never mistaken for "new service".
+    /// </summary>
+    public async Task<EcsServiceStatus?> DescribeServiceAsync(string serviceName, CancellationToken ct = default)
+    {
+        var (exit, output) = await RunAsync(BuildArgs(
+            "ecs", "describe-services", "--cluster", config.ClusterName, "--services", serviceName, "--output", "json"), ct);
+        if (exit != 0)
+        {
+            throw new InvalidOperationException($"Failed to describe ECS service '{serviceName}': {output.Trim()}");
+        }
+
+        return EcsServiceStatus.Parse(output);
+    }
+
+    /// <summary>Points the service back at <paramref name="taskDefinitionArn"/> with the given task count.</summary>
+    public Task<string> RestoreServiceAsync(
+        string serviceName, string taskDefinitionArn, int desiredCount, CancellationToken ct = default)
+        => UpdateServiceAsync(serviceName, taskDefinitionArn, desiredCount, ct);
+
+    /// <summary>Changes only the number of tasks, e.g. to take a new service out of service.</summary>
+    public async Task ScaleServiceAsync(string serviceName, int desiredCount, CancellationToken ct = default)
+    {
+        var (exit, output) = await RunAsync(BuildArgs(
+            "ecs", "update-service", "--cluster", config.ClusterName, "--service", serviceName,
+            "--desired-count", desiredCount.ToString(CultureInfo.InvariantCulture), "--output", "json"), ct);
+        if (exit != 0)
+        {
+            throw new InvalidOperationException($"Failed to scale ECS service '{serviceName}': {output.Trim()}");
+        }
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    private string[] CircuitBreakerArgs()
+        => config.DeploymentCircuitBreaker
+            ? ["--deployment-configuration", "deploymentCircuitBreaker={enable=true,rollback=true}"]
+            : [];
+
 
     private async Task<string> CreateServiceAsync(
         string serviceName, string taskDefinitionArn, int desiredCount, CancellationToken ct)
@@ -309,6 +350,7 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger, IProces
             "--launch-type", launchType,
             "--network-configuration", networkConfig,
             .. await ServiceConnectArgsAsync(serviceName, ct),
+            .. CircuitBreakerArgs(),
             "--output", "json"
         ]);
 
@@ -333,6 +375,7 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger, IProces
             "--task-definition", taskDefinitionArn,
             "--desired-count", desiredCount.ToString(CultureInfo.InvariantCulture),
             .. await ServiceConnectArgsAsync(serviceName, ct),
+            .. CircuitBreakerArgs(),
             "--output", "json"
         ]);
 
