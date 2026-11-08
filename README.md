@@ -135,7 +135,7 @@ deployify apply --dry-run               # generate + plan only, no changes appli
 
 #### Health-gated rollouts
 
-On targets that support it (**AWS ECS**, **Nomad** and **Nomad + Consul**), `apply` and `ci` deploy services in
+On targets that support it (**AWS ECS**, **Nomad**, **Nomad + Consul** and **Kubernetes**), `apply` and `ci` deploy services in
 dependency order, one wave at a time, and wait for each wave to become healthy before moving on.
 If a service fails, doesn't become healthy within the timeout, or the run is cancelled with
 Ctrl+C, every service the rollout touched is put back on the revision it ran before, in reverse
@@ -170,6 +170,16 @@ for that one. Job secrets in Nomad Variables are put back too, but only within t
 are kept in memory, never in the journal, so `deployify rollback` later restores the job version
 but not its secrets. With Nomad + Consul, a service that registers a Consul check must also have a
 passing instance in Consul before it counts as healthy.
+
+On Kubernetes, rollouts need `kubectl` (without it, `apply` uses the API fallback as before, with no
+health gate). A service is healthy when its Deployment has caught up with the change and every pod
+is updated and available, the same test `kubectl rollout status` uses; a Deployment that exceeds its
+progress deadline fails. Rolling back puts the service's ConfigMap and Secret back first, then runs
+`kubectl rollout undo` to the captured revision and restores the replica count; a Deployment that
+the rollout created is scaled to zero. Like Nomad's secrets, the ConfigMap and Secret are kept in
+memory only, so `deployify rollback` later restores the pod template and replicas but not them.
+Kubernetes keeps 10 old ReplicaSets by default (`revisionHistoryLimit`); older revisions can't be
+rolled back to.
 
 ```bash
 deployify status                        # recent rollouts in this environment

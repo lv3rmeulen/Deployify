@@ -168,7 +168,7 @@ public static class CiCommand
                 AnsiConsole.MarkupLine("[yellow]Apply cancelled.[/]");
                 return 0;
             }
-            else if (RolloutCli.Resolve(parseResult, target) is { } gated)
+            else if (await RolloutCli.ResolveAsync(parseResult, target, config, ct) is { } gated)
             {
                 AnsiConsole.MarkupLine("[bold] 4/4 Apply (health-gated)[/]");
                 try

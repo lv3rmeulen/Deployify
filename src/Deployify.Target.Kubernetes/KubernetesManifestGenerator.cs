@@ -202,7 +202,7 @@ public sealed class KubernetesManifestGenerator
     /// <summary>Placeholders from the last <see cref="Generate"/> call that could not be resolved.</summary>
     public IReadOnlyList<string> Unresolved { get; private set; } = [];
 
-    private static string NamespaceFor(KubernetesTargetConfig cfg, string service)
+    internal static string NamespaceFor(KubernetesTargetConfig cfg, string service)
         => $"{cfg.NamespacePrefix}-{service}";
 
     /// <summary>Kubernetes port names: max 15 chars, lowercase alphanumerics and '-'.</summary>

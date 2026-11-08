@@ -50,24 +50,32 @@ internal static class RolloutCli
     }
 
     /// <summary>
-    /// The rollout capability of <paramref name="target"/>, or null when it has none or the
-    /// health gate is switched off. Says so on the console when the target can't do it.
+    /// The rollout capability of <paramref name="target"/>, or null when it has none, can't run
+    /// here, or the health gate is switched off. Says so on the console when the target can't do it.
     /// </summary>
-    public static IRolloutTarget? Resolve(ParseResult parseResult, IDeploymentTarget target)
+    public static async Task<IRolloutTarget?> ResolveAsync(
+        ParseResult parseResult, IDeploymentTarget target, EnvironmentConfig config, CancellationToken ct)
     {
         if (parseResult.GetValue(NoHealthGate))
         {
             return null;
         }
 
-        if (target is IRolloutTarget rollout)
+        if (target is not IRolloutTarget rollout)
         {
-            return rollout;
+            AnsiConsole.MarkupLineInterpolated(
+                $"[dim]{target.DisplayName} has no health-gated rollout yet: deploying without health checks or automatic rollback.[/]");
+            return null;
         }
 
-        AnsiConsole.MarkupLineInterpolated(
-            $"[dim]{target.DisplayName} has no health-gated rollout yet: deploying without health checks or automatic rollback.[/]");
-        return null;
+        if (await rollout.GetUnavailableReasonAsync(config, ct) is { } reason)
+        {
+            AnsiConsole.MarkupLineInterpolated(
+                $"[yellow]![/] No health-gated rollout: {reason}. Deploying without health checks or automatic rollback.");
+            return null;
+        }
+
+        return rollout;
     }
 
     public static RolloutOptions ReadOptions(ParseResult parseResult) => new()

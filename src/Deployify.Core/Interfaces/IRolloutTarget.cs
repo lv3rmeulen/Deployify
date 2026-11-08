@@ -53,6 +53,13 @@ public interface IRolloutTarget
     /// restoring a second time.
     /// </summary>
     bool HasNativeRollback(EnvironmentConfig config);
+
+    /// <summary>
+    /// Why a health-gated rollout can't run in this environment right now (for example a CLI it
+    /// needs is missing), or null when it can. The caller then deploys the plain way.
+    /// </summary>
+    Task<string?> GetUnavailableReasonAsync(EnvironmentConfig config, CancellationToken ct = default)
+        => Task.FromResult<string?>(null);
 }
 
 /// <summary>What ran for one service before a rollout touched it.</summary>

@@ -219,6 +219,73 @@ public sealed class KubectlRunner(KubernetesTargetConfig config, ILogger logger,
         return result.ExitCode == 0;
     }
 
+    // ── Rollout ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The deployment as JSON, or null when it (or its namespace) doesn't exist. Throws when
+    /// kubectl can't ask the cluster, so "unreachable" is never taken for "new service".
+    /// </summary>
+    public async Task<string?> GetDeploymentJsonAsync(string name, string namespaceName, CancellationToken ct = default)
+    {
+        var result = await RunAsync(ct, "get", "deployment", name, "-n", namespaceName, "-o", "json", "--ignore-not-found");
+        if (!result.Ok)
+        {
+            throw new InvalidOperationException($"kubectl could not read deployment {namespaceName}/{name}: {result.Stderr.Trim()}");
+        }
+
+        return string.IsNullOrWhiteSpace(result.Stdout) ? null : result.Stdout;
+    }
+
+    /// <summary>Rolls the deployment's pod template back to rollout revision <paramref name="revision"/>.</summary>
+    public async Task RolloutUndoAsync(string name, string namespaceName, long revision, CancellationToken ct = default)
+    {
+        var result = await RunAsync(ct, "rollout", "undo", $"deployment/{name}", "-n", namespaceName,
+            $"--to-revision={revision.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+        if (!result.Ok)
+        {
+            throw new InvalidOperationException(
+                $"kubectl could not roll {namespaceName}/{name} back to revision {revision}: {result.Stderr.Trim()}");
+        }
+    }
+
+    public async Task ScaleDeploymentAsync(string name, string namespaceName, int replicas, CancellationToken ct = default)
+    {
+        var result = await RunAsync(ct, "scale", $"deployment/{name}", "-n", namespaceName,
+            $"--replicas={replicas.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+        if (!result.Ok)
+        {
+            throw new InvalidOperationException($"kubectl could not scale {namespaceName}/{name}: {result.Stderr.Trim()}");
+        }
+    }
+
+    /// <summary>A ConfigMap's data, or null when it doesn't exist.</summary>
+    public async Task<Dictionary<string, string>?> GetConfigMapDataAsync(
+        string namespaceName, string name, CancellationToken ct = default)
+    {
+        var result = await RunAsync(ct, "get", "configmap", name, "-n", namespaceName, "-o", "json", "--ignore-not-found");
+        if (!result.Ok)
+        {
+            throw new InvalidOperationException($"kubectl could not read configmap {namespaceName}/{name}: {result.Stderr.Trim()}");
+        }
+
+        if (string.IsNullOrWhiteSpace(result.Stdout))
+        {
+            return null;
+        }
+
+        using var doc = System.Text.Json.JsonDocument.Parse(result.Stdout);
+        var data = new Dictionary<string, string>();
+        if (doc.RootElement.TryGetProperty("data", out var el) && el.ValueKind == System.Text.Json.JsonValueKind.Object)
+        {
+            foreach (var p in el.EnumerateObject())
+            {
+                data[p.Name] = p.Value.GetString() ?? "";
+            }
+        }
+
+        return data;
+    }
+
     private Task<ProcessResult> RunAsync(CancellationToken ct, params string[] args)
         => _runner.RunAsync(new ProcessSpec("kubectl", [.. _contextArgs, .. args]) { Log = logger, LogTag = "kubectl" }, ct);
 

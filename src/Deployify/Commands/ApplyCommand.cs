@@ -95,7 +95,7 @@ public static class ApplyCommand
                 return 1;
             }
 
-            if (RolloutCli.Resolve(parseResult, target) is { } rollout)
+            if (await RolloutCli.ResolveAsync(parseResult, target, config, ct) is { } rollout)
             {
                 var rolloutResult = await RolloutCli.RunAsync(
                     resolved, rollout, manifest, outputDir, RolloutCli.ReadOptions(parseResult), ct);

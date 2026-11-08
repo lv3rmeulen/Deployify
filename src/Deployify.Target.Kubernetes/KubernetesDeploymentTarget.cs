@@ -18,9 +18,20 @@ namespace Deployify.Target.Kubernetes;
 
 public sealed class KubernetesDeploymentTarget(
     IPublisher publisher,
-    ILogger<KubernetesDeploymentTarget> logger) : IDeploymentTarget, ISecretStoreProvider
+    ILogger<KubernetesDeploymentTarget> logger) : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget
 {
     private readonly KubernetesManifestGenerator _generator = new();
+
+    /// <summary>
+    /// A service's ConfigMap and Secret as they were before the rollout, kept in memory only so
+    /// no secret reaches the journal. A rollback in a later process can't restore them.
+    /// </summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, CapturedConfig> _configBefore = new();
+
+    private sealed record CapturedConfig(
+        Dictionary<string, string>? ConfigMap,
+        bool SecretCaptured,
+        IReadOnlyDictionary<string, SensitiveValue>? Secret);
 
     /// <summary>Creates Vault clients; replaceable in tests.</summary>
     internal Func<VaultConfig, VaultClient> VaultClientFactory { get; init; } = c => VaultClient.FromConfig(c);
@@ -428,6 +439,241 @@ public sealed class KubernetesDeploymentTarget(
 
         return entries;
     }
+
+    // ── Rollout (health-gated apply) ──────────────────────────────────────────
+
+    private const string NamespaceKey = "namespace";
+    private const string RolloutRevisionKey = "rolloutRevision";
+    private const string ReplicasKey = "replicas";
+
+    private async Task<KubectlRunner> RequireKubectlAsync(KubernetesTargetConfig cfg, CancellationToken ct)
+        => await KubectlAvailableAsync(ct)
+            ? Kubectl(cfg)
+            : throw new InvalidOperationException(
+                "Health-gated rollouts on Kubernetes need kubectl on PATH. Install it, or deploy with --no-health-gate.");
+
+    private KubernetesServiceManifest FindService(AspireManifest manifest, EnvironmentConfig config, KubernetesTargetConfig cfg, string service)
+        => _generator.Generate(manifest, config, cfg).FirstOrDefault(s => s.ServiceName == service)
+           ?? throw new InvalidOperationException($"'{service}' is not a Kubernetes service in this manifest.");
+
+    /// <summary>
+    /// Records the Deployment's generation, rollout revision and replica count (in the journal),
+    /// and its ConfigMap and Secret (in memory only).
+    /// </summary>
+    public async Task<ServiceSnapshot> CaptureAsync(
+        AspireManifest manifest, EnvironmentConfig config, string service, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var svc = FindService(manifest, config, cfg, service);
+        var kubectl = await RequireKubectlAsync(cfg, ct);
+
+        var json = await kubectl.GetDeploymentJsonAsync(service, svc.Namespace, ct);
+
+        var configMap = await kubectl.GetConfigMapDataAsync(svc.Namespace, $"{service}-config", ct);
+        IReadOnlyDictionary<string, SensitiveValue>? secret = null;
+        var secretCaptured = false;
+        if (svc.HasSecret && !svc.UsesKeyVaultCsi)
+        {
+            try
+            {
+                secret = await kubectl.GetSecretDataAsync(svc.Namespace, KubernetesManifestGenerator.SecretName(svc), ct);
+                secretCaptured = true;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning("Could not read the Secret of {Name} ({Message}); a rollback will not restore it.",
+                    service, ex.Message);
+            }
+        }
+
+        _configBefore[$"{svc.Namespace}/{service}"] = new CapturedConfig(configMap, secretCaptured, secret);
+
+        if (json is null)
+        {
+            return new ServiceSnapshot
+            {
+                ServiceName = service, Existed = false, Data = new Dictionary<string, string> { [NamespaceKey] = svc.Namespace }
+            };
+        }
+
+        var status = KubernetesDeploymentStatus.Parse(json);
+        var data = new Dictionary<string, string>
+        {
+            [NamespaceKey] = svc.Namespace,
+            [ReplicasKey] = status.SpecReplicas.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        };
+        if (status.RolloutRevision is { } rev)
+        {
+            data[RolloutRevisionKey] = rev.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        return new ServiceSnapshot
+        {
+            ServiceName = service,
+            Existed = true,
+            Revision = status.Generation.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            Data = data
+        };
+    }
+
+    public async Task<AppliedRevision> ApplyServiceAsync(
+        AspireManifest manifest, EnvironmentConfig config, string outputDirectory, string service,
+        CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var svc = FindService(manifest, config, cfg, service);
+        var kubectl = await RequireKubectlAsync(cfg, ct);
+
+        var svcDir = Path.Combine(outputDirectory, service);
+        if (!Directory.Exists(svcDir))
+        {
+            return new AppliedRevision
+            {
+                ServiceName = service, Success = false,
+                Error = $"Artifact directory not found: {svcDir}. Run 'deployify plan' first."
+            };
+        }
+
+        try
+        {
+            var secretsChanged = await SyncSecretsAsync(svc, config, kubectl, ct);
+            var (ok, output) = await kubectl.ApplyDirectoryAsync(svcDir, ct);
+            if (!ok)
+            {
+                return new AppliedRevision { ServiceName = service, Success = false, Error = output.Trim() };
+            }
+
+            if (secretsChanged && !await kubectl.RolloutRestartAsync(service, svc.Namespace, ct))
+            {
+                logger.LogWarning("Secrets of {Name} changed but its pods could not be restarted.", service);
+            }
+
+            // Read back after the restart, which bumps the generation once more.
+            var json = await kubectl.GetDeploymentJsonAsync(service, svc.Namespace, ct)
+                       ?? throw new InvalidOperationException($"Deployment {svc.Namespace}/{service} is missing after apply.");
+            return new AppliedRevision
+            {
+                ServiceName = service,
+                Success = true,
+                Revision = KubernetesDeploymentStatus.Parse(json).Generation.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            };
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new AppliedRevision { ServiceName = service, Success = false, Error = ex.Message };
+        }
+    }
+
+    public async Task<HealthObservation> ObserveAsync(
+        EnvironmentConfig config, string service, string revision, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var kubectl = await RequireKubectlAsync(cfg, ct);
+        var json = await kubectl.GetDeploymentJsonAsync(service, KubernetesManifestGenerator.NamespaceFor(cfg, service), ct);
+        return KubernetesRolloutHealth.Evaluate(
+            json is null ? null : KubernetesDeploymentStatus.Parse(json),
+            long.Parse(revision, System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>
+    /// Puts the ConfigMap and Secret back first (so the restored pods read the old values), then
+    /// rolls the pod template back with <c>kubectl rollout undo</c> and restores the replica
+    /// count. A Deployment this rollout created is scaled to zero.
+    /// </summary>
+    public async Task<string?> RestoreAsync(EnvironmentConfig config, ServiceSnapshot snapshot, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var kubectl = await RequireKubectlAsync(cfg, ct);
+        var service = snapshot.ServiceName;
+        var ns = snapshot.Data.TryGetValue(NamespaceKey, out var n) ? n : KubernetesManifestGenerator.NamespaceFor(cfg, service);
+
+        await RestoreConfigAsync(kubectl, ns, service, ct);
+
+        var json = await kubectl.GetDeploymentJsonAsync(service, ns, ct);
+        if (snapshot is not { Existed: true, Revision: { } revision })
+        {
+            if (json is not null)
+            {
+                await kubectl.ScaleDeploymentAsync(service, ns, 0, ct);
+                logger.LogInformation("Scaled new deployment {Namespace}/{Name} to zero.", ns, service);
+            }
+
+            return null;
+        }
+
+        if (json is null)
+        {
+            throw new InvalidOperationException($"Deployment {ns}/{service} no longer exists, so it can't be rolled back.");
+        }
+
+        var current = KubernetesDeploymentStatus.Parse(json);
+        if (current.Generation.ToString(System.Globalization.CultureInfo.InvariantCulture) == revision)
+        {
+            return revision; // the rollout never changed the deployment
+        }
+
+        if (snapshot.Data.TryGetValue(RolloutRevisionKey, out var raw) &&
+            long.TryParse(raw, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var toRevision) &&
+            current.RolloutRevision != toRevision)
+        {
+            await kubectl.RolloutUndoAsync(service, ns, toRevision, ct);
+        }
+
+        if (snapshot.Data.TryGetValue(ReplicasKey, out var rawReplicas) &&
+            int.TryParse(rawReplicas, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var replicas) &&
+            replicas != current.SpecReplicas)
+        {
+            await kubectl.ScaleDeploymentAsync(service, ns, replicas, ct);
+        }
+
+        var after = await kubectl.GetDeploymentJsonAsync(service, ns, ct)
+                    ?? throw new InvalidOperationException($"Deployment {ns}/{service} disappeared during the rollback.");
+        var generation = KubernetesDeploymentStatus.Parse(after).Generation;
+        logger.LogInformation("Rolled {Namespace}/{Name} back (generation {Generation}).", ns, service, generation);
+        return generation.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private async Task RestoreConfigAsync(KubectlRunner kubectl, string ns, string service, CancellationToken ct)
+    {
+        if (!_configBefore.TryGetValue($"{ns}/{service}", out var before))
+        {
+            return; // never captured (for example a rollback from a later process)
+        }
+
+        var configMapName = $"{service}-config";
+        if (before.ConfigMap is { } oldData)
+        {
+            var now = await kubectl.GetConfigMapDataAsync(ns, configMapName, ct);
+            if (now is null || !SameData(oldData, now))
+            {
+                await kubectl.ServerSideApplyAsync(KubernetesRolloutHealth.ConfigMapJson(ns, configMapName, oldData), ct);
+                logger.LogInformation("Restored ConfigMap {Namespace}/{Name}.", ns, configMapName);
+            }
+        }
+
+        if (before is { SecretCaptured: true, Secret: { } oldSecret })
+        {
+            var secretName = $"{service}-secrets";
+            var now = await kubectl.GetSecretDataAsync(ns, secretName, ct);
+            if (now is null || !SameSecret(oldSecret, now))
+            {
+                await kubectl.ServerSideApplyAsync(KubernetesSecretManifest.Build(ns, secretName, oldSecret,
+                    new Dictionary<string, string> { ["app"] = service }), ct);
+                logger.LogInformation("Restored Secret {Namespace}/{Name}.", ns, secretName);
+            }
+        }
+    }
+
+    private static bool SameData(IReadOnlyDictionary<string, string> a, IReadOnlyDictionary<string, string> b)
+        => a.Count == b.Count && a.All(kv => b.TryGetValue(kv.Key, out var v) && v == kv.Value);
+
+    private static bool SameSecret(IReadOnlyDictionary<string, SensitiveValue> a, IReadOnlyDictionary<string, SensitiveValue> b)
+        => a.Count == b.Count && a.All(kv => b.TryGetValue(kv.Key, out var v) && v.Reveal() == kv.Value.Reveal());
+
+    public bool HasNativeRollback(EnvironmentConfig config) => false;
+
+    public async Task<string?> GetUnavailableReasonAsync(EnvironmentConfig config, CancellationToken ct = default)
+        => await KubectlAvailableAsync(ct) ? null : "kubectl is not installed (the API fallback can't watch rollouts)";
 
     private async Task<DeploymentResult> ApplyViaApiAsync(
         KubernetesServiceManifest svc, IEnumerable<string> files, KubernetesTargetConfig kubernetesConfig,
