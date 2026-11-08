@@ -167,7 +167,7 @@ internal sealed record ResolvedContext(
         {
             var count = session.Pending.Count;
             await session.FlushAsync(ct);
-            AnsiConsole.MarkupLine($"[dim]Stored {count} generated secret(s) in {Markup.Escape(session.Store.Description)}.[/]");
+            AnsiConsole.MarkupLineInterpolated($"[dim]Stored {count} generated secret(s) in {session.Store.Description}.[/]");
         }
     }
 
@@ -254,7 +254,7 @@ internal sealed record ResolvedContext(
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Could not load manifest: {Markup.Escape(ex.Message)}");
+            AnsiConsole.MarkupLineInterpolated($"[red]✗[/] Could not load manifest: {ex.Message}");
             AnsiConsole.MarkupLine("[dim]Tip: run [cyan]deployify generate[/] first, or point --project-path at your AppHost .csproj.[/]");
             return null;
         }

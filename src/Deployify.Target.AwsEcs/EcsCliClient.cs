@@ -1,11 +1,12 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Deployify.Core.Processes;
 using Deployify.Core.SecretBackends;
 using Microsoft.Extensions.Logging;
 
@@ -19,33 +20,24 @@ namespace Deployify.Target.AwsEcs;
 /// keep credentials management simple (honors all standard AWS credential
 /// sources: env vars, ~/.aws/credentials, instance profiles, etc.).
 /// </summary>
-public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger) : ISsmParameterClient
+public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger, IProcessRunner? runner = null)
+    : ISsmParameterClient
 {
+    private readonly IProcessRunner _runner = runner ?? ProcessRunner.Default;
+
     // ── Availability ──────────────────────────────────────────────────────────
 
-    public static async Task<bool> IsAvailableAsync(CancellationToken ct = default)
-    {
-        try
-        {
-            var (exit, _) = await RunAsync("aws", "--version", ct);
-            return exit == 0;
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch
-        {
-            return false;
-        }
-    }
+    public static Task<bool> IsAvailableAsync(CancellationToken ct = default)
+        => IsAvailableAsync(ProcessRunner.Default, ct);
+
+    public static Task<bool> IsAvailableAsync(IProcessRunner runner, CancellationToken ct = default)
+        => runner.IsAvailableAsync("aws", ["--version"], ct: ct);
 
     // ── Ping ──────────────────────────────────────────────────────────────────
 
     public async Task<(bool Ok, string? Error)> PingAsync(CancellationToken ct = default)
     {
-        var args = BuildArgs($"ecs describe-clusters --clusters {config.ClusterName} --output json");
-        var (exit, output) = await RunAsync("aws", args, ct);
+        var (exit, output) = await RunAsync(BuildArgs("ecs", "describe-clusters", "--clusters", config.ClusterName, "--output", "json"), ct);
         if (exit != 0)
         {
             return (false, $"Cannot reach AWS ECS: {output.Trim()}");
@@ -72,8 +64,7 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger) : ISsmP
 
     public async Task<IReadOnlyList<string>> GetRunningServiceNamesAsync(CancellationToken ct = default)
     {
-        var args = BuildArgs($"ecs list-services --cluster {config.ClusterName} --output json");
-        var (exit, output) = await RunAsync("aws", args, ct);
+        var (exit, output) = await RunAsync(BuildArgs("ecs", "list-services", "--cluster", config.ClusterName, "--output", "json"), ct);
         if (exit != 0)
         {
             logger.LogWarning("ecs list-services failed: {Output}", output);
@@ -103,9 +94,8 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger) : ISsmP
     public async Task<string> RegisterTaskDefinitionAsync(
         string taskDefJsonPath, CancellationToken ct = default)
     {
-        var args = BuildArgs(
-            $"ecs register-task-definition --cli-input-json \"file://{taskDefJsonPath}\" --output json");
-        var (exit, output) = await RunAsync("aws", args, ct);
+        var (exit, output) = await RunAsync(BuildArgs(
+            "ecs", "register-task-definition", "--cli-input-json", $"file://{taskDefJsonPath}", "--output", "json"), ct);
         if (exit != 0)
         {
             throw new InvalidOperationException(
@@ -144,8 +134,8 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger) : ISsmP
                 File.SetUnixFileMode(inputPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
             }
 
-            var args = BuildArgs($"ssm put-parameter --cli-input-json \"file://{inputPath}\" --output json");
-            var (exit, output) = await RunAsync("aws", args, ct);
+            var (exit, output) = await RunAsync(BuildArgs(
+                "ssm", "put-parameter", "--cli-input-json", $"file://{inputPath}", "--output", "json"), ct);
             if (exit != 0)
             {
                 throw new InvalidOperationException($"Failed to store secret parameter {name}: {output.Trim()}");
@@ -164,8 +154,8 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger) : ISsmP
     public async Task<SsmParameter?> GetParameterAsync(string name, CancellationToken ct = default)
     {
         // Output holds the decrypted value: it's parsed and wrapped, never logged.
-        var (exit, output) = await RunAsync("aws",
-            BuildArgs($"ssm get-parameter --name \"{name}\" --with-decryption --output json"), ct);
+        var (exit, output) = await RunAsync(
+            BuildArgs("ssm", "get-parameter", "--name", name, "--with-decryption", "--output", "json"), ct, sensitive: true);
         if (exit != 0)
         {
             if (output.Contains("ParameterNotFound", StringComparison.Ordinal))
@@ -185,8 +175,9 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger) : ISsmP
         string path, CancellationToken ct = default)
     {
         // The CLI follows NextToken itself and returns every page.
-        var (exit, output) = await RunAsync("aws",
-            BuildArgs($"ssm get-parameters-by-path --path \"{path}\" --recursive --with-decryption --output json"), ct);
+        var (exit, output) = await RunAsync(
+            BuildArgs("ssm", "get-parameters-by-path", "--path", path, "--recursive", "--with-decryption", "--output", "json"),
+            ct, sensitive: true);
         if (exit != 0)
         {
             throw new InvalidOperationException($"Failed to read secret parameters under {path}: {output.Trim()}");
@@ -276,9 +267,8 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger) : ISsmP
     public async Task<string?> GetRunningTaskDefinitionArnAsync(
         string serviceName, CancellationToken ct = default)
     {
-        var args = BuildArgs(
-            $"ecs describe-services --cluster {config.ClusterName} --services {serviceName} --output json");
-        var (exit, output) = await RunAsync("aws", args, ct);
+        var (exit, output) = await RunAsync(BuildArgs(
+            "ecs", "describe-services", "--cluster", config.ClusterName, "--services", serviceName, "--output", "json"), ct);
         if (exit != 0)
         {
             return null;
@@ -310,17 +300,19 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger) : ISsmP
         var launchType = config.LaunchType.ToString().ToUpperInvariant();
 
         var args = BuildArgs(
-            $"ecs create-service " +
-            $"--cluster {config.ClusterName} " +
-            $"--service-name {serviceName} " +
-            $"--task-definition {taskDefinitionArn} " +
-            $"--desired-count {desiredCount} " +
-            $"--launch-type {launchType} " +
-            $"--network-configuration \"{networkConfig}\" " +
-            await ServiceConnectArgAsync(serviceName, ct) +
-            "--output json");
+        [
+            "ecs", "create-service",
+            "--cluster", config.ClusterName,
+            "--service-name", serviceName,
+            "--task-definition", taskDefinitionArn,
+            "--desired-count", desiredCount.ToString(CultureInfo.InvariantCulture),
+            "--launch-type", launchType,
+            "--network-configuration", networkConfig,
+            .. await ServiceConnectArgsAsync(serviceName, ct),
+            "--output", "json"
+        ]);
 
-        var (exit, output) = await RunAsync("aws", args, ct);
+        var (exit, output) = await RunAsync(args, ct);
         if (exit != 0)
         {
             throw new InvalidOperationException($"Failed to create ECS service '{serviceName}': {output.Trim()}");
@@ -334,15 +326,17 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger) : ISsmP
         string serviceName, string taskDefinitionArn, int desiredCount, CancellationToken ct)
     {
         var args = BuildArgs(
-            $"ecs update-service " +
-            $"--cluster {config.ClusterName} " +
-            $"--service {serviceName} " +
-            $"--task-definition {taskDefinitionArn} " +
-            $"--desired-count {desiredCount} " +
-            await ServiceConnectArgAsync(serviceName, ct) +
-            "--output json");
+        [
+            "ecs", "update-service",
+            "--cluster", config.ClusterName,
+            "--service", serviceName,
+            "--task-definition", taskDefinitionArn,
+            "--desired-count", desiredCount.ToString(CultureInfo.InvariantCulture),
+            .. await ServiceConnectArgsAsync(serviceName, ct),
+            "--output", "json"
+        ]);
 
-        var (exit, output) = await RunAsync("aws", args, ct);
+        var (exit, output) = await RunAsync(args, ct);
         if (exit != 0)
         {
             throw new InvalidOperationException($"Failed to update ECS service '{serviceName}': {output.Trim()}");
@@ -358,14 +352,14 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger) : ISsmP
     /// <summary>
     /// Builds the Service Connect argument when a namespace is configured: the service's
     /// first port is published under the service name. The JSON goes through a temp file
-    /// to avoid shell-quoting problems.
+    /// to keep the command line short and readable in logs.
     /// </summary>
-    private async Task<string> ServiceConnectArgAsync(string serviceName, CancellationToken ct)
+    private async Task<string[]> ServiceConnectArgsAsync(string serviceName, CancellationToken ct)
     {
         if (config.ServiceConnectNamespace is null ||
             !ServicePorts.TryGetValue(serviceName, out var ports) || ports.Count == 0)
         {
-            return string.Empty;
+            return [];
         }
 
         var (portName, port) = ports[0];
@@ -385,7 +379,7 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger) : ISsmP
         });
         var path = Path.Combine(Path.GetTempPath(), $"deployify-sc-{serviceName}-{Guid.NewGuid():N}.json");
         await File.WriteAllTextAsync(path, json, new System.Text.UTF8Encoding(false), ct);
-        return $"--service-connect-configuration \"file://{path}\" ";
+        return ["--service-connect-configuration", $"file://{path}"];
     }
 
     /// <summary>
@@ -394,8 +388,8 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger) : ISsmP
     /// </summary>
     public async Task WaitForStableAsync(string serviceName, CancellationToken ct = default)
     {
-        var args = BuildArgs($"ecs wait services-stable --cluster {config.ClusterName} --services {serviceName}");
-        var (exit, output) = await RunAsync("aws", args, ct);
+        var (exit, output) = await RunAsync(BuildArgs(
+            "ecs", "wait", "services-stable", "--cluster", config.ClusterName, "--services", serviceName), ct);
         if (exit != 0)
         {
             throw new InvalidOperationException(
@@ -410,46 +404,15 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger) : ISsmP
         return $"awsvpcConfiguration={{subnets=[{subnets}],securityGroups=[{sgs}],assignPublicIp=ENABLED}}";
     }
 
-    private string BuildArgs(string command)
+    internal IReadOnlyList<string> BuildArgs(params string[] command)
         => config.AwsProfile is not null
-            ? $"--profile {config.AwsProfile} --region {config.Region} {command}"
-            : $"--region {config.Region} {command}";
+            ? ["--profile", config.AwsProfile, "--region", config.Region, .. command]
+            : ["--region", config.Region, .. command];
 
-    private static async Task<(int ExitCode, string Output)> RunAsync(
-        string command, string args, CancellationToken ct = default)
+    private async Task<(int ExitCode, string Output)> RunAsync(
+        IReadOnlyList<string> args, CancellationToken ct, bool sensitive = false)
     {
-        var psi = new ProcessStartInfo(command, args)
-        {
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        };
-
-        using var proc = Process.Start(psi)
-            ?? throw new InvalidOperationException($"Could not start {command}.");
-
-        var stdoutTask = proc.StandardOutput.ReadToEndAsync(ct);
-        var stderrTask = proc.StandardError.ReadToEndAsync(ct);
-        try
-        {
-            await proc.WaitForExitAsync(ct);
-        }
-        catch (OperationCanceledException)
-        {
-            try
-            {
-                proc.Kill(entireProcessTree: true);
-            }
-            catch
-            {
-                /* already exited */
-            }
-
-            throw;
-        }
-
-        var output = await stdoutTask;
-        var stderr = await stderrTask;
-        return (proc.ExitCode, string.IsNullOrWhiteSpace(output) ? stderr : output);
+        var result = await _runner.RunAsync(new ProcessSpec("aws", args) { Log = logger, Sensitive = sensitive }, ct);
+        return (result.ExitCode, result.Output);
     }
 }

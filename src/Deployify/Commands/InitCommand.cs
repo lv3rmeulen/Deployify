@@ -433,7 +433,7 @@ public static class InitCommand
                     : new DeployifyStateFile { Environments = [] };
                 if (stateFile.Environments.ContainsKey(name))
                 {
-                    AnsiConsole.MarkupLine($"[yellow]![/] Replacing existing environment [cyan]{Markup.Escape(name)}[/].");
+                    AnsiConsole.MarkupLineInterpolated($"[yellow]![/] Replacing existing environment [cyan]{name}[/].");
                 }
 
                 stateFile.Environments[name] = config;
@@ -447,9 +447,10 @@ public static class InitCommand
             await stateManager.SaveFileAsync(stateFile, directory, ct);
             await SecretsWarning.PrintAsync(stateFile, directory, ct);
 
-            AnsiConsole.MarkupLine($"\n[green]✓[/] Deployify initialized → [bold]{directory}/deployify-state.json[/]");
-            AnsiConsole.MarkupLine($"  Active environment : [cyan]{stateFile.ActiveEnvironment}[/]");
-            AnsiConsole.MarkupLine($"  Environments: {string.Join(", ", stateFile.Environments.Keys.Select(k => $"[cyan]{k}[/]"))}");
+            AnsiConsole.MarkupLineInterpolated($"\n[green]✓[/] Deployify initialized → [bold]{directory}/deployify-state.json[/]");
+            AnsiConsole.MarkupLineInterpolated($"  Active environment : [cyan]{stateFile.ActiveEnvironment}[/]");
+            AnsiConsole.MarkupLine(
+                $"  Environments: {string.Join(", ", stateFile.Environments.Keys.Select(k => $"[cyan]{Markup.Escape(k)}[/]"))}");
             AnsiConsole.WriteLine();
             AnsiConsole.MarkupLine("Next steps:");
             AnsiConsole.MarkupLine("  [cyan]deployify plan --target <nomad|kubernetes|compose|awsecs|azurecontainerapps>[/]");
@@ -494,6 +495,7 @@ public static class InitCommand
             stateFile.ActiveEnvironment = await ConsolePrompts.PromptAsync(
                 new SelectionPrompt<string>()
                     .Title("Which environment should be [bold]active[/] by default?")
+                    .UseConverter(Markup.Escape) // choices are rendered as markup
                     .AddChoices(stateFile.Environments.Keys), ct);
         }
 
@@ -503,7 +505,7 @@ public static class InitCommand
     internal static async Task<EnvironmentConfig> PromptEnvironmentConfigAsync(
         string envName, string directory, CancellationToken ct)
     {
-        AnsiConsole.MarkupLine($"\n[bold]Configuring: [cyan]{envName}[/][/]");
+        AnsiConsole.MarkupLineInterpolated($"\n[bold]Configuring: [cyan]{envName}[/][/]");
 
         var target = await ConsolePrompts.PromptAsync(
             new SelectionPrompt<DeploymentTargetType>()

@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Deployify.Core.Processes;
 using Microsoft.Extensions.Logging;
 
 namespace Deployify.Target.AzureContainerApps;
@@ -14,36 +14,25 @@ namespace Deployify.Target.AzureContainerApps;
 /// Thin wrapper around the Azure CLI for Container Apps operations.
 /// Requires `az` to be installed and logged in (`az login` or service principal env vars).
 /// </summary>
-public sealed class AcaCliClient(AcaTargetConfig config, ILogger logger)
+public sealed class AcaCliClient(AcaTargetConfig config, ILogger logger, IProcessRunner? runner = null)
 {
+    private readonly IProcessRunner _runner = runner ?? ProcessRunner.Default;
+
     // ── Availability ──────────────────────────────────────────────────────────
 
-    public static async Task<bool> IsAvailableAsync(CancellationToken ct = default)
-    {
-        try
-        {
-            var (exit, _) = await RunAsync("az", "--version", ct);
-            return exit == 0;
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch
-        {
-            return false;
-        }
-    }
+    public static Task<bool> IsAvailableAsync(CancellationToken ct = default)
+        => IsAvailableAsync(ProcessRunner.Default, ct);
+
+    public static Task<bool> IsAvailableAsync(IProcessRunner runner, CancellationToken ct = default)
+        => runner.IsAvailableAsync("az", ["--version"], ct: ct);
 
     // ── Ping ──────────────────────────────────────────────────────────────────
 
     public async Task<(bool Ok, string? Error)> PingAsync(CancellationToken ct = default)
     {
-        var args = BuildArgs(
-            $"containerapp env show --name {config.EnvironmentName} " +
-            $"--resource-group {config.ResourceGroup} --output json");
-
-        var (exit, output) = await RunAsync("az", args, ct);
+        var (exit, output) = await RunAsync(BuildArgs(
+            "containerapp", "env", "show", "--name", config.EnvironmentName,
+            "--resource-group", config.ResourceGroup, "--output", "json"), ct);
         if (exit == 0)
         {
             return (true, null);
@@ -62,10 +51,8 @@ public sealed class AcaCliClient(AcaTargetConfig config, ILogger logger)
 
     public async Task<IReadOnlyList<string>> GetRunningAppNamesAsync(CancellationToken ct = default)
     {
-        var args = BuildArgs(
-            $"containerapp list --resource-group {config.ResourceGroup} --output json");
-
-        var (exit, output) = await RunAsync("az", args, ct);
+        var (exit, output) = await RunAsync(BuildArgs(
+            "containerapp", "list", "--resource-group", config.ResourceGroup, "--output", "json"), ct);
         if (exit != 0)
         {
             logger.LogWarning("az containerapp list failed: {Output}", output);
@@ -94,25 +81,14 @@ public sealed class AcaCliClient(AcaTargetConfig config, ILogger logger)
     {
         var running = await GetRunningAppNamesAsync(ct);
 
-        string args;
-        if (running.Contains(appName))
-        {
+        var args = running.Contains(appName)
             // Update via ARM template / YAML
-            args = BuildArgs(
-                $"containerapp update --name {appName} " +
-                $"--resource-group {config.ResourceGroup} " +
-                $"--yaml \"{appSpecPath}\" --output json");
-        }
-        else
-        {
-            args = BuildArgs(
-                $"containerapp create --name {appName} " +
-                $"--resource-group {config.ResourceGroup} " +
-                $"--environment {config.EnvironmentName} " +
-                $"--yaml \"{appSpecPath}\" --output json");
-        }
+            ? BuildArgs("containerapp", "update", "--name", appName, "--resource-group", config.ResourceGroup,
+                "--yaml", appSpecPath, "--output", "json")
+            : BuildArgs("containerapp", "create", "--name", appName, "--resource-group", config.ResourceGroup,
+                "--environment", config.EnvironmentName, "--yaml", appSpecPath, "--output", "json");
 
-        var (exit, output) = await RunAsync("az", args, ct);
+        var (exit, output) = await RunAsync(args, ct);
         if (exit != 0)
         {
             throw new InvalidOperationException(
@@ -186,12 +162,9 @@ public sealed class AcaCliClient(AcaTargetConfig config, ILogger logger)
     public async Task<string?> GetLatestRevisionAsync(
         string appName, CancellationToken ct = default)
     {
-        var args = BuildArgs(
-            $"containerapp revision list --name {appName} " +
-            $"--resource-group {config.ResourceGroup} " +
-            $"--output json");
-
-        var (exit, output) = await RunAsync("az", args, ct);
+        var (exit, output) = await RunAsync(BuildArgs(
+            "containerapp", "revision", "list", "--name", appName,
+            "--resource-group", config.ResourceGroup, "--output", "json"), ct);
         if (exit != 0)
         {
             return null;
@@ -215,8 +188,9 @@ public sealed class AcaCliClient(AcaTargetConfig config, ILogger logger)
     /// <summary>Restarts a revision, so it reads Key Vault secrets again.</summary>
     public async Task<bool> RestartRevisionAsync(string appName, string revision, CancellationToken ct = default)
     {
-        var (exit, _) = await RunAsync("az", BuildArgs(
-            $"containerapp revision restart --name {appName} --resource-group {config.ResourceGroup} --revision {revision}"), ct);
+        var (exit, _) = await RunAsync(BuildArgs(
+            "containerapp", "revision", "restart", "--name", appName,
+            "--resource-group", config.ResourceGroup, "--revision", revision), ct);
         return exit == 0;
     }
 
@@ -227,61 +201,22 @@ public sealed class AcaCliClient(AcaTargetConfig config, ILogger logger)
     /// a bare "--subscription" with no argument. "--tenant" isn't accepted by containerapp
     /// commands; the tenant comes from `az login`.)
     /// </summary>
-    private string BuildArgs(string command)
+    internal IReadOnlyList<string> BuildArgs(params string[] command)
         => string.IsNullOrWhiteSpace(config.SubscriptionId)
             ? command
-            : $"--subscription {config.SubscriptionId} {command}";
+            : ["--subscription", config.SubscriptionId, .. command];
 
     /// <summary>The subscription the Azure CLI is logged in to, or null.</summary>
     public async Task<string?> GetCurrentSubscriptionAsync(CancellationToken ct = default)
     {
-        var (exit, output) = await RunAsync("az", "account show --query id --output tsv", ct);
+        var (exit, output) = await RunAsync(["account", "show", "--query", "id", "--output", "tsv"], ct);
         var id = output.Trim();
         return exit == 0 && id.Length > 0 && !id.Contains(' ') ? id : null;
     }
 
-    private static async Task<(int ExitCode, string Output)> RunAsync(
-        string command, string args, CancellationToken ct = default)
+    private async Task<(int ExitCode, string Output)> RunAsync(IReadOnlyList<string> args, CancellationToken ct)
     {
-        // On Windows the Azure CLI is a batch file (az.cmd); without the extension
-        // Process.Start can't find it when UseShellExecute is false.
-        if (command == "az" && OperatingSystem.IsWindows())
-        {
-            command = "az.cmd";
-        }
-
-        var psi = new ProcessStartInfo(command, args)
-        {
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        };
-
-        using var proc = Process.Start(psi)
-            ?? throw new InvalidOperationException($"Could not start {command}.");
-
-        var stdoutTask = proc.StandardOutput.ReadToEndAsync(ct);
-        var stderrTask = proc.StandardError.ReadToEndAsync(ct);
-        try
-        {
-            await proc.WaitForExitAsync(ct);
-        }
-        catch (OperationCanceledException)
-        {
-            try
-            {
-                proc.Kill(entireProcessTree: true);
-            }
-            catch
-            {
-                /* already exited */
-            }
-
-            throw;
-        }
-
-        var output = await stdoutTask;
-        var stderr = await stderrTask;
-        return (proc.ExitCode, string.IsNullOrWhiteSpace(output) ? stderr : output);
+        var result = await _runner.RunAsync(new ProcessSpec("az", args) { Log = logger }, ct);
+        return (result.ExitCode, result.Output);
     }
 }

@@ -42,7 +42,7 @@ public static class PublishCommand
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(ex.Message)}");
+                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {ex.Message}");
                 return 1;
             }
 
@@ -58,7 +58,7 @@ public static class PublishCommand
                 config.ContainerRuntime = runtimeOverride.Value;
             }
 
-            AnsiConsole.MarkupLine(
+            AnsiConsole.MarkupLineInterpolated(
                 $"[dim]Environment: [cyan]{envName}[/] Target: [cyan]{target.DisplayName}[/] Runtime: [cyan]{config.ContainerRuntime}[/][/]\n");
 
             var manifest = await resolved.LoadManifestAsync(ct);
@@ -74,7 +74,7 @@ public static class PublishCommand
                 {
                     if (res.Type.StartsWith("project.v"))
                     {
-                        AnsiConsole.MarkupLine($"  [cyan]{name}[/]");
+                        AnsiConsole.MarkupLineInterpolated($"  [cyan]{name}[/]");
                     }
                 }
 

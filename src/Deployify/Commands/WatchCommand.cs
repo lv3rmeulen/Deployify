@@ -56,15 +56,15 @@ public static class WatchCommand
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(ex.Message)}");
+                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {ex.Message}");
                 return 1;
             }
 
             var (_, config, envName, _, target, directory) = resolved;
             var outputDir = Path.Combine(directory, config.OutputPath);
 
-            AnsiConsole.MarkupLine($"[bold]Deployify Watch[/] — [cyan]{envName}[/] / [cyan]{target.DisplayName}[/]");
-            AnsiConsole.MarkupLine($"[dim]Watching: {directory}[/]");
+            AnsiConsole.MarkupLineInterpolated($"[bold]Deployify Watch[/] — [cyan]{envName}[/] / [cyan]{target.DisplayName}[/]");
+            AnsiConsole.MarkupLineInterpolated($"[dim]Watching: {directory}[/]");
             AnsiConsole.MarkupLine("[dim]Press Ctrl+C to stop.[/]\n");
 
             // Ctrl+C cancels the command's token; everything below stops with it.
@@ -138,7 +138,7 @@ public static class WatchCommand
                 }
                 catch (Exception ex)
                 {
-                    AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(ex.Message)}");
+                    AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {ex.Message}");
                 }
             }
         });
@@ -155,7 +155,7 @@ public static class WatchCommand
         CancellationToken ct)
     {
         var timestamp = DateTime.Now.ToString("HH:mm:ss");
-        AnsiConsole.MarkupLine($"[dim]── {timestamp} ──────────────────────────────[/]");
+        AnsiConsole.MarkupLineInterpolated($"[dim]── {timestamp} ──────────────────────────────[/]");
 
         var manifest = await resolved.LoadManifestAsync(ct);
         if (manifest is null)
@@ -170,11 +170,11 @@ public static class WatchCommand
             try
             {
                 var paths = await target.GenerateAsync(manifest, config, outputDir, ct);
-                AnsiConsole.MarkupLine($"[green]✓[/] Generated {paths.Count} artifact(s)");
+                AnsiConsole.MarkupLineInterpolated($"[green]✓[/] Generated {paths.Count} artifact(s)");
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] Generate failed: {Markup.Escape(ex.Message)}");
+                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] Generate failed: {ex.Message}");
                 return;
             }
         }
@@ -183,35 +183,20 @@ public static class WatchCommand
         try
         {
             var plan = await target.PlanAsync(manifest, config, outputDir, ct);
-            var hasChanges = plan.CreateCount + plan.UpdateCount + plan.DeleteCount > 0;
-
-            if (!hasChanges)
+            if (plan.IsUpToDate)
             {
                 AnsiConsole.MarkupLine("[dim]No changes.[/]");
                 return;
             }
 
-            if (plan.CreateCount > 0)
-            {
-                AnsiConsole.MarkupLine($"[green]+ {plan.CreateCount} to create[/]: " +
-                    string.Join(", ", plan.ToCreate.Select(o => o.ToString()!)));
-            }
-
-            if (plan.UpdateCount > 0)
-            {
-                AnsiConsole.MarkupLine($"[yellow]~ {plan.UpdateCount} to update[/]: " +
-                    string.Join(", ", plan.ToUpdate.Select(o => o.ToString()!)));
-            }
-
-            if (plan.DeleteCount > 0)
-            {
-                AnsiConsole.MarkupLine($"[red]- {plan.DeleteCount} to delete[/]: " +
-                    string.Join(", ", plan.ToDelete));
-            }
+            PlanOutput.PrintList("green", "+", "to create", plan.ToCreate);
+            PlanOutput.PrintList("yellow", "~", "to update", plan.ToUpdate);
+            PlanOutput.PrintList("red", "-", "to delete", plan.ToDelete);
+            PlanOutput.PrintList("blue", "?", "could not be checked", [.. plan.UnknownNames]);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            AnsiConsole.MarkupLine($"[yellow]! Plan diff unavailable: {Markup.Escape(ex.Message)}[/]");
+            AnsiConsole.MarkupLineInterpolated($"[yellow]! Plan diff unavailable: {ex.Message}[/]");
             AnsiConsole.MarkupLine("[dim]Artifacts written. Cluster unreachable for diff.[/]");
         }
     }

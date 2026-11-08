@@ -29,14 +29,14 @@ public static class GenerateCommand
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(ex.Message)}");
+                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {ex.Message}");
                 return 1;
             }
 
             var (_, config, envName, _, target, directory) = resolved;
             var outputDir = Path.Combine(directory, config.OutputPath);
 
-            AnsiConsole.MarkupLine($"[dim]Environment: [cyan]{envName}[/] Target: [cyan]{target.DisplayName}[/][/]\n");
+            AnsiConsole.MarkupLineInterpolated($"[dim]Environment: [cyan]{envName}[/] Target: [cyan]{target.DisplayName}[/][/]\n");
 
             var manifest = await resolved.LoadManifestAsync(ct);
             if (manifest is null)
@@ -53,14 +53,14 @@ public static class GenerateCommand
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] Generation failed: {Markup.Escape(ex.Message)}");
+                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] Generation failed: {ex.Message}");
                 return 1;
             }
 
-            AnsiConsole.MarkupLine($"[green]✓[/] Generated {paths.Count} artifact(s) → [dim]{Markup.Escape(outputDir)}[/]\n");
+            AnsiConsole.MarkupLineInterpolated($"[green]✓[/] Generated {paths.Count} artifact(s) → [dim]{outputDir}[/]\n");
             foreach (var path in paths)
             {
-                AnsiConsole.MarkupLine($"  [dim]{Path.GetFileName(path)}[/]");
+                AnsiConsole.MarkupLineInterpolated($"  [dim]{Path.GetFileName(path)}[/]");
             }
 
             return 0;

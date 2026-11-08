@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Models;
+using Deployify.Core.Processes;
 using Microsoft.Extensions.Logging;
 
 namespace Deployify.Target.Nomad;
@@ -71,8 +72,10 @@ public sealed class HttpArtifactStore(ArtifactStoreConfig config, ILogger logger
 /// Uploads artifacts to an AWS S3 bucket using the AWS CLI.
 /// Uses the AWS CLI so no SDK dependency is needed — credential chain is handled by aws-cli.
 /// </summary>
-public sealed class S3ArtifactStore(ArtifactStoreConfig config, ILogger logger) : IArtifactStore
+public sealed class S3ArtifactStore(ArtifactStoreConfig config, ILogger logger, IProcessRunner? runner = null) : IArtifactStore
 {
+    private readonly IProcessRunner _runner = runner ?? ProcessRunner.Default;
+
     public async Task<string> UploadAsync(string serviceName, string version, string zipPath, CancellationToken ct = default)
     {
         if (string.IsNullOrEmpty(config.S3Bucket))
@@ -83,13 +86,21 @@ public sealed class S3ArtifactStore(ArtifactStoreConfig config, ILogger logger) 
         var prefix = string.IsNullOrEmpty(config.S3Prefix) ? string.Empty : $"{config.S3Prefix.TrimEnd('/')}/";
         var key = $"{prefix}{serviceName}-{version}.zip";
         var s3Uri = $"s3://{config.S3Bucket}/{key}";
-        var profileArg = string.IsNullOrEmpty(config.S3AwsProfile) ? string.Empty : $" --profile {config.S3AwsProfile}";
-        var regionArg = string.IsNullOrEmpty(config.S3Region) ? string.Empty : $" --region {config.S3Region}";
 
         logger.LogInformation("Uploading {Service} artifact to {S3Uri}...", serviceName, s3Uri);
 
-        await ProcessHelper.RunAsync("aws",
-            $"s3 cp \"{zipPath}\" \"{s3Uri}\"{profileArg}{regionArg}", ct: ct);
+        List<string> args = ["s3", "cp", zipPath, s3Uri];
+        if (!string.IsNullOrEmpty(config.S3AwsProfile))
+        {
+            args.AddRange(["--profile", config.S3AwsProfile]);
+        }
+
+        if (!string.IsNullOrEmpty(config.S3Region))
+        {
+            args.AddRange(["--region", config.S3Region]);
+        }
+
+        (await _runner.RunAsync(new ProcessSpec("aws", args) { Log = logger }, ct)).EnsureSuccess("aws s3 cp");
 
         // Return go-getter compatible S3 URL for Nomad
         var region = config.S3Region ?? "us-east-1";
@@ -105,8 +116,11 @@ public sealed class S3ArtifactStore(ArtifactStoreConfig config, ILogger logger) 
 /// <summary>
 /// Uploads artifacts to Azure Blob Storage using the Azure CLI.
 /// </summary>
-public sealed class AzureBlobArtifactStore(ArtifactStoreConfig config, ILogger logger) : IArtifactStore
+public sealed class AzureBlobArtifactStore(ArtifactStoreConfig config, ILogger logger, IProcessRunner? runner = null)
+    : IArtifactStore
 {
+    private readonly IProcessRunner _runner = runner ?? ProcessRunner.Default;
+
     public async Task<string> UploadAsync(string serviceName, string version, string zipPath, CancellationToken ct = default)
     {
         if (string.IsNullOrEmpty(config.AzureStorageAccount) || string.IsNullOrEmpty(config.AzureContainer))
@@ -115,21 +129,31 @@ public sealed class AzureBlobArtifactStore(ArtifactStoreConfig config, ILogger l
         }
 
         var blobName = $"{serviceName}-{version}.zip";
-        var authArg = string.IsNullOrEmpty(Secrets.Resolve(config.AzureConnectionString))
-            ? $"--account-name {config.AzureStorageAccount} --auth-mode login"
-            : $"--connection-string \"{Secrets.Resolve(config.AzureConnectionString)}\"";
+        // A connection string holds the account key, so it goes through the environment
+        // (which az reads), not the command line, where any process listing would show it.
+        var connectionString = Secrets.Resolve(config.AzureConnectionString);
+        List<string> auth = string.IsNullOrEmpty(connectionString)
+            ? ["--account-name", config.AzureStorageAccount, "--auth-mode", "login"]
+            : [];
+        var env = string.IsNullOrEmpty(connectionString)
+            ? null
+            : new Dictionary<string, string?> { ["AZURE_STORAGE_CONNECTION_STRING"] = connectionString };
 
         logger.LogInformation("Uploading {Service} artifact to Azure Blob {Container}/{Blob}...",
             serviceName, config.AzureContainer, blobName);
 
-        await ProcessHelper.RunAsync("az",
-            $"storage blob upload --file \"{zipPath}\" --container-name {config.AzureContainer} " +
-            $"--name {blobName} {authArg} --overwrite", ct: ct);
+        (await _runner.RunAsync(new ProcessSpec("az",
+        [
+            "storage", "blob", "upload", "--file", zipPath, "--container-name", config.AzureContainer,
+            "--name", blobName, .. auth, "--overwrite"
+        ]) { Env = env, Log = logger }, ct)).EnsureSuccess("az storage blob upload");
 
         // Get the blob URL
-        var (_, output) = await ProcessHelper.RunWithOutputAsync("az",
-            $"storage blob url --container-name {config.AzureContainer} " +
-            $"--name {blobName} {authArg} --output tsv", ct: ct);
+        var output = (await _runner.RunAsync(new ProcessSpec("az",
+        [
+            "storage", "blob", "url", "--container-name", config.AzureContainer,
+            "--name", blobName, .. auth, "--output", "tsv"
+        ]) { Env = env }, ct)).EnsureSuccess("az storage blob url").Stdout;
 
         var url = output.Trim();
         logger.LogInformation("Uploaded {Service} → {Url}", serviceName, url);
@@ -214,8 +238,10 @@ public sealed class ArtifactoryArtifactStore(ArtifactStoreConfig config, ILogger
 /// <summary>
 /// Uploads artifacts to Google Cloud Storage using the gcloud CLI.
 /// </summary>
-public sealed class GcsArtifactStore(ArtifactStoreConfig config, ILogger logger) : IArtifactStore
+public sealed class GcsArtifactStore(ArtifactStoreConfig config, ILogger logger, IProcessRunner? runner = null) : IArtifactStore
 {
+    private readonly IProcessRunner _runner = runner ?? ProcessRunner.Default;
+
     public async Task<string> UploadAsync(string serviceName, string version, string zipPath, CancellationToken ct = default)
     {
         if (string.IsNullOrEmpty(config.GcsBucket))
@@ -233,11 +259,11 @@ public sealed class GcsArtifactStore(ArtifactStoreConfig config, ILogger logger)
 
         // Use gcloud storage cp (newer) or gsutil cp (older)
         var env = keyFileEnv is not null
-            ? new Dictionary<string, string> { ["GOOGLE_APPLICATION_CREDENTIALS"] = keyFileEnv }
+            ? new Dictionary<string, string?> { ["GOOGLE_APPLICATION_CREDENTIALS"] = keyFileEnv }
             : null;
 
-        await ProcessHelper.RunAsync("gcloud",
-            $"storage cp \"{zipPath}\" \"{gcsUri}\"", env, ct);
+        (await _runner.RunAsync(new ProcessSpec("gcloud", ["storage", "cp", zipPath, gcsUri]) { Env = env, Log = logger }, ct))
+            .EnsureSuccess("gcloud storage cp");
 
         // Make the object publicly readable so Nomad can download it
         // (skip if using signed URLs / private bucket with Nomad having credentials)

@@ -1,11 +1,11 @@
 using System;
-using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
+using Deployify.Core.Processes;
 using Microsoft.Extensions.Logging;
 
 namespace Deployify.Core.Services;
@@ -56,41 +56,15 @@ public sealed class ManifestReader(ILogger<ManifestReader> logger) : IManifestRe
 
         var manifestFile = Path.Combine(outputPath, "manifest.json");
         logger.LogInformation("Generating manifest from '{Path}'...", resolvedProject);
-        var psi = new ProcessStartInfo("dotnet",
-            $"run --project \"{resolvedProject}\" --publisher manifest --output-path \"{manifestFile}\"")
+        var result = await ProcessRunner.Default.RunAsync(new ProcessSpec("dotnet",
+            ["run", "--project", resolvedProject, "--publisher", "manifest", "--output-path", manifestFile])
         {
-            RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false
-        };
-        using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Could not start dotnet.");
+            Log = logger
+        }, ct);
 
-        // Drain stdout and stderr concurrently to prevent pipe deadlock
-        var stdoutTask = proc.StandardOutput.ReadToEndAsync(ct);
-        var stderrTask = proc.StandardError.ReadToEndAsync(ct);
-
-        try
+        if (!result.Ok)
         {
-            await proc.WaitForExitAsync(ct);
-        }
-        catch (OperationCanceledException)
-        {
-            try
-            {
-                proc.Kill(entireProcessTree: true);
-            }
-            catch
-            {
-                /* already exited */
-            }
-
-            throw;
-        }
-
-        await stdoutTask;
-        var stderr = await stderrTask;
-
-        if (proc.ExitCode != 0)
-        {
-            throw new InvalidOperationException($"Manifest generation failed: {stderr}");
+            throw new InvalidOperationException($"Manifest generation failed: {result.ErrorOrOutput.Trim()}");
         }
 
         return manifestFile;

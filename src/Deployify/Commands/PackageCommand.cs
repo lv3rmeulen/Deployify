@@ -64,7 +64,7 @@ public static class PackageCommand
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(ex.Message)}");
+                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {ex.Message}");
                 return 1;
             }
 
@@ -108,9 +108,8 @@ public static class PackageCommand
                 return 1;
             }
 
-            AnsiConsole.MarkupLine(
-                $"[dim]Environment: [cyan]{envName}[/] Target: [cyan]Nomad (RawExec)[/] " +
-                $"Store: [cyan]{nomadCfg.ArtifactStore.Type}[/][/]\n");
+            AnsiConsole.MarkupLineInterpolated(
+                $"[dim]Environment: [cyan]{envName}[/] Target: [cyan]Nomad (RawExec)[/] Store: [cyan]{nomadCfg.ArtifactStore.Type}[/][/]\n");
 
             var logger = resolved.Services.GetRequiredService<ILogger<PackageLog>>();
             var store = ArtifactStoreFactory.Create(nomadCfg.ArtifactStore, logger);
@@ -138,8 +137,8 @@ public static class PackageCommand
 
                     if (sourceDir is null || !Directory.Exists(sourceDir))
                     {
-                        AnsiConsole.MarkupLine($"[red]✗[/] Publish output not found for [cyan]{name}[/]. " +
-                            "Run [cyan]dotnet publish[/] first.");
+                        AnsiConsole.MarkupLineInterpolated(
+                            $"[red]✗[/] Publish output not found for [cyan]{name}[/]. Run [cyan]dotnet publish[/] first.");
                         return 1;
                     }
 
@@ -147,11 +146,11 @@ public static class PackageCommand
                     var zipPath = Path.Combine(Path.GetTempPath(), zipFileName);
                     tempZips.Add(zipPath);
 
-                    AnsiConsole.Markup($"[bold]Packaging[/] [cyan]{name}[/]... ");
+                    AnsiConsole.MarkupInterpolated($"[bold]Packaging[/] [cyan]{name}[/]... ");
 
                     if (dryRun)
                     {
-                        AnsiConsole.MarkupLine($"[dim](dry-run) would zip {sourceDir} → {zipFileName}[/]");
+                        AnsiConsole.MarkupLineInterpolated($"[dim](dry-run) would zip {sourceDir} → {zipFileName}[/]");
                         continue;
                     }
 
@@ -163,14 +162,14 @@ public static class PackageCommand
 
                     await ZipFile.CreateFromDirectoryAsync(sourceDir, zipPath, CompressionLevel.Optimal, includeBaseDirectory: false, ct);
                     var sizeMb = new FileInfo(zipPath).Length / 1024.0 / 1024.0;
-                    AnsiConsole.Markup($"[dim]{sizeMb:F1} MB[/] → uploading... ");
+                    AnsiConsole.MarkupInterpolated($"[dim]{sizeMb:F1} MB[/] → uploading... ");
 
                     // Upload
                     var url = await store.UploadAsync(name, config.ImageTag, zipPath, ct);
                     uploadedUrls[name] = url;
 
                     AnsiConsole.MarkupLine("[green]✓[/]");
-                    AnsiConsole.MarkupLine($"  [dim]{url}[/]");
+                    AnsiConsole.MarkupLineInterpolated($"  [dim]{url}[/]");
                 }
 
                 if (!dryRun && uploadedUrls.Count > 0)

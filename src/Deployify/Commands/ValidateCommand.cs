@@ -29,14 +29,14 @@ public static class ValidateCommand
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(ex.Message)}");
+                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {ex.Message}");
                 return 1;
             }
 
             var (_, config, envName, targetType, target, directory) = resolved;
             var outputDir = Path.Combine(directory, config.OutputPath);
 
-            AnsiConsole.MarkupLine($"[dim]Environment: [cyan]{envName}[/] Target: [cyan]{target.DisplayName}[/] → {resolved.DisplayAddress}[/]\n");
+            AnsiConsole.MarkupLineInterpolated($"[dim]Environment: [cyan]{envName}[/] Target: [cyan]{target.DisplayName}[/] → {resolved.DisplayAddress}[/]\n");
 
             var manifest = await resolved.LoadManifestAsync(ct);
             if (manifest is null)

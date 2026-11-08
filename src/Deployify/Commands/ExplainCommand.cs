@@ -34,12 +34,12 @@ public static class ExplainCommand
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(ex.Message)}");
+                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {ex.Message}");
                 return 1;
             }
 
             var (_, config, envName, _, target, _) = resolved;
-            AnsiConsole.MarkupLine($"[dim]Environment: [cyan]{envName}[/] Target: [cyan]{target.DisplayName}[/][/]\n");
+            AnsiConsole.MarkupLineInterpolated($"[dim]Environment: [cyan]{envName}[/] Target: [cyan]{target.DisplayName}[/][/]\n");
 
             var manifest = await resolved.LoadManifestAsync(ct);
             if (manifest is null)
@@ -67,8 +67,9 @@ public static class ExplainCommand
             foreach (var exp in explanations)
             {
                 var grid = new Grid().AddColumn().AddColumn();
-                void Row(string l, string v) => grid.AddRow($"[dim]{l}[/]", v);
-                Row("Image", $"{exp.Image ?? "n/a"}:[yellow]{exp.ImageTag}[/]");
+                // Values come from the manifest and config, so they're escaped; only the Image row adds markup.
+                void Row(string l, string v) => grid.AddRow($"[dim]{Markup.Escape(l)}[/]", Markup.Escape(v));
+                grid.AddRow("[dim]Image[/]", $"{Markup.Escape(exp.Image ?? "n/a")}:[yellow]{Markup.Escape(exp.ImageTag ?? "")}[/]");
                 Row("Count", exp.Count.ToString());
                 if (exp.Ports.Count > 0)
                 {
@@ -87,7 +88,7 @@ public static class ExplainCommand
 
                 AnsiConsole.Write(new Panel(grid)
                 {
-                    Header = new PanelHeader($" [bold cyan]{exp.Name}[/] "),
+                    Header = new PanelHeader($" [bold cyan]{Markup.Escape(exp.Name)}[/] "),
                     Border = BoxBorder.Rounded,
                     Padding = new Padding(1, 0)
                 });

@@ -117,6 +117,8 @@ deployify generate --env prod --target Kubernetes
 
 Generates artifacts and compares them against the live cluster state. Exits 0 even when the cluster is unreachable — the diff is best-effort.
 
+A service that exists on the target but couldn't be compared is listed under **Could not be checked**, with the reason, instead of being guessed as an update. Typical reasons: `kubectl diff` failed (on Windows it needs a `diff` program — add Git's `usr\bin` folder to `PATH` or set `KUBECTL_EXTERNAL_DIFF`), only the in-cluster API fallback is available, Nomad's plan API returned an error, or Docker Compose is older than 2.18 and has no `up --dry-run`. `plan` and `diff` use the same comparison, so they always agree.
+
 ```bash
 deployify plan
 deployify plan --env prod
@@ -291,7 +293,8 @@ deployify ci --skip-apply
 # Skip validation when the cluster is not reachable during the build phase
 deployify ci --skip-validate --skip-apply
 
-# Exit non-zero if the plan detects any drift (useful for change gating)
+# Exit non-zero if the plan detects any drift (useful for change gating).
+# A service that could not be checked counts as a change here.
 deployify ci --skip-apply --fail-on-changes
 
 # Deploy without a prompt (required when there is no interactive terminal)

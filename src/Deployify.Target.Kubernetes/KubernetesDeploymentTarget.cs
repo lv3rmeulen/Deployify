@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
+using Deployify.Core.Processes;
 using Deployify.Core.SecretBackends;
 using Deployify.Core.SecretBackends.KeyVault;
 using Deployify.Core.SecretBackends.Vault;
@@ -27,6 +28,13 @@ public sealed class KubernetesDeploymentTarget(
     /// <summary>Creates Key Vault clients; replaceable in tests.</summary>
     internal Func<KeyVaultConfig, IKeyVaultClient> KeyVaultClientFactory { get; init; } = c => new AzureCliKeyVaultClient(c.SubscriptionId);
 
+    /// <summary>Starts kubectl; replaceable in tests.</summary>
+    internal IProcessRunner Processes { get; init; } = ProcessRunner.Default;
+
+    private Task<bool> KubectlAvailableAsync(CancellationToken ct) => KubectlRunner.IsAvailableAsync(Processes, ct);
+
+    private KubectlRunner Kubectl(KubernetesTargetConfig cfg, ILogger? log = null) => new(cfg, log ?? logger, Processes);
+
     // ── Secrets ───────────────────────────────────────────────────────────────
 
     public IReadOnlyCollection<SecretBackendType> SupportedSecretBackends { get; } =
@@ -38,7 +46,7 @@ public sealed class KubernetesDeploymentTarget(
         return config.Secrets.Backend switch
         {
             SecretBackendType.KubernetesSecret => new KubernetesSecretStore(
-                new KubectlRunner(kubernetesConfig, storeLogger), SecretsNamespace(kubernetesConfig)),
+                Kubectl(kubernetesConfig, storeLogger), SecretsNamespace(kubernetesConfig)),
             SecretBackendType.Vault => new VaultSecretStore(
                 () => VaultClientFactory(config.Secrets.Vault), config.Secrets.Vault.Mount,
                 KubernetesManifestGenerator.VaultParametersPath(config.Secrets.Vault, kubernetesConfig)),
@@ -154,9 +162,9 @@ public sealed class KubernetesDeploymentTarget(
     public async Task<(bool Ok, string? Error)> PingAsync(EnvironmentConfig config, CancellationToken ct = default)
     {
         var kubernetesConfig = GetConfig(config);
-        if (await KubectlRunner.IsAvailableAsync(ct))
+        if (await KubectlAvailableAsync(ct))
         {
-            return await new KubectlRunner(kubernetesConfig, logger).PingAsync(ct);
+            return await Kubectl(kubernetesConfig).PingAsync(ct);
         }
 
         using var api = await KubernetesApiClient.CreateAsync(kubernetesConfig, logger, ct);
@@ -186,9 +194,9 @@ public sealed class KubernetesDeploymentTarget(
         var services = _generator.Generate(manifest, config, kubernetesConfig);
         var results = new List<ValidationResult>();
 
-        if (await KubectlRunner.IsAvailableAsync(ct))
+        if (await KubectlAvailableAsync(ct))
         {
-            var kubectl = new KubectlRunner(kubernetesConfig, logger);
+            var kubectl = Kubectl(kubernetesConfig);
             foreach (var svc in services)
             {
                 foreach (var file in await _generator.WriteYamlAsync(svc, outputDirectory, ct))
@@ -224,58 +232,7 @@ public sealed class KubernetesDeploymentTarget(
             await _generator.WriteYamlAsync(svc, outputDirectory, ct);
         }
 
-        var useKubectl = await KubectlRunner.IsAvailableAsync(ct);
-        var kubectl = useKubectl ? new KubectlRunner(kubernetesConfig, logger) : null;
-
-        IReadOnlyList<string> existingNs;
-        try
-        {
-            if (kubectl is not null)
-            {
-                existingNs = await kubectl.GetNamespacesWithPrefixAsync(kubernetesConfig.NamespacePrefix, ct);
-            }
-            else
-            {
-                using var api = await KubernetesApiClient.CreateAsync(kubernetesConfig, logger, ct);
-                existingNs = await api.GetNamespacesWithPrefixAsync(kubernetesConfig.NamespacePrefix, ct);
-            }
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning("Could not reach the cluster — assuming all services are new. ({Message})", ex.Message);
-            existingNs = [];
-        }
-
-        var existing = existingNs.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var result = new PlanResult();
-        foreach (var svc in services)
-        {
-            if (!existing.Contains(svc.Namespace))
-            {
-                result.ToCreate.Add(svc.ServiceName);
-                continue;
-            }
-
-            // kubectl diff tells us whether the live objects already match.
-            var diff = kubectl is null ? null
-                : await kubectl.DiffFileAsync(Path.Combine(outputDirectory, svc.ServiceName), ct);
-            if (diff is "")
-            {
-                result.Unchanged.Add(svc.ServiceName);
-            }
-            else
-            {
-                result.ToUpdate.Add(svc.ServiceName);
-            }
-        }
-
-        var desiredNs = services.Select(s => s.Namespace).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var ns in existing.Where(ns => !desiredNs.Contains(ns)))
-        {
-            result.ToDelete.Add(ns[(kubernetesConfig.NamespacePrefix.Length + 1)..]);
-        }
-
-        return result;
+        return PlanResult.FromDiff(await CompareWithClusterAsync(services, kubernetesConfig, outputDirectory, ct));
     }
 
     public async Task<IReadOnlyList<DeploymentResult>> ApplyAsync(
@@ -284,8 +241,8 @@ public sealed class KubernetesDeploymentTarget(
         var kubernetesConfig = GetConfig(config);
         var services = _generator.Generate(manifest, config, kubernetesConfig);
         var results = new List<DeploymentResult>();
-        var useKubectl = await KubectlRunner.IsAvailableAsync(ct);
-        var kubectl = useKubectl ? new KubectlRunner(kubernetesConfig, logger) : null;
+        var useKubectl = await KubectlAvailableAsync(ct);
+        var kubectl = useKubectl ? Kubectl(kubernetesConfig) : null;
 
         foreach (var svc in services)
         {
@@ -385,46 +342,88 @@ public sealed class KubernetesDeploymentTarget(
     {
         var kubernetesConfig = GetConfig(config);
         var services = _generator.Generate(manifest, config, kubernetesConfig);
-        var entries = new List<DiffEntry>();
-
-        if (await KubectlRunner.IsAvailableAsync(ct))
+        foreach (var svc in services)
         {
-            var kubectl = new KubectlRunner(kubernetesConfig, logger);
-            var existingNs = await kubectl.GetNamespacesWithPrefixAsync(kubernetesConfig.NamespacePrefix, ct);
-            var existingSet = existingNs.ToHashSet();
+            await _generator.WriteYamlAsync(svc, outputDirectory, ct);
+        }
 
-            foreach (var svc in services)
+        return await CompareWithClusterAsync(services, kubernetesConfig, outputDirectory, ct);
+    }
+
+    /// <summary>
+    /// Compares every service's generated YAML with the cluster; plan and diff both use this,
+    /// so they always agree. A service whose namespace is missing is Added, one kubectl diff
+    /// finds identical is Unchanged, one it finds different is Changed. When the comparison
+    /// itself fails (kubectl diff errors, or only the API fallback is available) the service
+    /// is Unknown, with the reason, rather than guessed. An unreachable cluster is treated as
+    /// empty, with a warning, as the other targets do.
+    /// </summary>
+    private async Task<List<DiffEntry>> CompareWithClusterAsync(
+        IReadOnlyList<KubernetesServiceManifest> services, KubernetesTargetConfig kubernetesConfig,
+        string outputDirectory, CancellationToken ct)
+    {
+        var kubectl = await KubectlAvailableAsync(ct) ? Kubectl(kubernetesConfig) : null;
+
+        IReadOnlyList<string> existingNs;
+        try
+        {
+            if (kubectl is not null)
             {
-                if (!existingSet.Contains(svc.Namespace))
-                {
-                    entries.Add(new DiffEntry { ServiceName = svc.ServiceName, Kind = DiffKind.Added });
-                    continue;
-                }
+                existingNs = await kubectl.GetNamespacesWithPrefixAsync(kubernetesConfig.NamespacePrefix, ct);
+            }
+            else
+            {
+                using var api = await KubernetesApiClient.CreateAsync(kubernetesConfig, logger, ct);
+                existingNs = await api.GetNamespacesWithPrefixAsync(kubernetesConfig.NamespacePrefix, ct);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning("Could not reach the cluster — assuming all services are new. ({Message})", ex.Message);
+            existingNs = [];
+        }
 
-                await _generator.WriteYamlAsync(svc, outputDirectory, ct);
-                var diff = await kubectl.DiffFileAsync(Path.Combine(outputDirectory, svc.ServiceName), ct);
-                var hasDiff = diff is null || diff.Length > 0;
-                entries.Add(new DiffEntry { ServiceName = svc.ServiceName, Kind = hasDiff ? DiffKind.Changed : DiffKind.Unchanged, Field = hasDiff ? "manifest" : null });
+        var existing = existingNs.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var entries = new List<DiffEntry>();
+        foreach (var svc in services)
+        {
+            if (!existing.Contains(svc.Namespace))
+            {
+                entries.Add(new DiffEntry { ServiceName = svc.ServiceName, Kind = DiffKind.Added });
+                continue;
             }
 
-            var desiredNs = services.Select(s => s.Namespace).ToHashSet();
-            foreach (var ns in existingNs.Where(ns => !desiredNs.Contains(ns)))
+            if (kubectl is null)
             {
                 entries.Add(new DiffEntry
                 {
-                    ServiceName = ns.StartsWith(kubernetesConfig.NamespacePrefix + "-") ? ns[(kubernetesConfig.NamespacePrefix.Length + 1)..] : ns,
-                    Kind = DiffKind.Removed
+                    ServiceName = svc.ServiceName, Kind = DiffKind.Unknown,
+                    Reason = "kubectl is not installed, and the API fallback can't diff manifests"
                 });
+                continue;
             }
-        }
-        else
-        {
-            using var api = await KubernetesApiClient.CreateAsync(kubernetesConfig, logger, ct);
-            var existingNs = (await api.GetNamespacesWithPrefixAsync(kubernetesConfig.NamespacePrefix, ct)).ToHashSet();
-            foreach (var svc in services)
+
+            var diff = await kubectl.DiffFileAsync(Path.Combine(outputDirectory, svc.ServiceName), ct);
+            entries.Add(diff.Kind switch
             {
-                entries.Add(new DiffEntry { ServiceName = svc.ServiceName, Kind = existingNs.Contains(svc.Namespace) ? DiffKind.Unchanged : DiffKind.Added });
-            }
+                KubectlDiffKind.Same => new DiffEntry { ServiceName = svc.ServiceName, Kind = DiffKind.Unchanged },
+                KubectlDiffKind.Different => new DiffEntry
+                {
+                    ServiceName = svc.ServiceName, Kind = DiffKind.Changed, Field = "manifest", NewValue = diff.Text
+                },
+                _ => new DiffEntry { ServiceName = svc.ServiceName, Kind = DiffKind.Unknown, Reason = diff.Text }
+            });
+        }
+
+        var desiredNs = services.Select(s => s.Namespace).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var prefix = kubernetesConfig.NamespacePrefix + "-";
+        foreach (var ns in existingNs.Where(ns => !desiredNs.Contains(ns)))
+        {
+            entries.Add(new DiffEntry
+            {
+                ServiceName = ns.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ? ns[prefix.Length..] : ns,
+                Kind = DiffKind.Removed
+            });
         }
 
         return entries;

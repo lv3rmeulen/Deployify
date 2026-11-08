@@ -1,10 +1,9 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Deployify.Core.Processes;
 using Microsoft.Extensions.Logging;
 
 namespace Deployify.Target.Compose;
@@ -13,38 +12,35 @@ namespace Deployify.Target.Compose;
 /// Wraps the Docker Compose CLI.
 /// Tries "docker compose" (plugin) first, falls back to "docker-compose" (standalone).
 /// </summary>
-public sealed class ComposeRunner(ComposeTargetConfig config, ILogger logger)
+public sealed class ComposeRunner(ComposeTargetConfig config, ILogger logger, IProcessRunner? runner = null)
 {
+    private readonly IProcessRunner _runner = runner ?? ProcessRunner.Default;
     private string? _resolvedBinary;
     private bool? _usePlugin;
 
     // ── Discovery ─────────────────────────────────────────────────────────────
 
     /// <summary>Returns true if any compose CLI is available on PATH.</summary>
-    public static async Task<bool> IsAvailableAsync(CancellationToken ct = default)
-    {
-        if (await TryBinaryAsync("docker", ["compose", "version"], ct))
-        {
-            return true;
-        }
+    public static Task<bool> IsAvailableAsync(CancellationToken ct = default)
+        => IsAvailableAsync(ProcessRunner.Default, ct);
 
-        if (await TryBinaryAsync("docker-compose", ["--version"], ct))
-        {
-            return true;
-        }
-
-        return false;
-    }
+    /// <summary>Returns true if any compose CLI is available on PATH.</summary>
+    public static async Task<bool> IsAvailableAsync(IProcessRunner runner, CancellationToken ct = default)
+        => await DetectCliAsync(runner, ct) is not null;
 
     /// <summary>Returns a description of which CLI will be used, or null if none found.</summary>
-    public static async Task<string?> DetectCliAsync(CancellationToken ct = default)
+    public static Task<string?> DetectCliAsync(CancellationToken ct = default)
+        => DetectCliAsync(ProcessRunner.Default, ct);
+
+    /// <summary>Returns a description of which CLI will be used, or null if none found.</summary>
+    public static async Task<string?> DetectCliAsync(IProcessRunner runner, CancellationToken ct = default)
     {
-        if (await TryBinaryAsync("docker", ["compose", "version"], ct))
+        if (await runner.IsAvailableAsync("docker", ["compose", "version"], ct: ct))
         {
             return "docker compose (plugin)";
         }
 
-        if (await TryBinaryAsync("docker-compose", ["--version"], ct))
+        if (await runner.IsAvailableAsync("docker-compose", ["--version"], ct: ct))
         {
             return "docker-compose (standalone)";
         }
@@ -60,7 +56,7 @@ public sealed class ComposeRunner(ComposeTargetConfig config, ILogger logger)
     /// </summary>
     public async Task<(bool Ok, string? Error)> PingAsync(CancellationToken ct = default)
     {
-        var result = await RunRawAsync("docker", ["info", "--format", "{{.ServerVersion}}"], logger, ct);
+        var result = await RunDockerAsync(["info", "--format", "{{.ServerVersion}}"], ct);
         return result.ExitCode == 0
             ? (true, null)
             : (false, $"Docker daemon unreachable: {result.Stderr.Trim()}");
@@ -153,13 +149,13 @@ public sealed class ComposeRunner(ComposeTargetConfig config, ILogger logger)
     /// <summary>Creates the shared project network if it doesn't exist.</summary>
     public async Task EnsureNetworkAsync(CancellationToken ct = default)
     {
-        var check = await RunRawAsync("docker", ["network", "inspect", config.ProjectName], null, ct);
-        if (check.ExitCode == 0)
+        var check = await RunDockerAsync(["network", "inspect", config.ProjectName], ct);
+        if (check.Ok)
         {
             return;
         }
 
-        await RunRawAsync("docker", ["network", "create", config.ProjectName], null, ct);
+        await RunDockerAsync(["network", "create", config.ProjectName], ct);
     }
 
     /// <summary>Creates any declared named volumes if they don't exist.</summary>
@@ -167,10 +163,10 @@ public sealed class ComposeRunner(ComposeTargetConfig config, ILogger logger)
     {
         foreach (var vol in volumeNames)
         {
-            var check = await RunRawAsync("docker", ["volume", "inspect", vol], null, ct);
-            if (check.ExitCode != 0)
+            var check = await RunDockerAsync(["volume", "inspect", vol], ct);
+            if (!check.Ok)
             {
-                await RunRawAsync("docker", ["volume", "create", vol], null, ct);
+                await RunDockerAsync(["volume", "create", vol], ct);
             }
         }
     }
@@ -181,9 +177,12 @@ public sealed class ComposeRunner(ComposeTargetConfig config, ILogger logger)
     {
         await ResolveCliAsync(ct);
         return _usePlugin == true
-            ? await RunRawAsync("docker", ["compose", .. args], logger, ct)
-            : await RunRawAsync("docker-compose", args, logger, ct);
+            ? await _runner.RunAsync(new ProcessSpec("docker", ["compose", .. args]) { Log = logger, LogTag = "compose" }, ct)
+            : await _runner.RunAsync(new ProcessSpec("docker-compose", [.. args]) { Log = logger, LogTag = "compose" }, ct);
     }
+
+    private Task<ProcessResult> RunDockerAsync(IReadOnlyList<string> args, CancellationToken ct)
+        => _runner.RunAsync(new ProcessSpec("docker", args) { Log = logger }, ct);
 
     private async Task ResolveCliAsync(CancellationToken ct)
     {
@@ -192,13 +191,13 @@ public sealed class ComposeRunner(ComposeTargetConfig config, ILogger logger)
             return;
         }
 
-        if (await TryBinaryAsync("docker", ["compose", "version"], ct))
+        if (await _runner.IsAvailableAsync("docker", ["compose", "version"], ct: ct))
         {
             _resolvedBinary = "docker";
             _usePlugin = true;
             logger.LogDebug("Using Docker Compose plugin (docker compose).");
         }
-        else if (await TryBinaryAsync("docker-compose", ["--version"], ct))
+        else if (await _runner.IsAvailableAsync("docker-compose", ["--version"], ct: ct))
         {
             _resolvedBinary = "docker-compose";
             _usePlugin = false;
@@ -212,100 +211,6 @@ public sealed class ComposeRunner(ComposeTargetConfig config, ILogger logger)
         }
     }
 
-    private static async Task<bool> TryBinaryAsync(string binary, string[] args, CancellationToken ct)
-    {
-        try
-        {
-            return (await RunRawAsync(binary, args, null, ct)).ExitCode == 0;
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Runs a process with an argument list (no shell quoting involved, so project names
-    /// and paths with spaces pass through intact) and kills it if the caller cancels.
-    /// </summary>
-    private static async Task<ProcessResult> RunRawAsync(
-        string binary, IEnumerable<string> args, ILogger? log, CancellationToken ct)
-    {
-        var psi = new ProcessStartInfo(binary)
-        {
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        };
-        foreach (var a in args)
-        {
-            psi.ArgumentList.Add(a);
-        }
-
-        using var proc = Process.Start(psi)
-            ?? throw new InvalidOperationException($"Could not start '{binary}'.");
-
-        var stdout = new StringBuilder();
-        var stderr = new StringBuilder();
-
-        proc.OutputDataReceived += (_, e) =>
-        {
-            if (e.Data is null)
-            {
-                return;
-            }
-
-            lock (stdout)
-            {
-                stdout.AppendLine(e.Data);
-            }
-
-            log?.LogDebug("[compose] {Line}", e.Data);
-        };
-        proc.ErrorDataReceived += (_, e) =>
-        {
-            if (e.Data is null)
-            {
-                return;
-            }
-
-            lock (stderr)
-            {
-                stderr.AppendLine(e.Data);
-            }
-
-            log?.LogDebug("[compose stderr] {Line}", e.Data);
-        };
-
-        proc.BeginOutputReadLine();
-        proc.BeginErrorReadLine();
-        try
-        {
-            await proc.WaitForExitAsync(ct);
-        }
-        catch (OperationCanceledException)
-        {
-            try
-            {
-                proc.Kill(entireProcessTree: true);
-            }
-            catch
-            {
-                /* already exited */
-            }
-
-            throw;
-        }
-
-        return new ProcessResult(proc.ExitCode, stdout.ToString(), stderr.ToString());
-    }
-
     private static IEnumerable<string> ProfileArgs(IEnumerable<string>? profiles)
         => (profiles ?? []).SelectMany(p => new[] { "--profile", p });
-
-    private sealed record ProcessResult(int ExitCode, string Stdout, string Stderr);
 }

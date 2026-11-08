@@ -125,68 +125,79 @@ public sealed class NomadConsulDeploymentTarget(
         CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        var jobs = Generator.Generate(manifest, config, cfg);
+        return PlanResult.FromDiff(await CompareWithClusterAsync(manifest, config, cfg, outputDirectory, ct));
+    }
 
-        // Write HCL artifacts first — apply reads these
+    /// <summary>
+    /// Writes every job's HCL (apply reads these) and asks Nomad what submitting each would
+    /// change; plan and diff both use this, so they agree. A job that isn't running is Added;
+    /// one Nomad's plan API reports no change for is Unchanged, otherwise Changed. When the
+    /// plan call itself fails the job is Unknown, with the reason, rather than guessed. An
+    /// unreachable Nomad is treated as empty, with a warning.
+    /// </summary>
+    private async Task<List<DiffEntry>> CompareWithClusterAsync(
+        AspireManifest manifest, EnvironmentConfig config, NomadConsulTargetConfig cfg, string outputDirectory, CancellationToken ct)
+    {
+        var jobs = Generator.Generate(manifest, config, cfg);
         var paths = new Dictionary<string, string>();
         foreach (var job in jobs)
         {
             paths[job.Name] = await Generator.WriteHclAsync(job, config, cfg, outputDirectory, ct);
         }
 
-        using var nomadClient = BuildNomadClient(cfg);
+        using var client = BuildNomadClient(cfg);
         HashSet<string> running, managed;
         try
         {
-            running = [.. await nomadClient.GetRunningJobNamesAsync(ct: ct)];
-            managed = [.. await nomadClient.GetRunningJobNamesAsync(managedOnly: true, ct)];
+            running = [.. await client.GetRunningJobNamesAsync(ct: ct)];
+            managed = [.. await client.GetRunningJobNamesAsync(managedOnly: true, ct)];
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogWarning(
-                "Could not reach Nomad at {Address} — assuming all services are new. ({Msg})",
+            logger.LogWarning("Could not reach Nomad at {Address} — assuming all services are new. ({Message})",
                 cfg.NomadAddress, ex.Message);
             running = [];
             managed = [];
         }
 
-        var result = new PlanResult();
+        var entries = new List<DiffEntry>();
         foreach (var job in jobs)
         {
             if (!running.Contains(job.Name))
             {
-                result.ToCreate.Add(job.Name);
+                entries.Add(new DiffEntry { ServiceName = job.Name, Kind = DiffKind.Added });
                 continue;
             }
 
-            if (await TryPlanAsync(nomadClient, paths[job.Name], ct) is "None")
+            var (diffType, error) = await TryPlanAsync(client, paths[job.Name], ct);
+            entries.Add(diffType switch
             {
-                result.Unchanged.Add(job.Name);
-            }
-            else
-            {
-                result.ToUpdate.Add(job.Name);
-            }
+                null => new DiffEntry { ServiceName = job.Name, Kind = DiffKind.Unknown, Reason = error },
+                "None" => new DiffEntry { ServiceName = job.Name, Kind = DiffKind.Unchanged },
+                _ => new DiffEntry { ServiceName = job.Name, Kind = DiffKind.Changed, Field = "job spec" }
+            });
         }
 
+        // Only jobs Deployify created are candidates for deletion.
         foreach (var name in managed.Except(jobs.Select(j => j.Name)))
         {
-            result.ToDelete.Add(name);
+            entries.Add(new DiffEntry { ServiceName = name, Kind = DiffKind.Removed });
         }
 
-        return result;
+        return entries;
     }
 
-    private async Task<string> TryPlanAsync(NomadClient client, string hclPath, CancellationToken ct)
+    /// <summary>Nomad's diff type ("None", "Added", "Edited"…), or null and the reason when the plan call fails.</summary>
+    private async Task<(string? DiffType, string? Error)> TryPlanAsync(NomadClient client, string hclPath, CancellationToken ct)
     {
         try
         {
-            return await client.PlanJobAsync(hclPath, ct);
+            return (await client.PlanJobAsync(hclPath, ct), null);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogWarning("Could not plan {Path}: {Message}", Path.GetFileName(hclPath), ex.Message);
-            return "Edited";
+            return (null, $"Nomad could not plan the job: {ex.Message}");
         }
     }
 
@@ -316,55 +327,7 @@ public sealed class NomadConsulDeploymentTarget(
         EnvironmentConfig config,
         string outputDirectory,
         CancellationToken ct = default)
-    {
-        var cfg = GetConfig(config);
-        var jobs = Generator.Generate(manifest, config, cfg).ToDictionary(j => j.Name);
-        var entries = new List<DiffEntry>();
-
-        using var nomadClient = BuildNomadClient(cfg);
-        HashSet<string> running, managed;
-        try
-        {
-            running = [.. await nomadClient.GetRunningJobNamesAsync(ct: ct)];
-            managed = [.. await nomadClient.GetRunningJobNamesAsync(managedOnly: true, ct)];
-        }
-        catch
-        {
-            // Nomad unreachable — treat every desired service as Added
-            return
-            [
-                .. jobs.Keys
-                    .Select(n => new DiffEntry { ServiceName = n, Kind = DiffKind.Added })
-            ];
-        }
-
-        foreach (var (name, job) in jobs)
-        {
-            if (!running.Contains(name))
-            {
-                entries.Add(new DiffEntry { ServiceName = name, Kind = DiffKind.Added });
-                continue;
-            }
-
-            var localPath = await Generator.WriteHclAsync(job, config, cfg, outputDirectory, ct);
-            var kind = await TryPlanAsync(nomadClient, localPath, ct) is "None"
-                ? DiffKind.Unchanged : DiffKind.Changed;
-
-            entries.Add(new DiffEntry
-            {
-                ServiceName = name,
-                Kind = kind,
-                Field = kind == DiffKind.Changed ? "job spec" : null
-            });
-        }
-
-        foreach (var name in managed.Except(jobs.Keys))
-        {
-            entries.Add(new DiffEntry { ServiceName = name, Kind = DiffKind.Removed });
-        }
-
-        return entries;
-    }
+        => await CompareWithClusterAsync(manifest, config, GetConfig(config), outputDirectory, ct);
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 

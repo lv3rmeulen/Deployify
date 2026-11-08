@@ -30,14 +30,14 @@ public static class PlanCommand
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(ex.Message)}");
+                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {ex.Message}");
                 return 1;
             }
 
             var (_, config, envName, _, target, directory) = resolved;
             var outputDir = Path.Combine(directory, config.OutputPath);
 
-            AnsiConsole.MarkupLine($"[dim]Environment: [cyan]{envName}[/] Target: [cyan]{target.DisplayName}[/][/]\n");
+            AnsiConsole.MarkupLineInterpolated($"[dim]Environment: [cyan]{envName}[/] Target: [cyan]{target.DisplayName}[/][/]\n");
 
             var manifest = await resolved.LoadManifestAsync(ct);
             if (manifest is null)
@@ -57,20 +57,19 @@ public static class PlanCommand
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] Plan failed: {Markup.Escape(ex.Message)}");
+                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] Plan failed: {ex.Message}");
                 return 1;
             }
 
-            PrintSection([.. plan.ToCreate.Select(o => o.ToString()!)], "[green]+ Create[/]", Color.Green);
-            PrintSection([.. plan.ToUpdate.Select(o => o.ToString()!)], "[yellow]~ Update[/]", Color.Yellow);
+            PrintSection(plan.ToCreate, "[green]+ Create[/]", Color.Green);
+            PrintSection(plan.ToUpdate, "[yellow]~ Update[/]", Color.Yellow);
             PrintSection(plan.ToDelete, "[red]- Delete[/]", Color.Red);
+            PlanOutput.PrintUnknown(plan);
 
-            AnsiConsole.MarkupLine(
-                $"Plan: [green]{plan.CreateCount} to create[/], " +
-                $"[yellow]{plan.UpdateCount} to update[/], " +
-                $"[red]{plan.DeleteCount} to delete[/].");
+            AnsiConsole.MarkupLine(PlanOutput.Summary(plan));
 
-            if (plan is { CreateCount: 0, UpdateCount: 0, DeleteCount: 0 })
+            // Only when every service is known to match: an unchecked one isn't "up to date".
+            if (plan.IsUpToDate)
             {
                 AnsiConsole.MarkupLine("[dim]No changes. Everything is up to date.[/]");
             }
@@ -91,7 +90,7 @@ public static class PlanCommand
         AnsiConsole.MarkupLine(heading);
         foreach (var item in items)
         {
-            AnsiConsole.MarkupLine($"  [bold {color}]{Markup.Escape(item)}[/]");
+            AnsiConsole.MarkupLineInterpolated($"  [bold {color}]{item}[/]");
         }
 
         AnsiConsole.WriteLine();

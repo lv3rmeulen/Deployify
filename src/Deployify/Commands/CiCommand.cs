@@ -72,14 +72,14 @@ public static class CiCommand
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(ex.Message)}");
+                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {ex.Message}");
                 return 1;
             }
 
             var (_, config, envName, _, target, directory) = resolved;
             var outputDir = Path.Combine(directory, config.OutputPath);
 
-            AnsiConsole.MarkupLine($"[bold]Deployify CI[/] — environment: [cyan]{envName}[/] target: [cyan]{target.DisplayName}[/]\n");
+            AnsiConsole.MarkupLineInterpolated($"[bold]Deployify CI[/] — environment: [cyan]{envName}[/] target: [cyan]{target.DisplayName}[/]\n");
 
             var manifest = await resolved.LoadManifestAsync(ct);
             if (manifest is null)
@@ -91,7 +91,7 @@ public static class CiCommand
             if (!await StepAsync("1/4 Generate", async stepCt =>
             {
                 var paths = await target.GenerateAsync(manifest, config, outputDir, stepCt);
-                AnsiConsole.MarkupLine($"[dim] {paths.Count} artifact(s) written to {Markup.Escape(outputDir)}[/]");
+                AnsiConsole.MarkupLineInterpolated($"[dim] {paths.Count} artifact(s) written to {outputDir}[/]");
             }, ct))
             {
                 return 1;
@@ -112,14 +112,14 @@ public static class CiCommand
                     {
                         foreach (var err in r.Errors)
                         {
-                            AnsiConsole.MarkupLine($"[dim] {Markup.Escape(r.ArtifactName)}: {Markup.Escape(err)}[/]");
+                            AnsiConsole.MarkupLineInterpolated($"[dim] {r.ArtifactName}: {err}[/]");
                         }
                     }
 
                     throw new InvalidOperationException($"{invalid.Count} artifact(s) failed validation.");
                 }
 
-                AnsiConsole.MarkupLine($"[dim] {results.Count} artifact(s) valid[/]");
+                AnsiConsole.MarkupLineInterpolated($"[dim] {results.Count} artifact(s) valid[/]");
             }, ct))
             {
                 return 1;
@@ -131,13 +131,19 @@ public static class CiCommand
             {
                 plan = await target.PlanAsync(manifest, config, outputDir, stepCt);
                 AnsiConsole.MarkupLine(
-                    $"[dim] +{plan.CreateCount} create / ~{plan.UpdateCount} update / -{plan.DeleteCount} delete[/]");
+                    $"[dim] +{plan.CreateCount} create / ~{plan.UpdateCount} update / -{plan.DeleteCount} delete" +
+                    (plan.UnknownCount > 0 ? $" / ?{plan.UnknownCount} unchecked" : "") + "[/]");
+                foreach (var u in plan.Unknown)
+                {
+                    AnsiConsole.MarkupLineInterpolated($"[dim]   ? {u.ServiceName}: {u.Reason}[/]");
+                }
 
-                if (doFailOnChanges && (plan.CreateCount + plan.UpdateCount + plan.DeleteCount) > 0)
+                // A service that couldn't be checked may have drifted, so it counts as a change here.
+                if (doFailOnChanges && !plan.IsUpToDate)
                 {
                     throw new InvalidOperationException(
                         $"Plan detected changes ({plan.CreateCount} create, {plan.UpdateCount} update, " +
-                        $"{plan.DeleteCount} delete) and --fail-on-changes is set.");
+                        $"{plan.DeleteCount} delete, {plan.UnknownCount} could not be checked) and --fail-on-changes is set.");
                 }
             }, ct))
             {
@@ -168,9 +174,14 @@ public static class CiCommand
                 var failed = results.Where(r => !r.Success).ToList();
                 foreach (var r in results)
                 {
-                    AnsiConsole.MarkupLine(r.Success
-                        ? $"[dim] ✓ {r.ServiceName}[/]"
-                        : $"[dim] ✗ {Markup.Escape(r.ServiceName)}: {Markup.Escape(r.Error ?? "")}[/]");
+                    if (r.Success)
+                    {
+                        AnsiConsole.MarkupLineInterpolated($"[dim] ✓ {r.ServiceName}[/]");
+                    }
+                    else
+                    {
+                        AnsiConsole.MarkupLineInterpolated($"[dim] ✗ {r.ServiceName}: {r.Error ?? ""}[/]");
+                    }
                 }
 
                 if (failed.Count > 0)
@@ -192,7 +203,7 @@ public static class CiCommand
 
     private static async Task<bool> StepAsync(string label, Func<CancellationToken, Task> step, CancellationToken ct)
     {
-        AnsiConsole.Markup($"[bold] {label}[/]... ");
+        AnsiConsole.MarkupInterpolated($"[bold] {label}[/]... ");
         try
         {
             await step(ct);
@@ -206,7 +217,7 @@ public static class CiCommand
         catch (Exception ex)
         {
             AnsiConsole.MarkupLine("[red]✗[/]");
-            AnsiConsole.MarkupLine($"[red] {Markup.Escape(ex.Message)}[/]");
+            AnsiConsole.MarkupLineInterpolated($"[red] {ex.Message}[/]");
             return false;
         }
     }

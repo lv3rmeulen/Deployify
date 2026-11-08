@@ -181,8 +181,8 @@ public sealed class AcaDeploymentTarget(
 
         return new PlanResult
         {
-            ToCreate = [.. desired.Except(running).Select(n => (object)n)],
-            ToUpdate = [.. desired.Intersect(running).Select(n => (object)n)],
+            ToCreate = [.. desired.Except(running)],
+            ToUpdate = [.. desired.Intersect(running)],
             ToDelete = [.. running.Except(desired)],
             Unchanged = []
         };

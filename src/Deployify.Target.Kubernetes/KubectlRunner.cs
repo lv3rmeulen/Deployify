@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Deployify.Core.Processes;
 using Deployify.Core.SecretBackends;
 using Microsoft.Extensions.Logging;
 
@@ -15,30 +15,22 @@ namespace Deployify.Target.Kubernetes;
 /// Wraps kubectl CLI calls. Used as primary apply mechanism.
 /// Falls back to <see cref="KubernetesApiClient"/> on failure.
 /// </summary>
-public sealed class KubectlRunner(KubernetesTargetConfig config, ILogger logger) : IKubernetesSecretClient
+public sealed class KubectlRunner(KubernetesTargetConfig config, ILogger logger, IProcessRunner? runner = null)
+    : IKubernetesSecretClient
 {
     private readonly IReadOnlyList<string> _contextArgs = BuildContextArgs(config);
+    private readonly IProcessRunner _runner = runner ?? ProcessRunner.Default;
 
     /// <summary>Label every generated resource carries; used to find our namespaces.</summary>
     public const string ManagedBySelector = "app.kubernetes.io/managed-by=deployify";
 
     /// <summary>Returns true if kubectl is available on PATH.</summary>
-    public static async Task<bool> IsAvailableAsync(CancellationToken ct = default)
-    {
-        try
-        {
-            var result = await RunRawAsync("kubectl", ["version", "--client", "--output=json"], null, ct);
-            return result.ExitCode == 0;
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch
-        {
-            return false;
-        }
-    }
+    public static Task<bool> IsAvailableAsync(CancellationToken ct = default)
+        => IsAvailableAsync(ProcessRunner.Default, ct);
+
+    /// <summary>Returns true if kubectl is available on PATH.</summary>
+    public static Task<bool> IsAvailableAsync(IProcessRunner runner, CancellationToken ct = default)
+        => runner.IsAvailableAsync("kubectl", ["version", "--client", "--output=json"], ct: ct);
 
     /// <summary>Checks connectivity to the configured cluster.</summary>
     public async Task<(bool Ok, string? Error)> PingAsync(CancellationToken ct = default)
@@ -94,14 +86,18 @@ public sealed class KubectlRunner(KubernetesTargetConfig config, ILogger logger)
         return result.Stdout.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     }
 
-    /// <summary>Returns the Deployify-managed namespaces whose name starts with the prefix.</summary>
+    /// <summary>
+    /// Returns the Deployify-managed namespaces whose name starts with the prefix. Throws when
+    /// kubectl can't reach the cluster.
+    /// </summary>
     public async Task<IReadOnlyList<string>> GetNamespacesWithPrefixAsync(string prefix, CancellationToken ct = default)
     {
         var result = await RunAsync(ct, "get", "namespaces", "-l", ManagedBySelector,
             "-o", "jsonpath={.items[*].metadata.name}");
-        if (result.ExitCode != 0)
+        if (!result.Ok)
         {
-            return [];
+            // Returning an empty list here would make every service look new.
+            throw new InvalidOperationException($"kubectl could not list namespaces: {result.Stderr.Trim()}");
         }
 
         return
@@ -127,27 +123,43 @@ public sealed class KubectlRunner(KubernetesTargetConfig config, ILogger logger)
     }
 
     /// <summary>
-    /// Diffs a YAML file or directory against the live cluster. Returns "" when there are
-    /// no differences, the diff text when there are, or null when kubectl failed.
+    /// Diffs a YAML file or directory against the live cluster. kubectl exits with 0 when
+    /// nothing differs, 1 when something does, and higher when the diff itself failed.
     /// </summary>
-    public async Task<string?> DiffFileAsync(string path, CancellationToken ct = default)
+    public async Task<KubectlDiff> DiffFileAsync(string path, CancellationToken ct = default)
     {
         string[] args = Directory.Exists(path) ? ["diff", "-R", "-f", path] : ["diff", "-f", path];
         var result = await RunAsync(ct, args);
-        // exit code 1 = differences found (not an error), exit code > 1 = actual error
-        if (result.ExitCode > 1)
+        return result.ExitCode switch
         {
-            return null;
+            0 => KubectlDiff.Same,
+            1 => KubectlDiff.Different(result.Stdout.Trim()),
+            _ => KubectlDiff.Failed(DescribeDiffFailure(result.Stderr))
+        };
+    }
+
+    /// <summary>
+    /// kubectl diff shells out to a <c>diff</c> program, which Windows doesn't have unless
+    /// Git's usr\bin is on PATH; say so instead of passing on Go's "executable file not found".
+    /// </summary>
+    internal static string DescribeDiffFailure(string stderr)
+    {
+        var message = stderr.Trim();
+        if (message.Contains("executable file not found", StringComparison.OrdinalIgnoreCase) &&
+            message.Contains("diff", StringComparison.OrdinalIgnoreCase))
+        {
+            return "kubectl diff needs a 'diff' program on PATH. On Windows, add Git's usr\\bin folder to PATH " +
+                   "or set KUBECTL_EXTERNAL_DIFF to a diff tool.";
         }
 
-        return result.Stdout.Trim();
+        return message.Length == 0 ? "kubectl diff failed without an error message." : message.Split('\n')[0].Trim();
     }
 
     /// <summary>Validates a YAML file using dry-run.</summary>
     public async Task<IReadOnlyList<string>> ValidateFileAsync(string yamlPath, CancellationToken ct = default)
     {
         var result = await RunAsync(ct, "apply", "-f", yamlPath, "--dry-run=server");
-        if (result.ExitCode == 0)
+        if (result.Ok)
         {
             return [];
         }
@@ -159,8 +171,6 @@ public sealed class KubectlRunner(KubernetesTargetConfig config, ILogger logger)
                 .Where(l => l.Contains("error", StringComparison.OrdinalIgnoreCase))
         ];
     }
-
-    // ── Private helpers ───────────────────────────────────────────────────────
 
     // ── Secrets ───────────────────────────────────────────────────────────────
 
@@ -210,90 +220,11 @@ public sealed class KubectlRunner(KubernetesTargetConfig config, ILogger logger)
     }
 
     private Task<ProcessResult> RunAsync(CancellationToken ct, params string[] args)
-        => RunRawAsync("kubectl", [.. _contextArgs, .. args], logger, ct);
+        => _runner.RunAsync(new ProcessSpec("kubectl", [.. _contextArgs, .. args]) { Log = logger, LogTag = "kubectl" }, ct);
 
+    /// <summary>For calls whose input or output holds secret data: nothing is logged.</summary>
     private Task<ProcessResult> RunQuietAsync(string? stdin, CancellationToken ct, params string[] args)
-        => RunRawAsync("kubectl", [.. _contextArgs, .. args], null, ct, stdin);
-
-    /// <summary>
-    /// Runs a process with an argument list (no shell, so paths and values with spaces or
-    /// quotes are passed through intact) and kills it if the caller cancels.
-    /// </summary>
-    private static async Task<ProcessResult> RunRawAsync(
-        string command, IEnumerable<string> args, ILogger? log, CancellationToken ct, string? stdin = null)
-    {
-        var psi = new ProcessStartInfo(command)
-        {
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            RedirectStandardInput = stdin is not null
-        };
-        foreach (var a in args)
-        {
-            psi.ArgumentList.Add(a);
-        }
-
-        using var proc = Process.Start(psi)
-            ?? throw new InvalidOperationException($"Could not start '{command}'.");
-
-        var stdout = new StringBuilder();
-        var stderr = new StringBuilder();
-
-        proc.OutputDataReceived += (_, e) =>
-        {
-            if (e.Data is not null)
-            {
-                lock (stdout)
-                {
-                    stdout.AppendLine(e.Data);
-                }
-
-                log?.LogDebug("[kubectl] {Line}", e.Data);
-            }
-        };
-        proc.ErrorDataReceived += (_, e) =>
-        {
-            if (e.Data is not null)
-            {
-                lock (stderr)
-                {
-                    stderr.AppendLine(e.Data);
-                }
-
-                log?.LogDebug("[kubectl stderr] {Line}", e.Data);
-            }
-        };
-
-        proc.BeginOutputReadLine();
-        proc.BeginErrorReadLine();
-
-        if (stdin is not null)
-        {
-            await proc.StandardInput.WriteAsync(stdin.AsMemory(), ct);
-            proc.StandardInput.Close();
-        }
-
-        try
-        {
-            await proc.WaitForExitAsync(ct);
-        }
-        catch (OperationCanceledException)
-        {
-            try
-            {
-                proc.Kill(entireProcessTree: true);
-            }
-            catch
-            {
-                /* already exited */
-            }
-
-            throw;
-        }
-
-        return new ProcessResult(proc.ExitCode, stdout.ToString(), stderr.ToString());
-    }
+        => _runner.RunAsync(new ProcessSpec("kubectl", [.. _contextArgs, .. args]) { Stdin = stdin, Sensitive = true }, ct);
 
     private static IReadOnlyList<string> BuildContextArgs(KubernetesTargetConfig cfg)
     {
@@ -310,6 +241,28 @@ public sealed class KubectlRunner(KubernetesTargetConfig config, ILogger logger)
 
         return parts;
     }
+}
 
-    private sealed record ProcessResult(int ExitCode, string Stdout, string Stderr);
+/// <summary>The outcome of <c>kubectl diff</c>: the same, different (with the diff), or unknown.</summary>
+public sealed record KubectlDiff
+{
+    private KubectlDiff(KubectlDiffKind kind, string text) => (Kind, Text) = (kind, text);
+
+    public KubectlDiffKind Kind { get; }
+
+    /// <summary>The diff when different, the reason when failed, empty when the same.</summary>
+    public string Text { get; }
+
+    public static KubectlDiff Same { get; } = new(KubectlDiffKind.Same, "");
+
+    public static KubectlDiff Different(string diff) => new(KubectlDiffKind.Different, diff);
+
+    public static KubectlDiff Failed(string reason) => new(KubectlDiffKind.Failed, reason);
+}
+
+public enum KubectlDiffKind
+{
+    Same,
+    Different,
+    Failed
 }

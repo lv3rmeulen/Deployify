@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
+using Deployify.Core.Processes;
 using Microsoft.Extensions.Logging;
 
 namespace Deployify.Target.Compose;
@@ -36,6 +37,13 @@ public sealed class ComposeDeploymentTarget(
 {
     private readonly ComposeFileGenerator _generator = new();
 
+    /// <summary>Starts docker; replaceable in tests.</summary>
+    internal IProcessRunner Processes { get; init; } = ProcessRunner.Default;
+
+    private Task<bool> CliAvailableAsync(CancellationToken ct) => ComposeRunner.IsAvailableAsync(Processes, ct);
+
+    private ComposeRunner Runner(ComposeTargetConfig cfg) => new(cfg, logger, Processes);
+
     public DeploymentTargetType TargetType => DeploymentTargetType.Compose;
     public string DisplayName => "Docker Compose";
 
@@ -44,13 +52,13 @@ public sealed class ComposeDeploymentTarget(
     public async Task<(bool Ok, string? Error)> PingAsync(
         EnvironmentConfig config, CancellationToken ct = default)
     {
-        if (!await ComposeRunner.IsAvailableAsync(ct))
+        if (!await CliAvailableAsync(ct))
         {
             return (false, "Neither 'docker compose' nor 'docker-compose' found on PATH.");
         }
 
         var cfg = GetConfig(config);
-        var runner = new ComposeRunner(cfg, logger);
+        var runner = Runner(cfg);
         return await runner.PingAsync(ct);
     }
 
@@ -91,8 +99,8 @@ public sealed class ComposeDeploymentTarget(
         var services = _generator.Generate(manifest, config, cfg);
         var results = new List<ValidationResult>();
 
-        var cliAvailable = await ComposeRunner.IsAvailableAsync(ct);
-        var runner = cliAvailable ? new ComposeRunner(cfg, logger) : null;
+        var cliAvailable = await CliAvailableAsync(ct);
+        var runner = cliAvailable ? Runner(cfg) : null;
 
         // Validate each per-service file
         foreach (var svc in services)
@@ -148,8 +156,19 @@ public sealed class ComposeDeploymentTarget(
     {
         var cfg = GetConfig(config);
         var services = _generator.Generate(manifest, config, cfg);
+        return PlanResult.FromDiff(await CompareWithRunningAsync(services, cfg, outputDirectory, ct));
+    }
 
-        // Generate all compose files to disk — apply will use these
+    /// <summary>
+    /// Writes the compose files (apply uses them) and compares them with what's running; plan
+    /// and diff both use this, so they agree. A service that isn't running is Added. For a
+    /// running one, <c>up --dry-run</c> (Compose 2.18+) says whether it would be recreated;
+    /// without dry-run support it is Unknown rather than guessed. Without a compose CLI the
+    /// running set can't be read, and all services are treated as new, with a warning.
+    /// </summary>
+    private async Task<List<DiffEntry>> CompareWithRunningAsync(
+        IReadOnlyList<ComposeService> services, ComposeTargetConfig cfg, string outputDirectory, CancellationToken ct)
+    {
         foreach (var svc in services)
         {
             await _generator.WriteServiceFileAsync(svc, outputDirectory, cfg, ct);
@@ -165,11 +184,16 @@ public sealed class ComposeDeploymentTarget(
         string? dryRun = null;
         var mergedPath = Path.Combine(outputDirectory, "compose.yml");
 
-        if (await ComposeRunner.IsAvailableAsync(ct) && File.Exists(mergedPath))
+        if (!await CliAvailableAsync(ct))
         {
-            var runner = new ComposeRunner(cfg, logger);
+            logger.LogWarning("docker compose not found — assuming all services are new.");
+        }
+        else if (File.Exists(mergedPath))
+        {
+            var runner = Runner(cfg);
             running = await runner.GetRunningServicesAsync(mergedPath, ct);
-            dryRun = await runner.DryRunUpAsync(mergedPath, ct: ct);
+            // Same profiles as apply, or services in the "prod" profile would be left out.
+            dryRun = await runner.DryRunUpAsync(mergedPath, cfg.GenerateProfiles ? ["prod"] : null, ct);
         }
 
         // Dapr sidecars run as "<service>-dapr"; they belong to their service.
@@ -177,37 +201,47 @@ public sealed class ComposeDeploymentTarget(
             .Where(r => !(r.EndsWith("-dapr", StringComparison.Ordinal) && desired.Contains(r[..^5])))
             .ToHashSet();
 
-        var result = new PlanResult();
+        var entries = new List<DiffEntry>();
         foreach (var name in desired)
         {
             if (!runningSet.Contains(name))
             {
-                result.ToCreate.Add(name);
-                continue;
+                entries.Add(new DiffEntry { ServiceName = name, Kind = DiffKind.Added });
             }
-
-            // `up --dry-run` names every container it would create or recreate. Without
-            // dry-run support (Compose < 2.18) we can't tell, so report an update.
-            var changed = dryRun is null || System.Text.RegularExpressions.Regex.IsMatch(dryRun,
-                $@"\b{System.Text.RegularExpressions.Regex.Escape(cfg.ProjectName)}[-_]{System.Text.RegularExpressions.Regex.Escape(name)}[-_]\d+\s+(Recreate|Create)",
-                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-            if (changed)
+            else if (dryRun is null)
             {
-                result.ToUpdate.Add(name);
+                entries.Add(new DiffEntry
+                {
+                    ServiceName = name, Kind = DiffKind.Unknown,
+                    Reason = "this docker compose has no 'up --dry-run' (needs Compose 2.18+)"
+                });
+            }
+            else if (WouldRecreate(dryRun, cfg.ProjectName, name))
+            {
+                entries.Add(new DiffEntry { ServiceName = name, Kind = DiffKind.Changed, Field = "config" });
             }
             else
             {
-                result.Unchanged.Add(name);
+                entries.Add(new DiffEntry { ServiceName = name, Kind = DiffKind.Unchanged });
             }
         }
 
         foreach (var name in runningSet.Except(desired))
         {
-            result.ToDelete.Add(name);
+            entries.Add(new DiffEntry { ServiceName = name, Kind = DiffKind.Removed });
         }
 
-        return result;
+        return entries;
     }
+
+    /// <summary>
+    /// <c>up --dry-run</c> names every container it would create or recreate, e.g.
+    /// <c>DRY-RUN MODE -  Container shop-api-1  Recreate</c>.
+    /// </summary>
+    internal static bool WouldRecreate(string dryRunOutput, string projectName, string serviceName)
+        => System.Text.RegularExpressions.Regex.IsMatch(dryRunOutput,
+            $@"\b{System.Text.RegularExpressions.Regex.Escape(projectName)}[-_]{System.Text.RegularExpressions.Regex.Escape(serviceName)}[-_]\d+\s+(Recreate|Create)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
     // ── Apply ─────────────────────────────────────────────────────────────────
 
@@ -229,7 +263,7 @@ public sealed class ComposeDeploymentTarget(
             ];
         }
 
-        var runner = new ComposeRunner(cfg, logger);
+        var runner = Runner(cfg);
 
         // Ensure infrastructure exists
         await runner.EnsureNetworkAsync(ct);
@@ -328,92 +362,7 @@ public sealed class ComposeDeploymentTarget(
     {
         var cfg = GetConfig(config);
         var services = _generator.Generate(manifest, config, cfg);
-        var entries = new List<DiffEntry>();
-
-        if (!await ComposeRunner.IsAvailableAsync(ct))
-        {
-            // No CLI — report all services as unknown
-            return
-            [
-                .. services.Select(s => new DiffEntry { ServiceName = s.Name, Kind = DiffKind.Unchanged, Field = "compose CLI not available — cannot diff live state" })
-            ];
-        }
-
-        var runner = new ComposeRunner(cfg, logger);
-        var mergedPath = Path.Combine(outputDirectory, "compose.yml");
-
-        // Write files so we have something to compare
-        foreach (var svc in services)
-        {
-            await _generator.WriteServiceFileAsync(svc, outputDirectory, cfg, ct);
-        }
-
-        await _generator.WriteMergedFileAsync(services, outputDirectory, cfg, ct);
-
-        IReadOnlyList<string> running = [];
-        if (File.Exists(mergedPath))
-        {
-            try
-            {
-                running = await runner.GetRunningServicesAsync(mergedPath, ct);
-            }
-            catch
-            {
-                running = [];
-            }
-        }
-
-        var runningSet = running.ToHashSet();
-        var desiredSet = services.Select(s => s.Name).ToHashSet();
-
-        // Try docker compose up --dry-run for rich diff (Compose v2.18+)
-        var dryRunOutput = await runner.DryRunUpAsync(mergedPath,
-            cfg.GenerateProfiles ? new[] { "prod" } : null, ct);
-
-        if (dryRunOutput is not null)
-        {
-            // Parse dry-run output for changed/unchanged markers
-            var changedServices = dryRunOutput
-                .Split('\n')
-                .Where(l => l.Contains("Recreate") || l.Contains("Create") || l.Contains("Update"))
-                .Select(l => l.Trim().Split(' ')[0])
-                .Where(desiredSet.Contains)
-                .ToHashSet();
-
-            foreach (var svc in services)
-            {
-                var kind = !runningSet.Contains(svc.Name) ? DiffKind.Added
-                         : changedServices.Contains(svc.Name) ? DiffKind.Changed
-                         : DiffKind.Unchanged;
-
-                entries.Add(new DiffEntry
-                {
-                    ServiceName = svc.Name,
-                    Kind = kind,
-                    Field = kind == DiffKind.Changed ? "config" : null
-                });
-            }
-        }
-        else
-        {
-            // Fallback: name-only diff
-            foreach (var svc in services)
-            {
-                entries.Add(new DiffEntry
-                {
-                    ServiceName = svc.Name,
-                    Kind = runningSet.Contains(svc.Name) ? DiffKind.Unchanged : DiffKind.Added
-                });
-            }
-        }
-
-        // Services running but not in manifest
-        foreach (var name in runningSet.Except(desiredSet))
-        {
-            entries.Add(new DiffEntry { ServiceName = name, Kind = DiffKind.Removed });
-        }
-
-        return entries;
+        return await CompareWithRunningAsync(services, cfg, outputDirectory, ct);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

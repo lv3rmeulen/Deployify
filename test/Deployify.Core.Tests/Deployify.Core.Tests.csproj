@@ -19,4 +19,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Deployify.Core\Deployify.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared\FakeProcessRunner.cs" Link="Shared\FakeProcessRunner.cs" />
+  </ItemGroup>
 </Project>

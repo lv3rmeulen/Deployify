@@ -1,12 +1,13 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
+using System.Linq;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
+using Deployify.Core.Processes;
 using Microsoft.Extensions.Logging;
 
 namespace Deployify.Core.Services;
@@ -82,13 +83,25 @@ public class Publisher(ILogger<Publisher> logger) : IPublisher
 
             logger.LogInformation("Publishing '{Name}' → {Repository}:{Tag} (runtime: {Runtime})...",
                 name, repository, tag, runtime);
-            await RunAsync("dotnet",
-                $"publish \"{projectPath}\" -t:PublishContainer " +
-                $"--os {config.ContainerOs} --arch {config.ContainerArch} " +
-                $"-p:ContainerRepository={repository} -p:ContainerImageTag={tag}" +
-                $"{registryArg}{runtimeArg}{socketArg}", ct);
+            (await ProcessRunner.Default.RunAsync(new ProcessSpec("dotnet",
+                    BuildPublishArgs(projectPath, config.ContainerOs, config.ContainerArch, repository, tag,
+                        registryArg, runtimeArg, socketArg)) { Log = logger }, ct))
+                .EnsureSuccess("dotnet publish");
         }
     }
+
+    /// <summary>
+    /// The <c>dotnet publish</c> arguments, one list item per argument, so a project path with
+    /// spaces or a repository with unusual characters can't split into extra arguments.
+    /// </summary>
+    internal static IReadOnlyList<string> BuildPublishArgs(
+        string projectPath, string os, string arch, string repository, string tag, params string[] properties)
+        =>
+        [
+            "publish", projectPath, "-t:PublishContainer", "--os", os, "--arch", arch,
+            $"-p:ContainerRepository={repository}", $"-p:ContainerImageTag={tag}",
+            .. properties.Select(p => p.Trim()).Where(p => p.Length > 0)
+        ];
 
     /// <summary>
     /// Returns the explicit ContainerDaemonSocket MSBuild property for the active runtime,
@@ -225,95 +238,13 @@ public class Publisher(ILogger<Publisher> logger) : IPublisher
 
     private static async Task<bool> IsDockerReachableAsync(CancellationToken ct)
     {
-        try
-        {
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(TimeSpan.FromSeconds(3));
-            var psi = new ProcessStartInfo("docker", "info")
-            {
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null)
-            {
-                return false;
-            }
-
-            try
-            {
-                var stdoutTask = proc.StandardOutput.ReadToEndAsync(cts.Token);
-                var stderrTask = proc.StandardError.ReadToEndAsync(cts.Token);
-                await proc.WaitForExitAsync(cts.Token);
-                await Task.WhenAll(stdoutTask, stderrTask);
-                return proc.ExitCode == 0;
-            }
-            catch (OperationCanceledException)
-            {
-                try
-                {
-                    proc.Kill(entireProcessTree: true);
-                }
-                catch
-                {
-                    /* ignore */
-                }
-
-                return false;
-            }
-        }
-        catch
-        {
-            return false;
-        }
+        return await ProcessRunner.Default.IsAvailableAsync("docker", ["info"], TimeSpan.FromSeconds(3), ct);
     }
 
     private static async Task<bool> IsPodmanReachableAsync(CancellationToken ct)
     {
         TrySetPodmanSocketAsDockerHost();
-        try
-        {
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(TimeSpan.FromSeconds(3));
-            var psi = new ProcessStartInfo("podman", "info")
-            {
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null)
-            {
-                return false;
-            }
-
-            try
-            {
-                var stdoutTask = proc.StandardOutput.ReadToEndAsync(cts.Token);
-                var stderrTask = proc.StandardError.ReadToEndAsync(cts.Token);
-                await proc.WaitForExitAsync(cts.Token);
-                await Task.WhenAll(stdoutTask, stderrTask);
-                return proc.ExitCode == 0;
-            }
-            catch (OperationCanceledException)
-            {
-                try
-                {
-                    proc.Kill(entireProcessTree: true);
-                }
-                catch
-                {
-                    /* ignore */
-                }
-
-                return false;
-            }
-        }
-        catch
-        {
-            return false;
-        }
+        return await ProcessRunner.Default.IsAvailableAsync("podman", ["info"], TimeSpan.FromSeconds(3), ct);
     }
 
     private static void TrySetPodmanSocketAsDockerHost()
@@ -381,46 +312,5 @@ public class Publisher(ILogger<Publisher> logger) : IPublisher
     {
         [DllImport("libc")]
         internal static extern uint getuid();
-    }
-
-    private static async Task RunAsync(string command, string args, CancellationToken ct)
-    {
-        var psi = new ProcessStartInfo(command, args)
-        {
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        };
-        using var proc = Process.Start(psi)
-            ?? throw new InvalidOperationException($"Could not start {command}.");
-
-        var stdoutTask = proc.StandardOutput.ReadToEndAsync(ct);
-        var stderrTask = proc.StandardError.ReadToEndAsync(ct);
-        try
-        {
-            await proc.WaitForExitAsync(ct);
-        }
-        catch (OperationCanceledException)
-        {
-            try
-            {
-                proc.Kill(entireProcessTree: true);
-            }
-            catch
-            {
-                /* already exited */
-            }
-
-            throw;
-        }
-
-        await stdoutTask;
-        var stderr = await stderrTask;
-
-        if (proc.ExitCode != 0)
-        {
-            throw new InvalidOperationException(
-                $"{command} exited with {proc.ExitCode}: {stderr}");
-        }
     }
 }

@@ -172,8 +172,8 @@ public sealed class NomadClient : IDisposable
 
     private sealed class NomadJobStub
     {
-        [JsonPropertyName("ID")] public string Id { get; } = string.Empty;
-        [JsonPropertyName("Status")] public string? Status { get; }
-        [JsonPropertyName("Meta")] public Dictionary<string, string>? Meta { get; }
+        [JsonPropertyName("ID")] public string Id { get; init; } = string.Empty;
+        [JsonPropertyName("Status")] public string? Status { get; init; }
+        [JsonPropertyName("Meta")] public Dictionary<string, string>? Meta { get; init; }
     }
 }

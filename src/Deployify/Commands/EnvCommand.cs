@@ -50,13 +50,14 @@ public static class EnvCommand
             foreach (var (name, cfg) in stateFile.Environments)
             {
                 var isActive = name == stateFile.ActiveEnvironment;
-                var label = isActive ? $"[bold cyan]▶ {name}[/]" : $"  {name}";
-                var address = GetDisplayAddress(cfg);
-                table.AddRow(label, cfg.Target.ToString(), address, cfg.ContainerRegistry ?? "[dim]-[/]");
+                var label = isActive ? $"[bold cyan]▶ {Markup.Escape(name)}[/]" : $"  {Markup.Escape(name)}";
+                var address = Markup.Escape(GetDisplayAddress(cfg));
+                table.AddRow(label, cfg.Target.ToString(), address,
+                    cfg.ContainerRegistry is { } registry ? Markup.Escape(registry) : "[dim]-[/]");
             }
 
             AnsiConsole.Write(table);
-            AnsiConsole.MarkupLine($"\nActive: [bold cyan]{stateFile.ActiveEnvironment}[/]");
+            AnsiConsole.MarkupLineInterpolated($"\nActive: [bold cyan]{stateFile.ActiveEnvironment}[/]");
         });
         return cmd;
     }
@@ -80,7 +81,7 @@ public static class EnvCommand
 
             if (!stateFile.Environments.ContainsKey(name))
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] Environment '[bold]{name}[/]' not found. Available: {string.Join(", ", stateFile.Environments.Keys)}");
+                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] Environment '[bold]{name}[/]' not found. Available: {string.Join(", ", stateFile.Environments.Keys)}");
                 return 1;
             }
 
@@ -89,7 +90,7 @@ public static class EnvCommand
             await stateManager.SaveFileAsync(stateFile, directory, ct);
             await SecretsWarning.PrintAsync(stateFile, directory, ct);
 
-            AnsiConsole.MarkupLine($"[green]✓[/] Switched [dim]{previous}[/] → [bold cyan]{name}[/] ({stateFile.Environments[name].Target})");
+            AnsiConsole.MarkupLineInterpolated($"[green]✓[/] Switched [dim]{previous}[/] → [bold cyan]{name}[/] ({stateFile.Environments[name].Target})");
 
             return 0;
         });
@@ -203,7 +204,7 @@ public static class EnvCommand
 
             if (stateFile.Environments.ContainsKey(name))
             {
-                AnsiConsole.MarkupLine($"[yellow]![/] '{name}' already exists. Use [cyan]deployify env set[/] to update.");
+                AnsiConsole.MarkupLineInterpolated($"[yellow]![/] '{name}' already exists. Use [cyan]deployify env set[/] to update.");
                 return 1;
             }
 
@@ -242,10 +243,10 @@ public static class EnvCommand
 
             await stateManager.SaveFileAsync(stateFile, directory, ct);
             await SecretsWarning.PrintAsync(stateFile, directory, ct);
-            AnsiConsole.MarkupLine($"[green]✓[/] Environment [bold cyan]{name}[/] added ({config.Target}).");
+            AnsiConsole.MarkupLineInterpolated($"[green]✓[/] Environment [bold cyan]{name}[/] added ({config.Target}).");
             if (activate)
             {
-                AnsiConsole.MarkupLine($"  Now active: [bold cyan]{name}[/]");
+                AnsiConsole.MarkupLineInterpolated($"  Now active: [bold cyan]{name}[/]");
             }
 
             return 0;
@@ -375,7 +376,7 @@ public static class EnvCommand
 
             if (!stateFile.Environments.TryGetValue(name, out var config))
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] Environment '{name}' not found.");
+                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] Environment '{name}' not found.");
                 return 1;
             }
 
@@ -528,7 +529,7 @@ public static class EnvCommand
 
             await stateManager.SaveFileAsync(stateFile, directory, ct);
             await SecretsWarning.PrintAsync(stateFile, directory, ct);
-            AnsiConsole.MarkupLine($"[green]✓[/] [bold cyan]{name}[/] updated: {string.Join(", ", changed)}");
+            AnsiConsole.MarkupLineInterpolated($"[green]✓[/] [bold cyan]{name}[/] updated: {string.Join(", ", changed)}");
 
             return 0;
         });
@@ -560,7 +561,7 @@ public static class EnvCommand
 
             if (!stateFile.Environments.ContainsKey(name))
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] '{name}' not found.");
+                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] '{name}' not found.");
                 return 1;
             }
 
@@ -576,7 +577,7 @@ public static class EnvCommand
                 return 1;
             }
 
-            if (!force && !await ConsolePrompts.ConfirmAsync($"Remove '[bold]{name}[/]'?", defaultValue: false, ct))
+            if (!force && !await ConsolePrompts.ConfirmAsync($"Remove '[bold]{Markup.Escape(name)}[/]'?", defaultValue: false, ct))
             {
                 return 0;
             }
@@ -584,7 +585,7 @@ public static class EnvCommand
             stateFile.Environments.Remove(name);
             await stateManager.SaveFileAsync(stateFile, directory, ct);
             await SecretsWarning.PrintAsync(stateFile, directory, ct);
-            AnsiConsole.MarkupLine($"[green]✓[/] Environment [bold]{name}[/] removed.");
+            AnsiConsole.MarkupLineInterpolated($"[green]✓[/] Environment [bold]{name}[/] removed.");
 
             return 0;
         });

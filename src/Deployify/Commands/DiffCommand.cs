@@ -29,13 +29,13 @@ public static class DiffCommand
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(ex.Message)}");
+                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {ex.Message}");
                 return 1;
             }
 
             var (_, config, envName, _, target, directory) = resolved;
             var outputDir = Path.Combine(directory, config.OutputPath);
-            AnsiConsole.MarkupLine($"[dim]Environment: [cyan]{envName}[/] Target: [cyan]{target.DisplayName}[/][/]\n");
+            AnsiConsole.MarkupLineInterpolated($"[dim]Environment: [cyan]{envName}[/] Target: [cyan]{target.DisplayName}[/][/]\n");
 
             var manifest = await resolved.LoadManifestAsync(ct);
             if (manifest is null)
@@ -61,11 +61,13 @@ public static class DiffCommand
                     DiffKind.Added => ("+", "green"),
                     DiffKind.Removed => ("-", "red"),
                     DiffKind.Changed => ("~", "yellow"),
+                    DiffKind.Unknown => ("?", "blue"),
                     _ => (" ", "dim")
                 };
+                var detail = e.Kind == DiffKind.Unknown ? e.Reason : e.Field;
                 table.AddRow(
-                    $"[{color}]{icon} {e.ServiceName}[/]",
-                    $"[{color}]{e.Kind}[/]" + (e.Field is not null ? $" [dim]({e.Field})[/]" : ""));
+                    $"[{color}]{icon} {Markup.Escape(e.ServiceName)}[/]",
+                    $"[{color}]{e.Kind}[/]" + (detail is not null ? $" [dim]({Markup.Escape(detail)})[/]" : ""));
             }
 
             AnsiConsole.Write(table);
@@ -73,7 +75,9 @@ public static class DiffCommand
             var added = entries.Count(e => e.Kind == DiffKind.Added);
             var removed = entries.Count(e => e.Kind == DiffKind.Removed);
             var changed = entries.Count(e => e.Kind == DiffKind.Changed);
-            AnsiConsole.MarkupLine($"\nDiff: [green]+{added}[/] [yellow]~{changed}[/] [red]-{removed}[/]");
+            var unknown = entries.Count(e => e.Kind == DiffKind.Unknown);
+            AnsiConsole.MarkupLine($"\nDiff: [green]+{added}[/] [yellow]~{changed}[/] [red]-{removed}[/]" +
+                                   (unknown > 0 ? $" [blue]?{unknown} could not be checked[/]" : ""));
 
             return 0;
         });

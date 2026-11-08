@@ -1,9 +1,9 @@
 using System;
-using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Models;
+using Deployify.Core.Processes;
 using Deployify.Core.Services;
 using Spectre.Console;
 
@@ -44,7 +44,7 @@ internal static class SecretsWarning
         AnsiConsole.MarkupLine("\n[yellow]![/] deployify-state.json stores these secrets as plain text:");
         foreach (var path in literal)
         {
-            AnsiConsole.MarkupLine($"    [yellow]{Markup.Escape(path)}[/]");
+            AnsiConsole.MarkupLineInterpolated($"    [yellow]{path}[/]");
         }
 
         AnsiConsole.MarkupLine("  Store a reference instead, e.g. [cyan]\"env:NOMAD_TOKEN\"[/], and set the variable " +
@@ -62,45 +62,18 @@ internal static class SecretsWarning
     {
         try
         {
-            var psi = new ProcessStartInfo("git")
-            {
-                WorkingDirectory = directory,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            };
-            foreach (var a in new[] { "check-ignore", "-q", fileName })
-            {
-                psi.ArgumentList.Add(a);
-            }
-
-            using var proc = Process.Start(psi);
-            if (proc is null)
-            {
-                return null;
-            }
-
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(TimeSpan.FromSeconds(3));
-            try
-            {
-                await proc.WaitForExitAsync(timeout.Token);
-            }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-            {
-                proc.Kill(entireProcessTree: true);
-                return null;
-            }
+            var result = await ProcessRunner.Default.RunAsync(
+                new ProcessSpec("git", ["check-ignore", "-q", fileName])
+                {
+                    WorkingDirectory = directory, Timeout = TimeSpan.FromSeconds(3)
+                }, ct);
 
             // 0 = ignored, 1 = not ignored, 128 = not a git repository
-            return proc.ExitCode switch { 0 => false, 1 => true, _ => null };
+            return result.ExitCode switch { 0 => false, 1 => true, _ => null };
         }
-        catch (OperationCanceledException)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            throw;
-        }
-        catch
-        {
+            // No git, a timeout, or anything else: we just can't tell.
             return null;
         }
     }

@@ -11,4 +11,8 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Deployify.Target.Compose.Tests" />
+  </ItemGroup>
+
 </Project>

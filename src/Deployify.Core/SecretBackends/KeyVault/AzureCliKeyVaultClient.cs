@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Deployify.Core.Processes;
 
 namespace Deployify.Core.SecretBackends.KeyVault;
 
@@ -14,14 +14,16 @@ namespace Deployify.Core.SecretBackends.KeyVault;
 /// principals and managed identities the same way the Container Apps target does. Secret values
 /// never appear on a command line or in a log.
 /// </summary>
-public sealed class AzureCliKeyVaultClient(string? subscriptionId = null) : IKeyVaultClient
+public sealed class AzureCliKeyVaultClient(string? subscriptionId = null, IProcessRunner? runner = null) : IKeyVaultClient
 {
+    private readonly IProcessRunner _runner = runner ?? ProcessRunner.Default;
+
     /// <inheritdoc />
     public async Task<KeyVaultSecret?> GetSecretAsync(string vaultName, string name, CancellationToken ct = default)
     {
         // Output holds the secret value: it's parsed and wrapped, never logged.
-        var (exit, output) = await RunAsync("az", BuildArgs(
-            $"keyvault secret show --vault-name {vaultName} --name {name} --output json"), ct);
+        var (exit, output) = await RunAsync(BuildArgs(
+            "keyvault", "secret", "show", "--vault-name", vaultName, "--name", name, "--output", "json"), ct);
         if (exit != 0)
         {
             if (output.Contains("SecretNotFound", StringComparison.Ordinal) ||
@@ -39,7 +41,7 @@ public sealed class AzureCliKeyVaultClient(string? subscriptionId = null) : IKey
     /// <inheritdoc />
     public async Task<IReadOnlyList<KeyVaultSecretInfo>> ListSecretsAsync(string vaultName, CancellationToken ct = default)
     {
-        var (exit, output) = await RunAsync("az", BuildArgs($"keyvault secret list --vault-name {vaultName} --output json"), ct);
+        var (exit, output) = await RunAsync(BuildArgs("keyvault", "secret", "list", "--vault-name", vaultName, "--output", "json"), ct);
         if (exit != 0)
         {
             throw new InvalidOperationException($"Failed to list Key Vault secrets in {vaultName}: {FirstLine(output)}");
@@ -63,11 +65,14 @@ public sealed class AzureCliKeyVaultClient(string? subscriptionId = null) : IKey
                 File.SetUnixFileMode(valuePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
             }
 
-            var tagArgs = tags.Count == 0 ? "" : " --tags " + string.Join(' ', tags.Select(t => $"{t.Key}={t.Value}"));
+            // Each tag is one key=value argument, so values with spaces stay whole.
+            string[] tagArgs = tags.Count == 0 ? [] : ["--tags", .. tags.Select(t => $"{t.Key}={t.Value}")];
             // --query id keeps the value out of the output.
-            var (exit, output) = await RunAsync("az", BuildArgs(
-                $"keyvault secret set --vault-name {vaultName} --name {name} --file \"{valuePath}\" --encoding utf-8" +
-                $"{tagArgs} --query id --output tsv"), ct);
+            var (exit, output) = await RunAsync(BuildArgs(
+            [
+                "keyvault", "secret", "set", "--vault-name", vaultName, "--name", name,
+                "--file", valuePath, "--encoding", "utf-8", .. tagArgs, "--query", "id", "--output", "tsv"
+            ]), ct);
             if (exit != 0)
             {
                 throw new InvalidOperationException($"Failed to store Key Vault secret {name}: {FirstLine(output)}");
@@ -110,47 +115,13 @@ public sealed class AzureCliKeyVaultClient(string? subscriptionId = null) : IKey
     private static string FirstLine(string output)
         => output.Trim().Split('\n', 2)[0].Trim();
 
-    private string BuildArgs(string command)
-        => string.IsNullOrWhiteSpace(subscriptionId) ? command : $"--subscription {subscriptionId} {command}";
+    internal IReadOnlyList<string> BuildArgs(params string[] command)
+        => string.IsNullOrWhiteSpace(subscriptionId) ? command : ["--subscription", subscriptionId, .. command];
 
-    private static async Task<(int ExitCode, string Output)> RunAsync(string command, string args, CancellationToken ct)
+    // Output can hold secret values (secret show), so nothing is logged.
+    private async Task<(int ExitCode, string Output)> RunAsync(IReadOnlyList<string> args, CancellationToken ct)
     {
-        // On Windows the Azure CLI is a batch file (az.cmd).
-        if (command == "az" && OperatingSystem.IsWindows())
-        {
-            command = "az.cmd";
-        }
-
-        var psi = new ProcessStartInfo(command, args)
-        {
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        };
-
-        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"Could not start {command}.");
-        var stdoutTask = proc.StandardOutput.ReadToEndAsync(ct);
-        var stderrTask = proc.StandardError.ReadToEndAsync(ct);
-        try
-        {
-            await proc.WaitForExitAsync(ct);
-        }
-        catch (OperationCanceledException)
-        {
-            try
-            {
-                proc.Kill(entireProcessTree: true);
-            }
-            catch
-            {
-                /* already exited */
-            }
-
-            throw;
-        }
-
-        var output = await stdoutTask;
-        var stderr = await stderrTask;
-        return (proc.ExitCode, string.IsNullOrWhiteSpace(output) ? stderr : output);
+        var result = await _runner.RunAsync(new ProcessSpec("az", args) { Sensitive = true }, ct);
+        return (result.ExitCode, result.Output);
     }
 }

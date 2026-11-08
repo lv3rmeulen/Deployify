@@ -32,4 +32,8 @@
     <ProjectReference Include="..\Deployify.Target.NomadConsul\Deployify.Target.NomadConsul.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Deployify.Integration.Tests" />
+  </ItemGroup>
+
 </Project>

@@ -39,14 +39,14 @@ public static class ApplyCommand
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(ex.Message)}");
+                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {ex.Message}");
                 return 1;
             }
 
             var (_, config, envName, _, target, directory) = resolved;
             var outputDir = Path.Combine(directory, config.OutputPath);
 
-            AnsiConsole.MarkupLine($"[dim]Environment: [cyan]{envName}[/] Target: [cyan]{target.DisplayName}[/][/]\n");
+            AnsiConsole.MarkupLineInterpolated($"[dim]Environment: [cyan]{envName}[/] Target: [cyan]{target.DisplayName}[/][/]\n");
 
             var manifest = await resolved.LoadManifestAsync(ct);
             if (manifest is null)
@@ -60,14 +60,12 @@ public static class ApplyCommand
             try
             {
                 var plan = await target.PlanAsync(manifest, config, outputDir, ct);
-                AnsiConsole.MarkupLine(
-                    $"[bold]Plan:[/] [green]{plan.CreateCount} to create[/], " +
-                    $"[yellow]{plan.UpdateCount} to update[/], " +
-                    $"[red]{plan.DeleteCount} to delete[/].");
+                PlanOutput.PrintUnknown(plan);
+                AnsiConsole.MarkupLine(PlanOutput.Summary(plan, "[bold]Plan:[/]"));
             }
             catch (Exception ex) when (dryRun)
             {
-                AnsiConsole.MarkupLine($"[yellow]![/] Could not reach cluster for diff: {Markup.Escape(ex.Message)}");
+                AnsiConsole.MarkupLineInterpolated($"[yellow]![/] Could not reach cluster for diff: {ex.Message}");
                 AnsiConsole.MarkupLine("[yellow]Dry-run: artifacts written, no changes applied.[/]");
                 return 0;
             }
@@ -78,7 +76,8 @@ public static class ApplyCommand
                 return 0;
             }
 
-            if (!approve && !await ConsolePrompts.ConfirmAsync($"Apply to [bold cyan]{envName}[/] ({target.DisplayName})?", ct))
+            if (!approve && !await ConsolePrompts.ConfirmAsync(
+                    $"Apply to [bold cyan]{Markup.Escape(envName)}[/] ({Markup.Escape(target.DisplayName)})?", ct))
             {
                 AnsiConsole.MarkupLine("Aborted.");
                 return 0;
@@ -90,7 +89,7 @@ public static class ApplyCommand
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(ex.Message)}");
+                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {ex.Message}");
                 return 1;
             }
 
@@ -102,7 +101,7 @@ public static class ApplyCommand
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                AnsiConsole.MarkupLine($"[yellow]![/] Could not record secret references: {Markup.Escape(ex.Message)}");
+                AnsiConsole.MarkupLineInterpolated($"[yellow]![/] Could not record secret references: {ex.Message}");
             }
 
             var succeeded = results.Count(r => r.Success);
@@ -113,17 +112,24 @@ public static class ApplyCommand
                 if (r.Success)
                 {
                     AnsiConsole.MarkupLine($"  [green]✓[/] {Markup.Escape(r.ServiceName)}" +
-                        (r.DeploymentId is not null ? $" [dim]({r.DeploymentId})[/]" : ""));
+                        (r.DeploymentId is not null ? $" [dim]({Markup.Escape(r.DeploymentId)})[/]" : ""));
                 }
                 else
                 {
-                    AnsiConsole.MarkupLine($"  [red]✗[/] {Markup.Escape(r.ServiceName)}: {Markup.Escape(r.Error ?? "")}");
+                    AnsiConsole.MarkupLineInterpolated($"  [red]✗[/] {r.ServiceName}: {r.Error ?? ""}");
                 }
             }
 
-            AnsiConsole.MarkupLine(failed == 0
-                ? $"\n[green]Apply complete.[/] {succeeded} service(s) deployed to [cyan]{envName}[/]."
-                : $"\n[yellow]Apply finished with errors.[/] {succeeded} succeeded, {failed} failed.");
+            if (failed == 0)
+            {
+                AnsiConsole.MarkupLineInterpolated(
+                    $"\n[green]Apply complete.[/] {succeeded} service(s) deployed to [cyan]{envName}[/].");
+            }
+            else
+            {
+                AnsiConsole.MarkupLineInterpolated(
+                    $"\n[yellow]Apply finished with errors.[/] {succeeded} succeeded, {failed} failed.");
+            }
 
             if (failed > 0)
             {
