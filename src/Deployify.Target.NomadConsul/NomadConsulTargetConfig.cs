@@ -102,6 +102,12 @@ public sealed class NomadConsulTargetConfig
     public string HealthCheckType { get; set; } = "tcp";
 
     /// <summary>
+    /// Emits <c>auto_revert = true</c> in every job's update block, so Nomad goes back to the
+    /// last stable job version by itself when a deployment fails. Defaults to true.
+    /// </summary>
+    public bool AutoRevert { get; set; } = true;
+
+    /// <summary>
     /// Base port for services whose Aspire bindings carry no port. Defaults to 8080.
     /// </summary>
     public int BasePort { get; set; } = 8080;

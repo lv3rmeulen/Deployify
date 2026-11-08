@@ -135,7 +135,7 @@ deployify apply --dry-run               # generate + plan only, no changes appli
 
 #### Health-gated rollouts
 
-On targets that support it (currently **AWS ECS**), `apply` and `ci` deploy services in
+On targets that support it (**AWS ECS**, **Nomad** and **Nomad + Consul**), `apply` and `ci` deploy services in
 dependency order, one wave at a time, and wait for each wave to become healthy before moving on.
 If a service fails, doesn't become healthy within the timeout, or the run is cancelled with
 Ctrl+C, every service the rollout touched is put back on the revision it ran before, in reverse
@@ -162,6 +162,25 @@ On ECS the deployment circuit breaker with rollback is turned on by default
 (`"deploymentCircuitBreaker": false` under `targetConfig.ecs` turns it off). When ECS reverts a
 service itself, Deployify waits for the old task definition to be healthy instead of rolling back
 a second time.
+
+On Nomad, jobs get `auto_revert = true` in their update block by default (`"autoRevert": false`
+under `targetConfig.nomad` or `targetConfig.nomadconsul` turns it off). A revision is a job
+version; rolling back reverts the job, which Nomad registers as a new version, and Deployify waits
+for that one. Job secrets in Nomad Variables are put back too, but only within the same run: they
+are kept in memory, never in the journal, so `deployify rollback` later restores the job version
+but not its secrets. With Nomad + Consul, a service that registers a Consul check must also have a
+passing instance in Consul before it counts as healthy.
+
+```bash
+deployify status                        # recent rollouts in this environment
+deployify status --rollout <id>         # per service: before, deployed, restored, detail
+deployify rollback --auto-approve       # undo the latest rollout from its journal
+deployify rollback --rollout <id>       # undo a specific one
+```
+
+`rollback` restores every service the rollout touched that isn't already back, in reverse order,
+and waits for each one to be healthy. It exits `0` when everything is restored and `3` when a
+service could not be.
 
 ### `package`
 

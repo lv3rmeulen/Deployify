@@ -82,7 +82,8 @@ internal static class EcsRolloutHealth
             var ours = status.Deployments.FirstOrDefault(d => d.TaskDefinition == taskDefinitionArn);
             var why = ours?.RolloutStateReason is { } r ? $": {r}" : "";
             return circuitBreaker
-                ? HealthObservation.Reverted($"the ECS circuit breaker rolled back to {Short(primary.TaskDefinition)}{why}")
+                ? HealthObservation.Reverted(
+                    $"the ECS circuit breaker rolled back to {Short(primary.TaskDefinition)}{why}", primary.TaskDefinition)
                 : HealthObservation.Failed($"{Short(primary.TaskDefinition)} replaced {Short(taskDefinitionArn)}{why}");
         }
 

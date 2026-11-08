@@ -62,6 +62,13 @@ public sealed class NomadTargetConfig
     public string HealthCheckType { get; set; } = "tcp";
 
     /// <summary>
+    /// Emits <c>auto_revert = true</c> in every job's update block, so Nomad goes back to the
+    /// last stable job version by itself when a deployment fails. Deployify's health-gated rollout
+    /// notices that and doesn't revert a second time. Defaults to true.
+    /// </summary>
+    public bool AutoRevert { get; set; } = true;
+
+    /// <summary>
     /// HTTP path used when <see cref="HealthCheckType"/> is "http". Defaults to "/health".
     /// </summary>
     public string HealthCheckPath { get; set; } = "/health";

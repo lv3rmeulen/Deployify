@@ -312,7 +312,7 @@ public sealed class EcsDeploymentTarget(
         return EcsRolloutHealth.Evaluate(status, revision, cfg.DeploymentCircuitBreaker);
     }
 
-    public async Task RestoreAsync(EnvironmentConfig config, ServiceSnapshot snapshot, CancellationToken ct = default)
+    public async Task<string?> RestoreAsync(EnvironmentConfig config, ServiceSnapshot snapshot, CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
         var client = ClientFor(cfg);
@@ -325,7 +325,7 @@ public sealed class EcsDeploymentTarget(
                 : cfg.DefaultDesiredCount;
             await client.RestoreServiceAsync(snapshot.ServiceName, previous, count, ct);
             logger.LogInformation("Rolled {Name} back to {Arn}.", snapshot.ServiceName, previous);
-            return;
+            return previous; // task definitions are immutable: wait for this very one
         }
 
         // A service this rollout created has nothing to go back to: stop its tasks.
@@ -334,6 +334,8 @@ public sealed class EcsDeploymentTarget(
             await client.ScaleServiceAsync(snapshot.ServiceName, 0, ct);
             logger.LogInformation("Scaled new service {Name} to zero.", snapshot.ServiceName);
         }
+
+        return null;
     }
 
     public bool HasNativeRollback(EnvironmentConfig config) => GetConfig(config).DeploymentCircuitBreaker;

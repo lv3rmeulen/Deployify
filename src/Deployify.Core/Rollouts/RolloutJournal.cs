@@ -62,6 +62,9 @@ public sealed class ServiceRolloutRecord
     /// <summary>The revision this rollout deployed.</summary>
     public string? Revision { get; set; }
 
+    /// <summary>The revision the service went back to, by a restore or by the platform itself.</summary>
+    public string? RestoredRevision { get; set; }
+
     public string? Detail { get; set; }
 }
 
@@ -109,22 +112,8 @@ public sealed class RolloutJournal : IAsyncDisposable
     {
         var started = now ?? DateTimeOffset.UtcNow;
         var dir = System.IO.Path.Combine(stateDirectory, DirectoryName);
-        Directory.CreateDirectory(dir);
         var safeEnv = Sanitize(environment);
-
-        var lockPath = System.IO.Path.Combine(dir, $"{safeEnv}.lock");
-        FileStream lockFile;
-        try
-        {
-            lockFile = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None,
-                bufferSize: 1, FileOptions.DeleteOnClose);
-        }
-        catch (IOException)
-        {
-            throw new InvalidOperationException(
-                $"Another rollout to '{environment}' is in progress (lock: {lockPath}). " +
-                "If no other deployify process is running, delete the lock file and try again.");
-        }
+        var lockFile = AcquireLock(stateDirectory, environment);
 
         var id = $"{started.UtcDateTime.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture)}-{safeEnv}";
         var record = new RolloutRecord
@@ -169,6 +158,46 @@ public sealed class RolloutJournal : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Re-opens an existing journal to add to it, e.g. for <c>deployify rollback</c>. Takes the
+    /// environment's lock like <see cref="BeginAsync"/> does.
+    /// </summary>
+    public static async Task<RolloutJournal> OpenAsync(string stateDirectory, string journalPath, CancellationToken ct = default)
+    {
+        var record = await ReadAsync(journalPath, ct)
+                     ?? throw new InvalidDataException($"Rollout journal '{journalPath}' is empty or unreadable.");
+        return new RolloutJournal(record, journalPath, AcquireLock(stateDirectory, record.Environment));
+    }
+
+    /// <summary>The rollouts recorded for <paramref name="environment"/>, newest first.</summary>
+    public static async Task<IReadOnlyList<(string Path, RolloutRecord Record)>> ListAsync(
+        string stateDirectory, string environment, CancellationToken ct = default)
+    {
+        var dir = System.IO.Path.Combine(stateDirectory, DirectoryName);
+        if (!Directory.Exists(dir))
+        {
+            return [];
+        }
+
+        var result = new List<(string, RolloutRecord)>();
+        foreach (var file in Directory.EnumerateFiles(dir, "*.json"))
+        {
+            try
+            {
+                if (await ReadAsync(file, ct) is { } record && record.Environment == environment)
+                {
+                    result.Add((file, record));
+                }
+            }
+            catch (JsonException)
+            {
+                // A journal cut off mid-write is skipped rather than failing the listing.
+            }
+        }
+
+        return [.. result.OrderByDescending(r => r.Item2.StartedAt)];
+    }
+
     public static async Task<RolloutRecord?> ReadAsync(string path, CancellationToken ct = default)
     {
         await using var stream = File.OpenRead(path);
@@ -179,6 +208,24 @@ public sealed class RolloutJournal : IAsyncDisposable
     {
         await _lock.DisposeAsync();
         _gate.Dispose();
+    }
+
+    private static FileStream AcquireLock(string stateDirectory, string environment)
+    {
+        var dir = System.IO.Path.Combine(stateDirectory, DirectoryName);
+        Directory.CreateDirectory(dir);
+        var lockPath = System.IO.Path.Combine(dir, $"{Sanitize(environment)}.lock");
+        try
+        {
+            return new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None,
+                bufferSize: 1, FileOptions.DeleteOnClose);
+        }
+        catch (IOException)
+        {
+            throw new InvalidOperationException(
+                $"Another rollout to '{environment}' is in progress (lock: {lockPath}). " +
+                "If no other deployify process is running, delete the lock file and try again.");
+        }
     }
 
     private static string Sanitize(string name)

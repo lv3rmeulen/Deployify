@@ -110,7 +110,7 @@ internal static class RolloutCli
         return result;
     }
 
-    private static void Print(RolloutProgress p)
+    internal static void Print(RolloutProgress p)
     {
         var who = p.Service is null ? "" : $"{p.Service}: ";
         switch (p.Kind)

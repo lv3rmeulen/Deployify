@@ -136,6 +136,7 @@ public sealed class RolloutEngine
                             continue;
                         case GateOutcome.RevertedByPlatform:
                             svc.State = ServiceRolloutState.RevertedByPlatform;
+                            svc.RestoredRevision = gate.Revision;
                             failure = $"{svc.Name}: reverted by the platform: {gate.Detail}";
                             break;
                         case GateOutcome.TimedOut:
@@ -187,7 +188,7 @@ public sealed class RolloutEngine
             return await FinishAsync(journal, RolloutState.Failed, RolloutOutcome.Failed, failure, warnings);
         }
 
-        var rolledBack = await RollbackAsync(rollout, config, options, journal, touched, Report);
+        var rolledBack = await RollBackAsync(rollout, config, options, journal, touched, Report);
         return rolledBack
             ? await FinishAsync(journal, RolloutState.RolledBack, RolloutOutcome.RolledBack, failure, warnings)
             : await FinishAsync(journal, RolloutState.RollbackFailed, RolloutOutcome.RollbackFailed, failure, warnings);
@@ -196,9 +197,10 @@ public sealed class RolloutEngine
     /// <summary>
     /// Restores <paramref name="touched"/> in reverse order on a token of its own, so the
     /// cancellation that stopped the rollout cannot stop the rollback. Returns true when every
-    /// service is back and, where it existed before, healthy again.
+    /// service is back and, where it existed before, healthy again. Also used by
+    /// <c>deployify rollback</c> to undo an earlier rollout from its journal.
     /// </summary>
-    private static async Task<bool> RollbackAsync(
+    public static async Task<bool> RollBackAsync(
         IRolloutTarget rollout, EnvironmentConfig config, RolloutOptions options, RolloutJournal journal,
         IReadOnlyList<ServiceRolloutRecord> touched, Action<RolloutProgressKind, string?, string> report)
     {
@@ -215,26 +217,27 @@ public sealed class RolloutEngine
             try
             {
                 var byPlatform = svc.State == ServiceRolloutState.RevertedByPlatform;
-                if (!byPlatform)
-                {
-                    await rollout.RestoreAsync(config, snapshot, budget.Token);
-                }
+                var waitFor = byPlatform
+                    ? svc.RestoredRevision ?? (snapshot.Existed ? snapshot.Revision : null)
+                    : await rollout.RestoreAsync(config, snapshot, budget.Token);
+                svc.RestoredRevision = waitFor;
+                await journal.SaveAsync();
 
-                if (snapshot is { Existed: true, Revision: { } previous })
+                if (waitFor is not null)
                 {
-                    var gate = await HealthGate.WaitAsync(rollout, config, svc.Name, previous,
+                    var gate = await HealthGate.WaitAsync(rollout, config, svc.Name, waitFor,
                         options.HealthTimeout, options, ct: budget.Token);
                     if (gate.Outcome != GateOutcome.Healthy)
                     {
                         throw new InvalidOperationException(
-                            $"previous revision {previous} did not become healthy: {gate.Detail}");
+                            $"restored revision {waitFor} did not become healthy: {gate.Detail}");
                     }
                 }
 
                 svc.State = byPlatform ? ServiceRolloutState.RevertedByPlatform : ServiceRolloutState.RolledBack;
-                var message = !snapshot.Existed ? "new service taken out of service"
-                    : byPlatform ? $"platform reverted to {snapshot.Revision}, healthy"
-                    : $"restored {snapshot.Revision}, healthy";
+                var message = waitFor is null ? "new service taken out of service"
+                    : byPlatform ? $"platform reverted to {waitFor}, healthy"
+                    : $"restored {waitFor}, healthy";
                 await journal.LogAsync(svc.Name, message);
                 report(RolloutProgressKind.Success, svc.Name, message);
             }

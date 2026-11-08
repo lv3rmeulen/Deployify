@@ -102,8 +102,7 @@ public sealed class NomadClient : IDisposable
     /// </summary>
     public async Task PutVariableAsync(string path, IReadOnlyDictionary<string, string> items, CancellationToken ct = default)
     {
-        var escaped = string.Join('/', path.Split('/').Select(Uri.EscapeDataString));
-        var resp = await _http.PutAsJsonAsync($"v1/var/{escaped}?{Ns}", new { Path = path, Items = items }, ct);
+        var resp = await _http.PutAsJsonAsync($"v1/var/{EscapePath(path)}?{Ns}", new { Path = path, Items = items }, ct);
         await EnsureSuccessAsync(resp, $"write variable {path}", ct);
     }
 
@@ -139,6 +138,115 @@ public sealed class NomadClient : IDisposable
 
         return errors;
     }
+
+    // ── Rollout ───────────────────────────────────────────────────────────────
+
+    /// <summary>The job's current version and status, or null when Nomad doesn't know the job.</summary>
+    public async Task<NomadJobInfo?> GetJobAsync(string jobId, CancellationToken ct = default)
+    {
+        var resp = await _http.GetAsync($"v1/job/{Uri.EscapeDataString(jobId)}?{Ns}", ct);
+        if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+
+        await EnsureSuccessAsync(resp, $"read job {jobId}", ct);
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+        var root = doc.RootElement;
+        return new NomadJobInfo(
+            root.TryGetProperty("Version", out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt64() : 0,
+            root.TryGetProperty("Status", out var st) ? st.GetString() ?? "" : "",
+            root.TryGetProperty("Stop", out var stop) && stop.ValueKind == JsonValueKind.True);
+    }
+
+    /// <summary>All deployments of the job (GET /v1/job/:id/deployments), newest job version first.</summary>
+    public async Task<IReadOnlyList<NomadDeploymentInfo>> GetDeploymentsAsync(string jobId, CancellationToken ct = default)
+    {
+        var resp = await _http.GetAsync($"v1/job/{Uri.EscapeDataString(jobId)}/deployments?{Ns}", ct);
+        if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return [];
+        }
+
+        await EnsureSuccessAsync(resp, $"read deployments of {jobId}", ct);
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+        if (doc.RootElement.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var result = new List<NomadDeploymentInfo>();
+        foreach (var d in doc.RootElement.EnumerateArray())
+        {
+            int desired = 0, healthy = 0, unhealthy = 0;
+            if (d.TryGetProperty("TaskGroups", out var groups) && groups.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var g in groups.EnumerateObject())
+                {
+                    desired += Int(g.Value, "DesiredTotal");
+                    healthy += Int(g.Value, "HealthyAllocs");
+                    unhealthy += Int(g.Value, "UnhealthyAllocs");
+                }
+            }
+
+            result.Add(new NomadDeploymentInfo(
+                d.TryGetProperty("JobVersion", out var jv) && jv.ValueKind == JsonValueKind.Number ? jv.GetInt64() : -1,
+                d.TryGetProperty("Status", out var st) ? st.GetString() ?? "" : "",
+                d.TryGetProperty("StatusDescription", out var sd) ? sd.GetString() : null,
+                desired, healthy, unhealthy,
+                d.TryGetProperty("CreateIndex", out var ci) && ci.ValueKind == JsonValueKind.Number ? ci.GetInt64() : 0));
+        }
+
+        return [.. result.OrderByDescending(r => r.JobVersion).ThenByDescending(r => r.CreateIndex)];
+
+        static int Int(JsonElement e, string name)
+            => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt32() : 0;
+    }
+
+    /// <summary>
+    /// Reverts the job to <paramref name="version"/> (POST /v1/job/:id/revert). Nomad registers the
+    /// old spec as a new job version, which then rolls out like any other.
+    /// </summary>
+    public async Task RevertJobAsync(string jobId, long version, CancellationToken ct = default)
+    {
+        var resp = await _http.PostAsJsonAsync($"v1/job/{Uri.EscapeDataString(jobId)}/revert?{Ns}",
+            new { JobID = jobId, JobVersion = version }, ct);
+        await EnsureSuccessAsync(resp, $"revert {jobId} to version {version}", ct);
+    }
+
+    /// <summary>
+    /// The items of the Nomad Variable at <paramref name="path"/>, or null when it doesn't exist.
+    /// The values are secrets: keep them in memory only.
+    /// </summary>
+    public async Task<Dictionary<string, string>?> GetVariableItemsAsync(string path, CancellationToken ct = default)
+    {
+        var resp = await _http.GetAsync($"v1/var/{EscapePath(path)}?{Ns}", ct);
+        if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+
+        await EnsureSuccessAsync(resp, $"read variable {path}", ct);
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+        var items = new Dictionary<string, string>();
+        if (doc.RootElement.TryGetProperty("Items", out var el) && el.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var p in el.EnumerateObject())
+            {
+                items[p.Name] = p.Value.GetString() ?? "";
+            }
+        }
+
+        return items;
+    }
+
+    public async Task DeleteVariableAsync(string path, CancellationToken ct = default)
+    {
+        var resp = await _http.DeleteAsync($"v1/var/{EscapePath(path)}?{Ns}", ct);
+        await EnsureSuccessAsync(resp, $"delete variable {path}", ct);
+    }
+
+    private static string EscapePath(string path) => string.Join('/', path.Split('/').Select(Uri.EscapeDataString));
 
     public void Dispose() => _http.Dispose();
 
@@ -177,3 +285,16 @@ public sealed class NomadClient : IDisposable
         [JsonPropertyName("Meta")] public Dictionary<string, string>? Meta { get; init; }
     }
 }
+
+/// <summary>The parts of a Nomad job the rollout needs.</summary>
+public sealed record NomadJobInfo(long Version, string Status, bool Stop);
+
+/// <summary>One deployment of a job, with its task groups' allocation counts added up.</summary>
+public sealed record NomadDeploymentInfo(
+    long JobVersion,
+    string Status,
+    string? StatusDescription,
+    int DesiredTotal,
+    int HealthyAllocs,
+    int UnhealthyAllocs,
+    long CreateIndex);

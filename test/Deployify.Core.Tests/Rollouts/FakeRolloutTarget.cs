@@ -68,7 +68,10 @@ internal sealed class FakeRolloutTarget : IRolloutTarget
         return Task.FromResult(HealthObservation.Healthy("ok"));
     }
 
-    public Task RestoreAsync(EnvironmentConfig config, ServiceSnapshot snapshot, CancellationToken ct = default)
+    /// <summary>Revision a restore reports, per service; defaults to the snapshot's own.</summary>
+    public Dictionary<string, string> RestoredRevisions { get; } = [];
+
+    public Task<string?> RestoreAsync(EnvironmentConfig config, ServiceSnapshot snapshot, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
         Calls.Add($"restore {snapshot.ServiceName}");
@@ -77,7 +80,13 @@ internal sealed class FakeRolloutTarget : IRolloutTarget
             throw new InvalidOperationException("restore exploded");
         }
 
-        return Task.CompletedTask;
+        if (!snapshot.Existed)
+        {
+            return Task.FromResult<string?>(null);
+        }
+
+        return Task.FromResult<string?>(
+            RestoredRevisions.TryGetValue(snapshot.ServiceName, out var r) ? r : snapshot.Revision);
     }
 
     public bool HasNativeRollback(EnvironmentConfig config) => NativeRollback;

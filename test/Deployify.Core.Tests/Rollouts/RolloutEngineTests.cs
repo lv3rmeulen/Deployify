@@ -174,6 +174,34 @@ public sealed class RolloutEngineTests
     }
 
     [Fact]
+    public async Task PlatformRevertToANewRevision_WaitsForThatRevision()
+    {
+        using var dir = new TempDir();
+        var fake = new FakeRolloutTarget { NativeRollback = true }
+            .Script("api:2", HealthObservation.Reverted("auto_revert", revertedTo: "api:3"));
+
+        var result = await RunAsync(dir, fake);
+
+        result.Outcome.ShouldBe(RolloutOutcome.RolledBack);
+        fake.Calls.ShouldContain("observe api:3");
+        fake.Calls.ShouldNotContain("observe api:1");
+        result.Services.Single(s => s.Name == "api").RestoredRevision.ShouldBe("api:3");
+    }
+
+    [Fact]
+    public async Task RestoreThatCreatesANewRevision_IsGatedOnTheNewRevision()
+    {
+        using var dir = new TempDir();
+        var fake = new FakeRolloutTarget().Script("api:2", HealthObservation.Failed("boom"));
+        fake.RestoredRevisions["api"] = "api:3";
+
+        var result = await RunAsync(dir, fake);
+
+        result.Outcome.ShouldBe(RolloutOutcome.RolledBack);
+        fake.Calls.ShouldContain("observe api:3");
+    }
+
+    [Fact]
     public async Task RestoreFailure_EndsAsRollbackFailed_AndStillRestoresTheRest()
     {
         using var dir = new TempDir();
@@ -288,7 +316,7 @@ public sealed class RolloutEngineTests
             EnvironmentConfig config, string service, string revision, CancellationToken ct = default)
             => inner.ObserveAsync(config, service, revision, ct);
 
-        public Task RestoreAsync(EnvironmentConfig config, ServiceSnapshot snapshot, CancellationToken ct = default)
+        public Task<string?> RestoreAsync(EnvironmentConfig config, ServiceSnapshot snapshot, CancellationToken ct = default)
             => inner.RestoreAsync(config, snapshot, ct);
 
         public bool HasNativeRollback(EnvironmentConfig config) => false;

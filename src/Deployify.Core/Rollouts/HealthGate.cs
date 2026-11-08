@@ -14,7 +14,8 @@ public enum GateOutcome
     RevertedByPlatform
 }
 
-public sealed record GateResult(GateOutcome Outcome, string? Detail);
+/// <summary>How a gate ended. <see cref="Revision"/> is set when the platform reverted, to what it went back to.</summary>
+public sealed record GateResult(GateOutcome Outcome, string? Detail, string? Revision = null);
 
 /// <summary>
 /// Polls <see cref="IRolloutTarget.ObserveAsync"/> until a revision has been healthy
@@ -56,7 +57,7 @@ public static class HealthGate
                     case HealthState.Failed:
                         return new GateResult(GateOutcome.Failed, observation.Detail);
                     case HealthState.RevertedByPlatform:
-                        return new GateResult(GateOutcome.RevertedByPlatform, observation.Detail);
+                        return new GateResult(GateOutcome.RevertedByPlatform, observation.Detail, observation.Revision);
                     case HealthState.Healthy:
                         consecutive++;
                         if (consecutive >= required)

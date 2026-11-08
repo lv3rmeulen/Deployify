@@ -40,9 +40,12 @@ public interface IRolloutTarget
     /// <summary>
     /// Puts the service back the way <paramref name="snapshot"/> recorded it. For a service that
     /// did not exist before, the target decides what "back" means (for example scaling it to zero).
-    /// Must be safe to call more than once.
+    /// Must be safe to call more than once. Returns the revision now rolling out, which the engine
+    /// waits on: the snapshot's own revision where revisions are immutable (an ECS task definition),
+    /// or a new one where restoring creates it (a Nomad revert makes a new job version). Null when
+    /// there is nothing to wait for.
     /// </summary>
-    Task RestoreAsync(EnvironmentConfig config, ServiceSnapshot snapshot, CancellationToken ct = default);
+    Task<string?> RestoreAsync(EnvironmentConfig config, ServiceSnapshot snapshot, CancellationToken ct = default);
 
     /// <summary>
     /// True when the platform reverts a failed deployment by itself (ECS deployment circuit
@@ -94,11 +97,17 @@ public enum HealthState
     RevertedByPlatform
 }
 
-/// <summary>One look at a revision's health, with a short human-readable reason.</summary>
-public sealed record HealthObservation(HealthState State, string? Detail = null)
+/// <summary>
+/// One look at a revision's health, with a short human-readable reason. For
+/// <see cref="HealthState.RevertedByPlatform"/>, <see cref="Revision"/> is the revision the
+/// platform went back to, when it is known; the engine then waits for that one.
+/// </summary>
+public sealed record HealthObservation(HealthState State, string? Detail = null, string? Revision = null)
 {
     public static HealthObservation Progressing(string? detail = null) => new(HealthState.Progressing, detail);
     public static HealthObservation Healthy(string? detail = null) => new(HealthState.Healthy, detail);
     public static HealthObservation Failed(string detail) => new(HealthState.Failed, detail);
-    public static HealthObservation Reverted(string detail) => new(HealthState.RevertedByPlatform, detail);
+
+    public static HealthObservation Reverted(string detail, string? revertedTo = null)
+        => new(HealthState.RevertedByPlatform, detail, revertedTo);
 }

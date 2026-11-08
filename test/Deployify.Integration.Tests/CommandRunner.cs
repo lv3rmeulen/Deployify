@@ -41,5 +41,7 @@ internal static class CommandRunner
         PackageCommand.Build(),
         CiCommand.Build(),
         WatchCommand.Build(),
+        StatusCommand.Build(),
+        RollbackCommand.Build(),
     };
 }

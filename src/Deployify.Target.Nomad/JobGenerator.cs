@@ -180,6 +180,7 @@ public sealed class JobGenerator(ILogger<JobGenerator> logger)
         sb.AppendLine("      min_healthy_time = \"30s\"");
         sb.AppendLine("      healthy_deadline = \"10m\"");
         sb.AppendLine("      progress_deadline = \"15m\"");
+        sb.AppendLine($"      auto_revert = {(nc.AutoRevert ? "true" : "false")}");
         sb.AppendLine("    }");
 
         // ── network ───────────────────────────────────────────────────────────

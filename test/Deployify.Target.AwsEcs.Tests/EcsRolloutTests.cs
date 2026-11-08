@@ -79,6 +79,7 @@ public sealed class EcsRolloutTests
         var obs = EcsRolloutHealth.Evaluate(status, New, circuitBreaker: true);
 
         obs.State.ShouldBe(HealthState.RevertedByPlatform);
+        obs.Revision.ShouldBe(Old);
         obs.Detail!.ShouldContain("api:6");
         obs.Detail!.ShouldContain("circuit breaker triggered");
     }
@@ -164,8 +165,9 @@ public sealed class EcsRolloutTests
             Data = new() { ["desiredCount"] = "3" }
         };
 
-        await Target(fake).RestoreAsync(EcsFixtures.EcsConfig(), snapshot, Ct);
+        var waitFor = await Target(fake).RestoreAsync(EcsFixtures.EcsConfig(), snapshot, Ct);
 
+        waitFor.ShouldBe(Old);
         var args = fake.Single("update-service").Args.ToList();
         args[args.IndexOf("--task-definition") + 1].ShouldBe(Old);
         args[args.IndexOf("--desired-count") + 1].ShouldBe("3");
@@ -178,9 +180,10 @@ public sealed class EcsRolloutTests
             .When(["describe-services"], Ok(Describe(New, 1, Deployment("PRIMARY", New, "FAILED", 1, 0))))
             .When(["update-service"], Ok("""{"service":{"serviceArn":"arn:svc/api"}}"""));
 
-        await Target(fake).RestoreAsync(
+        var waitFor = await Target(fake).RestoreAsync(
             EcsFixtures.EcsConfig(), new ServiceSnapshot { ServiceName = "api", Existed = false }, Ct);
 
+        waitFor.ShouldBeNull();
         var args = fake.Single("update-service").Args.ToList();
         args[args.IndexOf("--desired-count") + 1].ShouldBe("0");
         args.ShouldNotContain("--task-definition");

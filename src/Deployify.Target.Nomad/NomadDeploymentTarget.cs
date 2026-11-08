@@ -20,8 +20,10 @@ public sealed class NomadDeploymentTarget(
     JobGenerator jobGenerator,
     IPublisher publisher,
     ILogger<NomadDeploymentTarget> logger,
-    ILoggerFactory loggerFactory) : IDeploymentTarget
+    ILoggerFactory loggerFactory) : IDeploymentTarget, IRolloutTarget
 {
+    private readonly NomadRollout _rollout = new(logger);
+
     public DeploymentTargetType TargetType => DeploymentTargetType.Nomad;
     public string DisplayName => "HashiCorp Nomad";
 
@@ -156,39 +158,97 @@ public sealed class NomadDeploymentTarget(
 
         foreach (var job in jobs)
         {
-            // Read the file plan already wrote — do not regenerate
-            var hclPath = Path.Combine(outputDirectory, $"{job.Name}.job.hcl");
-            if (!File.Exists(hclPath))
-            {
-                results.Add(new DeploymentResult
-                {
-                    ServiceName = job.Name, Success = false,
-                    Error = $"Artifact not found: {hclPath}. Run 'deployify plan' first."
-                });
-                continue;
-            }
-
-            try
-            {
-                // Secrets first: the job's template block reads them when the task starts.
-                if (job.SecretEnv.Count > 0)
-                {
-                    await client.PutVariableAsync(NomadVariables.JobPath(job.Name),
-                        job.SecretEnv.ToDictionary(kv => kv.Key, kv => kv.Value.ToString()), ct);
-                }
-
-                var evalId = await client.SubmitJobAsync(hclPath, ct);
-                results.Add(new DeploymentResult { ServiceName = job.Name, DeploymentId = evalId, Success = true });
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Failed to submit job '{Name}'.", job.Name);
-                results.Add(new DeploymentResult { ServiceName = job.Name, Success = false, Error = ex.Message });
-            }
+            results.Add(await ApplyOneAsync(client, job, outputDirectory, ct));
         }
 
         return results;
     }
+
+    /// <summary>Writes the job's secrets and submits the HCL that plan wrote.</summary>
+    private async Task<DeploymentResult> ApplyOneAsync(
+        NomadClient client, NomadJob job, string outputDirectory, CancellationToken ct)
+    {
+        // Read the file plan already wrote — do not regenerate
+        var hclPath = Path.Combine(outputDirectory, $"{job.Name}.job.hcl");
+        if (!File.Exists(hclPath))
+        {
+            return new DeploymentResult
+            {
+                ServiceName = job.Name, Success = false,
+                Error = $"Artifact not found: {hclPath}. Run 'deployify plan' first."
+            };
+        }
+
+        try
+        {
+            // Secrets first: the job's template block reads them when the task starts.
+            if (job.SecretEnv.Count > 0)
+            {
+                await client.PutVariableAsync(NomadVariables.JobPath(job.Name),
+                    job.SecretEnv.ToDictionary(kv => kv.Key, kv => kv.Value.ToString()), ct);
+            }
+
+            var evalId = await client.SubmitJobAsync(hclPath, ct);
+            return new DeploymentResult { ServiceName = job.Name, DeploymentId = evalId, Success = true };
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to submit job '{Name}'.", job.Name);
+            return new DeploymentResult { ServiceName = job.Name, Success = false, Error = ex.Message };
+        }
+    }
+
+    // ── Rollout (health-gated apply) ──────────────────────────────────────────
+
+    public async Task<ServiceSnapshot> CaptureAsync(
+        AspireManifest manifest, EnvironmentConfig config, string service, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        using var client = BuildClient(cfg);
+        return await _rollout.CaptureAsync(client, cfg.Namespace, service, ct);
+    }
+
+    public async Task<AppliedRevision> ApplyServiceAsync(
+        AspireManifest manifest, EnvironmentConfig config, string outputDirectory, string service,
+        CancellationToken ct = default)
+    {
+        var job = jobGenerator.Generate(manifest, config).FirstOrDefault(j => j.Name == service);
+        if (job is null)
+        {
+            return new AppliedRevision { ServiceName = service, Success = false, Error = "not a Nomad job in this manifest" };
+        }
+
+        using var client = BuildClient(GetConfig(config));
+        var result = await ApplyOneAsync(client, job, outputDirectory, ct);
+        if (!result.Success)
+        {
+            return new AppliedRevision { ServiceName = service, Success = false, Error = result.Error };
+        }
+
+        return new AppliedRevision
+        {
+            ServiceName = service,
+            Success = true,
+            Revision = await NomadRollout.CurrentVersionAsync(client, service, ct)
+        };
+    }
+
+    public async Task<HealthObservation> ObserveAsync(
+        EnvironmentConfig config, string service, string revision, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        using var client = BuildClient(cfg);
+        return await NomadRollout.ObserveAsync(client, service, revision, cfg.AutoRevert, ct);
+    }
+
+    public async Task<string?> RestoreAsync(EnvironmentConfig config, ServiceSnapshot snapshot, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        using var client = BuildClient(cfg);
+        return await _rollout.RestoreAsync(client, cfg.Namespace, snapshot, ct);
+    }
+
+    public bool HasNativeRollback(EnvironmentConfig config) => GetConfig(config).AutoRevert;
 
     public async Task PublishAsync(
         AspireManifest manifest, EnvironmentConfig config, string appHostDirectory, CancellationToken ct = default)

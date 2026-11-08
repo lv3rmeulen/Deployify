@@ -17,6 +17,8 @@ var root = new RootCommand("deployify – deploy .NET Aspire AppHost projects to
     ExplainCommand.Build(),
     GraphCommand.Build(),
     DiffCommand.Build(),
+    StatusCommand.Build(),
+    RollbackCommand.Build(),
 };
 
 // Ctrl+C cancels the running command's token. The default gives a command two seconds to

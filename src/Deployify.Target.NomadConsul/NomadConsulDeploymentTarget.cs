@@ -31,8 +31,13 @@ namespace Deployify.Target.NomadConsul;
 public sealed class NomadConsulDeploymentTarget(
     IPublisher publisher,
     ILogger<NomadConsulDeploymentTarget> logger,
-    ILoggerFactory loggerFactory) : IDeploymentTarget
+    ILoggerFactory loggerFactory) : IDeploymentTarget, IRolloutTarget
 {
+    private readonly NomadRollout _rollout = new(logger);
+
+    /// <summary>Per service: whether the job registers a Consul health check.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _consulChecked = new();
+
     private readonly Lazy<ConsulJobGenerator> _generator = new(
         () => new ConsulJobGenerator(loggerFactory.CreateLogger<ConsulJobGenerator>()));
 
@@ -216,51 +221,126 @@ public sealed class NomadConsulDeploymentTarget(
 
         foreach (var job in jobs)
         {
-            var hclPath = Path.Combine(outputDirectory, $"{job.Name}.job.hcl");
-            if (!File.Exists(hclPath))
-            {
-                results.Add(new DeploymentResult
-                {
-                    ServiceName = job.Name,
-                    Success = false,
-                    Error = $"Artifact not found: {hclPath}. Run 'deployify plan' first."
-                });
-                continue;
-            }
-
-            try
-            {
-                // Secrets first: the job's template block reads them when the task starts.
-                if (job.SecretEnv.Count > 0)
-                {
-                    await nomadClient.PutVariableAsync(NomadVariables.JobPath(job.Name),
-                        job.SecretEnv.ToDictionary(kv => kv.Key, kv => kv.Value.ToString()), ct);
-                }
-
-                var evalId = await nomadClient.SubmitJobAsync(hclPath, ct);
-                logger.LogInformation(
-                    "Submitted Consul Connect job '{Name}', evalId={EvalId}", job.Name, evalId);
-                results.Add(new DeploymentResult
-                {
-                    ServiceName = job.Name,
-                    DeploymentId = evalId,
-                    Success = true
-                });
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Failed to submit job '{Name}'.", job.Name);
-                results.Add(new DeploymentResult
-                {
-                    ServiceName = job.Name,
-                    Success = false,
-                    Error = ex.Message
-                });
-            }
+            results.Add(await ApplyOneAsync(nomadClient, job, outputDirectory, ct));
         }
 
         return results;
     }
+
+    private async Task<DeploymentResult> ApplyOneAsync(
+        NomadClient nomadClient, ConsulJob job, string outputDirectory, CancellationToken ct)
+    {
+        var hclPath = Path.Combine(outputDirectory, $"{job.Name}.job.hcl");
+        if (!File.Exists(hclPath))
+        {
+            return new DeploymentResult
+            {
+                ServiceName = job.Name,
+                Success = false,
+                Error = $"Artifact not found: {hclPath}. Run 'deployify plan' first."
+            };
+        }
+
+        try
+        {
+            // Secrets first: the job's template block reads them when the task starts.
+            if (job.SecretEnv.Count > 0)
+            {
+                await nomadClient.PutVariableAsync(NomadVariables.JobPath(job.Name),
+                    job.SecretEnv.ToDictionary(kv => kv.Key, kv => kv.Value.ToString()), ct);
+            }
+
+            var evalId = await nomadClient.SubmitJobAsync(hclPath, ct);
+            logger.LogInformation(
+                "Submitted Consul Connect job '{Name}', evalId={EvalId}", job.Name, evalId);
+            return new DeploymentResult
+            {
+                ServiceName = job.Name,
+                DeploymentId = evalId,
+                Success = true
+            };
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to submit job '{Name}'.", job.Name);
+            return new DeploymentResult
+            {
+                ServiceName = job.Name,
+                Success = false,
+                Error = ex.Message
+            };
+        }
+    }
+
+    // ── Rollout (health-gated apply) ──────────────────────────────────────────
+
+    public async Task<ServiceSnapshot> CaptureAsync(
+        AspireManifest manifest, EnvironmentConfig config, string service, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        using var client = BuildNomadClient(cfg);
+        return await _rollout.CaptureAsync(client, cfg.NomadNamespace, service, ct);
+    }
+
+    public async Task<AppliedRevision> ApplyServiceAsync(
+        AspireManifest manifest, EnvironmentConfig config, string outputDirectory, string service,
+        CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var job = Generator.Generate(manifest, config, cfg).FirstOrDefault(j => j.Name == service);
+        if (job is null)
+        {
+            return new AppliedRevision { ServiceName = service, Success = false, Error = "not a Nomad job in this manifest" };
+        }
+
+        // Remembered for the health gate: only services that register a Consul check are gated on it.
+        _consulChecked[service] = cfg.RegisterServices && job.Ports.Count > 0 &&
+                                  (!job.Ports[0].IsHttp || !cfg.HealthCheckType.Equals("none", StringComparison.OrdinalIgnoreCase));
+
+        using var client = BuildNomadClient(cfg);
+        var result = await ApplyOneAsync(client, job, outputDirectory, ct);
+        if (!result.Success)
+        {
+            return new AppliedRevision { ServiceName = service, Success = false, Error = result.Error };
+        }
+
+        return new AppliedRevision
+        {
+            ServiceName = service,
+            Success = true,
+            Revision = await NomadRollout.CurrentVersionAsync(client, service, ct)
+        };
+    }
+
+    /// <summary>
+    /// Nomad's deployment status first; once Nomad calls the version healthy, a service that
+    /// registers a Consul check must also have a passing instance in Consul.
+    /// </summary>
+    public async Task<HealthObservation> ObserveAsync(
+        EnvironmentConfig config, string service, string revision, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        using var client = BuildNomadClient(cfg);
+        var nomad = await NomadRollout.ObserveAsync(client, service, revision, cfg.AutoRevert, ct);
+        if (nomad.State != HealthState.Healthy || !_consulChecked.TryGetValue(service, out var check) || !check)
+        {
+            return nomad;
+        }
+
+        using var consul = BuildConsulClient(cfg);
+        return await consul.IsServiceHealthyAsync(service, ct)
+            ? nomad
+            : HealthObservation.Progressing($"{nomad.Detail}; waiting for a passing Consul check");
+    }
+
+    public async Task<string?> RestoreAsync(EnvironmentConfig config, ServiceSnapshot snapshot, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        using var client = BuildNomadClient(cfg);
+        return await _rollout.RestoreAsync(client, cfg.NomadNamespace, snapshot, ct);
+    }
+
+    public bool HasNativeRollback(EnvironmentConfig config) => GetConfig(config).AutoRevert;
 
     // ── Publish ───────────────────────────────────────────────────────────────
 

@@ -242,6 +242,7 @@ public sealed class ConsulJobGenerator(ILogger<ConsulJobGenerator> logger)
         sb.AppendLine("      min_healthy_time = \"30s\"");
         sb.AppendLine("      healthy_deadline = \"10m\"");
         sb.AppendLine("      progress_deadline = \"15m\"");
+        sb.AppendLine($"      auto_revert = {(cfg.AutoRevert ? "true" : "false")}");
         sb.AppendLine("    }");
         sb.AppendLine();
 
