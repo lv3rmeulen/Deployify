@@ -7,6 +7,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Expressions;
 using Deployify.Core.Models;
+using Deployify.Core.SecretBackends;
+using Deployify.Core.SecretBackends.KeyVault;
+using Deployify.Core.SecretBackends.Vault;
 
 namespace Deployify.Target.Kubernetes;
 
@@ -16,6 +19,9 @@ namespace Deployify.Target.Kubernetes;
 /// </summary>
 public sealed class KubernetesManifestGenerator
 {
+    /// <summary>Env var pointing at the file the Vault agent renders.</summary>
+    public const string SecretsFileVariable = "DEPLOYIFY_SECRETS_FILE";
+
     public IReadOnlyList<KubernetesServiceManifest> Generate(
         AspireManifest manifest,
         EnvironmentConfig config,
@@ -65,6 +71,7 @@ public sealed class KubernetesManifestGenerator
             var env = resolver.ResolveEnvironment(resource.Env, overrides?.Env);
             svc.Env = env.Plain;
             svc.SecretEnv = env.Secrets;
+            ApplySecretSettings(svc, config, kubernetesConfig, resource);
 
             if (resource.Bindings is not null)
             {
@@ -113,6 +120,85 @@ public sealed class KubernetesManifestGenerator
         return results;
     }
 
+    private static void ApplySecretSettings(
+        KubernetesServiceManifest svc, EnvironmentConfig config, KubernetesTargetConfig kubernetesConfig, AspireResource resource)
+    {
+        svc.SecretBackend = config.Secrets.Backend;
+        svc.IsProject = resource.Type.StartsWith("project.", StringComparison.Ordinal);
+        if (svc.SecretBackend == SecretBackendType.KeyVault)
+        {
+            var keyVault = config.Secrets.KeyVault;
+            svc.KeyVault = keyVault;
+            svc.KeyVaultPrefix = KeyVaultPrefix(keyVault, kubernetesConfig);
+            if (svc.HasSecret)
+            {
+                ValidateKeyVault(keyVault);
+            }
+
+            return;
+        }
+
+        if (svc.SecretBackend != SecretBackendType.Vault)
+        {
+            return;
+        }
+
+        var vault = config.Secrets.Vault;
+        svc.VaultMount = vault.Mount;
+        svc.VaultPath = VaultServicePath(vault, kubernetesConfig, svc.ServiceName);
+        svc.VaultRole = $"{kubernetesConfig.NamespacePrefix}-{svc.ServiceName}";
+        svc.VaultSecretsFileName = vault.SecretsFileName;
+        svc.VaultAgentAnnotations = new Dictionary<string, string>(vault.AgentAnnotations, StringComparer.Ordinal);
+    }
+
+    /// <summary>Key Vault secret name prefix: <c>secretPrefix</c>, or <c>deployify-{namespacePrefix}</c>.</summary>
+    public static string KeyVaultPrefix(KeyVaultConfig keyVault, KubernetesTargetConfig kubernetesConfig)
+        => KeyVaultSecrets.SecretName(string.IsNullOrWhiteSpace(keyVault.SecretPrefix)
+            ? $"deployify-{kubernetesConfig.NamespacePrefix}"
+            : keyVault.SecretPrefix);
+
+    private static void ValidateKeyVault(KeyVaultConfig keyVault)
+    {
+        var missing = new List<string>();
+        if (string.IsNullOrWhiteSpace(keyVault.VaultName) && string.IsNullOrWhiteSpace(keyVault.VaultUri))
+        {
+            missing.Add("vaultName");
+        }
+
+        if (string.IsNullOrWhiteSpace(keyVault.TenantId))
+        {
+            missing.Add("tenantId");
+        }
+
+        if (string.IsNullOrWhiteSpace(keyVault.ClientId))
+        {
+            missing.Add("clientId");
+        }
+
+        if (missing.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"The KeyVault secret backend on Kubernetes needs secrets.keyVault.{string.Join(", secrets.keyVault.", missing)}.");
+        }
+    }
+
+    /// <summary>Name of the SecretProviderClass of a service.</summary>
+    internal static string SecretProviderClassName(KubernetesServiceManifest svc) => $"{svc.ServiceName}-keyvault";
+
+    /// <summary>Where the CSI driver mounts Key Vault secrets in the container.</summary>
+    public const string KeyVaultMountPath = "/mnt/secrets-store";
+
+    /// <summary>Vault KV path of one service's secrets: <c>{pathPrefix}/{namespacePrefix}/{service}</c>.</summary>
+    public static string VaultServicePath(VaultConfig vault, KubernetesTargetConfig kubernetesConfig, string service)
+        => $"{vault.PathPrefix.Trim('/')}/{kubernetesConfig.NamespacePrefix}/{service}";
+
+    /// <summary>Vault KV path where generated parameter values are kept.</summary>
+    public static string VaultParametersPath(VaultConfig vault, KubernetesTargetConfig kubernetesConfig)
+        => VaultServicePath(vault, kubernetesConfig, "_parameters");
+
+    /// <summary>Path inside the pod where the Vault agent writes the secrets file.</summary>
+    public static string VaultSecretsFilePath(KubernetesServiceManifest svc) => $"/vault/secrets/{svc.VaultSecretsFileName}";
+
     /// <summary>Placeholders from the last <see cref="Generate"/> call that could not be resolved.</summary>
     public IReadOnlyList<string> Unresolved { get; private set; } = [];
 
@@ -147,7 +233,7 @@ public sealed class KubernetesManifestGenerator
         }
 
         var secretPath = Path.Combine(dir, "secret.yaml");
-        if (svc.HasSecret)
+        if (svc.WritesSecretManifest)
         {
             files.Add(await WriteAsync(dir, "secret.yaml", RenderSecret(svc), ct));
             if (!OperatingSystem.IsWindows())
@@ -159,6 +245,39 @@ public sealed class KubernetesManifestGenerator
         {
             // apply reads every file in the folder; don't leave a secret behind that no longer exists.
             File.Delete(secretPath);
+        }
+
+        // Vault: the pod logs in with its own service account, bound to a read-only policy.
+        var serviceAccountPath = Path.Combine(dir, "serviceaccount.yaml");
+        if (svc.NeedsServiceAccount)
+        {
+            files.Add(await WriteAsync(dir, "serviceaccount.yaml", RenderServiceAccount(svc), ct));
+        }
+        else
+        {
+            File.Delete(serviceAccountPath);
+        }
+
+        var policyPath = Path.Combine(dir, "vault-policy.hcl");
+        if (svc.UsesVaultAgent)
+        {
+            // For reference (and for setting up roles by hand when manageAuth is off); kubectl ignores .hcl files.
+            files.Add(await WriteAsync(dir, "vault-policy.hcl", VaultPolicy.ReadOnly(svc.VaultKvApiPath!), ct));
+        }
+        else
+        {
+            File.Delete(policyPath);
+        }
+
+        // Key Vault: the CSI driver reads the secrets with the pod's identity and syncs them into a Secret.
+        var providerClassPath = Path.Combine(dir, "secretproviderclass.yaml");
+        if (svc.UsesKeyVaultCsi)
+        {
+            files.Add(await WriteAsync(dir, "secretproviderclass.yaml", RenderSecretProviderClass(svc), ct));
+        }
+        else
+        {
+            File.Delete(providerClassPath);
         }
 
         files.Add(await WriteAsync(dir, "deployment.yaml", RenderDeployment(svc), ct));
@@ -175,6 +294,12 @@ public sealed class KubernetesManifestGenerator
         if (svc.HasPvc)
         {
             files.Add(await WriteAsync(dir, "pvc.yaml", RenderPvc(svc), ct));
+        }
+
+        // Whatever the renderers do, an external backend means no secret value on disk.
+        if (svc.SecretBackend != SecretBackendType.Inline && svc.HasSecret)
+        {
+            SecretLeakScanner.EnsureClean(files, svc.SecretData);
         }
 
         svc.GeneratedFiles = files;
@@ -244,6 +369,151 @@ stringData:
 
     internal static string SecretName(KubernetesServiceManifest svc) => $"{svc.ServiceName}-secrets";
 
+    private static string RenderServiceAccount(KubernetesServiceManifest svc)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"""
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {svc.ServiceName}
+  namespace: {svc.Namespace}
+  labels:
+    app: {svc.ServiceName}
+    app.kubernetes.io/managed-by: deployify
+""");
+        if (UsesWorkloadIdentity(svc))
+        {
+            // Workload ID exchanges this ServiceAccount's token for one of the managed identity.
+            sb.AppendLine("  annotations:");
+            sb.AppendLine($"    azure.workload.identity/client-id: {QuoteYaml(svc.KeyVault!.ClientId)}");
+            sb.AppendLine($"    azure.workload.identity/tenant-id: {QuoteYaml(svc.KeyVault.TenantId)}");
+        }
+
+        return sb.ToString();
+    }
+
+    private static bool UsesWorkloadIdentity(KubernetesServiceManifest svc)
+        => svc.UsesKeyVaultCsi && svc.KeyVault!.KubernetesIdentity == KeyVaultKubernetesIdentity.WorkloadIdentity;
+
+    /// <summary>
+    /// A SecretProviderClass for the Azure provider: which vault secrets to mount (under their
+    /// parameter id) and the Secret to sync them into, which the env vars reference.
+    /// </summary>
+    private static string RenderSecretProviderClass(KubernetesServiceManifest svc)
+    {
+        var keyVault = svc.KeyVault!;
+        var objects = svc.KeyVaultObjectNames.OrderBy(o => o.Key, StringComparer.Ordinal).ToList();
+        var sb = new StringBuilder();
+        sb.AppendLine($"""
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: {SecretProviderClassName(svc)}
+  namespace: {svc.Namespace}
+  labels:
+    app: {svc.ServiceName}
+    app.kubernetes.io/managed-by: deployify
+spec:
+  provider: azure
+  secretObjects:
+    - secretName: {SecretName(svc)}
+      type: Opaque
+      labels:
+        app: {svc.ServiceName}
+      data:
+""");
+        foreach (var (id, _) in objects)
+        {
+            sb.AppendLine($"        - objectName: {QuoteYaml(id)}");
+            sb.AppendLine($"          key: {QuoteYaml(id)}");
+        }
+
+        sb.AppendLine("  parameters:");
+        sb.AppendLine("    usePodIdentity: \"false\"");
+        if (keyVault.KubernetesIdentity == KeyVaultKubernetesIdentity.VmManagedIdentity)
+        {
+            sb.AppendLine("    useVMManagedIdentity: \"true\"");
+            sb.AppendLine($"    userAssignedIdentityID: {QuoteYaml(keyVault.ClientId)}");
+        }
+        else
+        {
+            sb.AppendLine($"    clientID: {QuoteYaml(keyVault.ClientId)}");
+        }
+
+        sb.AppendLine($"    keyvaultName: {QuoteYaml(KeyVaultSecrets.VaultName(keyVault))}");
+        sb.AppendLine($"    tenantId: {QuoteYaml(keyVault.TenantId)}");
+        if (!string.IsNullOrWhiteSpace(keyVault.CloudName))
+        {
+            sb.AppendLine($"    cloudName: {QuoteYaml(keyVault.CloudName)}");
+        }
+
+        // The provider reads "objects" as a YAML document of its own.
+        var list = new StringBuilder("array:\n");
+        foreach (var (id, name) in objects)
+        {
+            list.Append("  - |\n")
+                .Append($"    objectName: {name}\n")
+                .Append("    objectType: secret\n")
+                .Append($"    objectAlias: {id}\n");
+        }
+
+        AppendYamlEntry(sb, 4, "objects", list.ToString());
+        return sb.ToString();
+    }
+
+    /// <summary>Pod-template annotations: Dapr sidecar and Vault agent.</summary>
+    private static List<(string Key, string Value)> PodAnnotations(KubernetesServiceManifest svc)
+    {
+        var annotations = new List<(string, string)>();
+        if (svc.DaprEnabled)
+        {
+            // The Dapr sidecar injector only reads dapr.io/* annotations. The sidecar's own
+            // HTTP/gRPC ports are fixed by Dapr on Kubernetes (3500/50001).
+            annotations.Add(("dapr.io/enabled", "true"));
+            annotations.Add(("dapr.io/app-id", svc.DaprAppId ?? svc.ServiceName));
+            if (svc.DaprAppPort.HasValue)
+            {
+                annotations.Add(("dapr.io/app-port", svc.DaprAppPort.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+            }
+        }
+
+        if (svc.UsesVaultAgent)
+        {
+            var file = svc.VaultSecretsFileName;
+            annotations.Add(("vault.hashicorp.com/agent-inject", "true"));
+            annotations.Add(("vault.hashicorp.com/role", svc.VaultRole!));
+            annotations.Add(($"vault.hashicorp.com/agent-inject-secret-{file}", svc.VaultKvApiPath!));
+            annotations.Add(($"vault.hashicorp.com/agent-inject-template-{file}",
+                VaultTemplate.JsonConfigFile(svc.VaultKvApiPath!, svc.SecretEnv)));
+            foreach (var (k, v) in svc.VaultAgentAnnotations.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+            {
+                annotations.Add((k, v));
+            }
+        }
+
+        return annotations;
+    }
+
+    /// <summary>Writes a YAML mapping entry; multi-line values become literal block scalars.</summary>
+    private static void AppendYamlEntry(StringBuilder sb, int indent, string key, string value)
+    {
+        var pad = new string(' ', indent);
+        if (!value.Contains('\n'))
+        {
+            sb.AppendLine($"{pad}{key}: {QuoteYaml(value)}");
+            return;
+        }
+
+        // |- keeps the text exactly, minus the final newline. Templates have no tabs or
+        // leading spaces on their first line, so a block scalar holds them safely.
+        sb.AppendLine($"{pad}{key}: |-");
+        foreach (var line in value.TrimEnd('\n').Split('\n'))
+        {
+            sb.AppendLine(line.Length == 0 ? string.Empty : $"{pad}  {line}");
+        }
+    }
+
     private static string RenderDeployment(KubernetesServiceManifest svc)
     {
         var sb = new StringBuilder();
@@ -266,22 +536,29 @@ spec:
       labels:
         app: {svc.ServiceName}
 """);
-
-        if (svc.DaprEnabled)
+        if (UsesWorkloadIdentity(svc))
         {
-            // The Dapr sidecar injector only reads dapr.io/* annotations. The sidecar's own
-            // HTTP/gRPC ports are fixed by Dapr on Kubernetes (3500/50001).
-            sb.AppendLine("    annotations:");
-            sb.AppendLine("      dapr.io/enabled: \"true\"");
-            sb.AppendLine($"      dapr.io/app-id: {QuoteYaml(svc.DaprAppId ?? svc.ServiceName)}");
-            if (svc.DaprAppPort.HasValue)
+            sb.AppendLine("        azure.workload.identity/use: \"true\"");
+        }
+
+        // Pod annotations belong under template.metadata, next to its labels.
+        var annotations = PodAnnotations(svc);
+        if (annotations.Count > 0)
+        {
+            sb.AppendLine("      annotations:");
+            foreach (var (key, value) in annotations)
             {
-                sb.AppendLine($"      dapr.io/app-port: \"{svc.DaprAppPort}\"");
+                AppendYamlEntry(sb, 8, key, value);
             }
         }
 
+        sb.AppendLine("    spec:");
+        if (svc.NeedsServiceAccount)
+        {
+            sb.AppendLine($"      serviceAccountName: {svc.ServiceName}");
+        }
+
         sb.AppendLine($"""
-    spec:
       containers:
         - name: {svc.ServiceName}
           image: {QuoteYaml(ImageReference.Format(svc.Image!, svc.ImageTag))}
@@ -301,7 +578,7 @@ spec:
             }
         }
 
-        if (svc.HasConfigMap || svc.HasSecret)
+        if (svc.HasConfigMap || svc.WritesSecretManifest)
         {
             sb.AppendLine("          envFrom:");
             if (svc.HasConfigMap)
@@ -310,10 +587,43 @@ spec:
                 sb.AppendLine($"                name: {svc.ServiceName}-config");
             }
 
-            if (svc.HasSecret)
+            if (svc.WritesSecretManifest)
             {
                 sb.AppendLine("            - secretRef:");
                 sb.AppendLine($"                name: {SecretName(svc)}");
+            }
+        }
+
+        var env = new List<KubernetesEnvVar>();
+        if (svc.UsesSecretRefs)
+        {
+            env.AddRange(KubernetesSecretEnv.Render(SecretName(svc), svc.SecretEnv, svc.Env.Keys));
+        }
+
+        if (svc.UsesVaultAgent)
+        {
+            // Lets the app find the file: builder.Configuration.AddJsonFile(
+            //   Environment.GetEnvironmentVariable("DEPLOYIFY_SECRETS_FILE")!, optional: true, reloadOnChange: true)
+            env.Add(new KubernetesEnvVar(SecretsFileVariable, VaultSecretsFilePath(svc)));
+        }
+
+        if (env.Count > 0)
+        {
+            sb.AppendLine("          env:");
+            foreach (var e in env)
+            {
+                sb.AppendLine($"            - name: {e.Name}");
+                if (e.IsSecretRef)
+                {
+                    sb.AppendLine("              valueFrom:");
+                    sb.AppendLine("                secretKeyRef:");
+                    sb.AppendLine($"                  name: {e.SecretName}");
+                    sb.AppendLine($"                  key: {QuoteYaml(e.SecretKey)}");
+                }
+                else
+                {
+                    sb.AppendLine($"              value: {QuoteYaml(e.Value)}");
+                }
             }
         }
 
@@ -350,6 +660,23 @@ spec:
                 sb.AppendLine($"            initialDelaySeconds: {delay}");
                 sb.AppendLine($"            periodSeconds: {period}");
             }
+        }
+
+        if (svc.UsesKeyVaultCsi)
+        {
+            // Mounting the volume is what makes the driver fetch the secrets and sync the
+            // Secret the env vars read, so it's needed even though the app reads env vars.
+            sb.AppendLine("          volumeMounts:");
+            sb.AppendLine("            - name: keyvault-secrets");
+            sb.AppendLine($"              mountPath: {KeyVaultMountPath}");
+            sb.AppendLine("              readOnly: true");
+            sb.AppendLine("      volumes:");
+            sb.AppendLine("        - name: keyvault-secrets");
+            sb.AppendLine("          csi:");
+            sb.AppendLine("            driver: secrets-store.csi.k8s.io");
+            sb.AppendLine("            readOnly: true");
+            sb.AppendLine("            volumeAttributes:");
+            sb.AppendLine($"              secretProviderClass: {SecretProviderClassName(svc)}");
         }
 
         return sb.ToString();

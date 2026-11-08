@@ -1,6 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Deployify.Core.Expressions;
+using Deployify.Core.SecretBackends.Vault;
+using Deployify.Core.SecretBackends;
+using Deployify.Core.SecretBackends.KeyVault;
 
 namespace Deployify.Target.Kubernetes;
 
@@ -34,6 +38,71 @@ public sealed class KubernetesServiceManifest
     // Which optional resources to generate
     public bool HasConfigMap => Env.Count > 0;
     public bool HasSecret => SecretEnv.Count > 0;
+
+    // ── Secrets ───────────────────────────────────────────────────────────────
+    /// <summary>Where secret values are kept (secrets.backend).</summary>
+    public SecretBackendType SecretBackend { get; set; } = SecretBackendType.Inline;
+
+    /// <summary>True for project resources, which can read a configuration file rendered by the Vault agent.</summary>
+    public bool IsProject { get; set; }
+
+    /// <summary>Inline backend: secret values are written to secret.yaml.</summary>
+    public bool WritesSecretManifest => HasSecret && SecretBackend == SecretBackendType.Inline;
+
+    /// <summary>
+    /// Values come from a Secret applied out of band and referenced with <c>secretKeyRef</c>.
+    /// Also used for containers under the Vault backend, since they can't read the agent's
+    /// .NET configuration file.
+    /// </summary>
+    public bool UsesSecretRefs => HasSecret &&
+        (SecretBackend is SecretBackendType.KubernetesSecret or SecretBackendType.KeyVault ||
+         (SecretBackend == SecretBackendType.Vault && !IsProject));
+
+    /// <summary>
+    /// Key Vault: the Secrets Store CSI driver mounts the service's secrets and syncs them into
+    /// the <c>{service}-secrets</c> Secret that the env vars reference.
+    /// </summary>
+    public bool UsesKeyVaultCsi => HasSecret && SecretBackend == SecretBackendType.KeyVault;
+
+    /// <summary>The service needs a ServiceAccount of its own (Vault agent or workload identity).</summary>
+    public bool NeedsServiceAccount => UsesVaultAgent ||
+        (UsesKeyVaultCsi && KeyVault?.KubernetesIdentity == KeyVaultKubernetesIdentity.WorkloadIdentity);
+
+    /// <summary>Key Vault: settings from secrets.keyVault.</summary>
+    public KeyVaultConfig? KeyVault { get; set; }
+
+    /// <summary>Key Vault: name prefix, <c>secretPrefix</c> or <c>deployify-{namespacePrefix}</c>.</summary>
+    public string? KeyVaultPrefix { get; set; }
+
+    /// <summary>Key Vault: the vault secret holding each secret parameter, keyed by parameter id.</summary>
+    public IReadOnlyDictionary<string, string> KeyVaultObjectNames => KeyVaultPrefix is null
+        ? new Dictionary<string, string>()
+        : SecretKeys.SecretParameters(SecretEnv.Values).Select(SecretKeys.Id).Distinct()
+            .ToDictionary(id => id, id => KeyVaultSecrets.SecretName(KeyVaultPrefix, ServiceName, id), StringComparer.Ordinal);
+
+    /// <summary>Values are rendered into the pod by the Vault Agent Injector.</summary>
+    public bool UsesVaultAgent => HasSecret && SecretBackend == SecretBackendType.Vault && IsProject;
+
+    /// <summary>The secret parameter values this service uses, keyed by id. Kept in memory only.</summary>
+    public IReadOnlyDictionary<string, SensitiveValue> SecretData => SecretKeys.SecretValues(SecretEnv.Values);
+
+    /// <summary>Vault: KV mount.</summary>
+    public string VaultMount { get; set; } = "secret";
+
+    /// <summary>Vault: path of this service's entry under the mount.</summary>
+    public string? VaultPath { get; set; }
+
+    /// <summary>Vault: API path used in templates and policies, e.g. <c>secret/data/deployify/shop/api</c>.</summary>
+    public string? VaultKvApiPath => VaultPath is null ? null : VaultClient.KvApiPath(VaultMount, VaultPath);
+
+    /// <summary>Vault: name of the Kubernetes auth role and the policy.</summary>
+    public string? VaultRole { get; set; }
+
+    /// <summary>Vault: file the agent renders under /vault/secrets.</summary>
+    public string VaultSecretsFileName { get; set; } = "appsettings.secrets.json";
+
+    /// <summary>Vault: extra agent annotations from secrets.vault.agentAnnotations.</summary>
+    public Dictionary<string, string> VaultAgentAnnotations { get; set; } = [];
     public bool HasService => Ports.Count > 0;
     public bool HasIngress { get; set; }
     public string? IngressHost { get; set; }

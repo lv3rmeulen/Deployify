@@ -212,6 +212,14 @@ public sealed class AcaCliClient(AcaTargetConfig config, ILogger logger)
         }
     }
 
+    /// <summary>Restarts a revision, so it reads Key Vault secrets again.</summary>
+    public async Task<bool> RestartRevisionAsync(string appName, string revision, CancellationToken ct = default)
+    {
+        var (exit, _) = await RunAsync("az", BuildArgs(
+            $"containerapp revision restart --name {appName} --resource-group {config.ResourceGroup} --revision {revision}"), ct);
+        return exit == 0;
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     /// <summary>

@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Deployify.Core.SecretBackends;
 using Microsoft.Extensions.Logging;
 
 namespace Deployify.Target.Kubernetes;
@@ -14,7 +15,7 @@ namespace Deployify.Target.Kubernetes;
 /// Wraps kubectl CLI calls. Used as primary apply mechanism.
 /// Falls back to <see cref="KubernetesApiClient"/> on failure.
 /// </summary>
-public sealed class KubectlRunner(KubernetesTargetConfig config, ILogger logger)
+public sealed class KubectlRunner(KubernetesTargetConfig config, ILogger logger) : IKubernetesSecretClient
 {
     private readonly IReadOnlyList<string> _contextArgs = BuildContextArgs(config);
 
@@ -161,21 +162,72 @@ public sealed class KubectlRunner(KubernetesTargetConfig config, ILogger logger)
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
+    // ── Secrets ───────────────────────────────────────────────────────────────
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyDictionary<string, SensitiveValue>?> GetSecretDataAsync(
+        string namespaceName, string name, CancellationToken ct = default)
+    {
+        // Output holds secret data: run without logging it.
+        var result = await RunQuietAsync(null, ct, "get", "secret", name, "-n", namespaceName, "-o", "json", "--ignore-not-found");
+        if (result.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"kubectl could not read secret {namespaceName}/{name}: {result.Stderr.Trim()}");
+        }
+
+        return string.IsNullOrWhiteSpace(result.Stdout) ? null : KubernetesSecretManifest.ReadData(result.Stdout);
+    }
+
+    /// <inheritdoc />
+    public async Task<string?> GetResourceVersionAsync(string kind, string namespaceName, string name, CancellationToken ct = default)
+    {
+        var result = await RunAsync(ct, "get", kind, name, "-n", namespaceName, "--ignore-not-found",
+            "-o", "jsonpath={.metadata.resourceVersion}");
+        return result.ExitCode == 0 && !string.IsNullOrWhiteSpace(result.Stdout) ? result.Stdout.Trim() : null;
+    }
+
+    /// <inheritdoc />
+    public async Task<string> ServerSideApplyAsync(string json, CancellationToken ct = default)
+    {
+        // The object is sent on stdin, so a Secret never touches the disk. Server-side apply
+        // also avoids the last-applied-configuration annotation, which would hold a second
+        // copy of every value.
+        var result = await RunQuietAsync(json, ct, "apply", "--server-side", "--field-manager=deployify",
+            "--force-conflicts", "-f", "-", "-o", "jsonpath={.metadata.resourceVersion}");
+        if (result.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"kubectl apply failed: {result.Stderr.Trim()}");
+        }
+
+        return result.Stdout.Trim();
+    }
+
+    /// <summary>Restarts a deployment's pods so they pick up changed secrets.</summary>
+    public async Task<bool> RolloutRestartAsync(string deploymentName, string namespaceName, CancellationToken ct = default)
+    {
+        var result = await RunAsync(ct, "rollout", "restart", $"deployment/{deploymentName}", "-n", namespaceName);
+        return result.ExitCode == 0;
+    }
+
     private Task<ProcessResult> RunAsync(CancellationToken ct, params string[] args)
         => RunRawAsync("kubectl", [.. _contextArgs, .. args], logger, ct);
+
+    private Task<ProcessResult> RunQuietAsync(string? stdin, CancellationToken ct, params string[] args)
+        => RunRawAsync("kubectl", [.. _contextArgs, .. args], null, ct, stdin);
 
     /// <summary>
     /// Runs a process with an argument list (no shell, so paths and values with spaces or
     /// quotes are passed through intact) and kills it if the caller cancels.
     /// </summary>
     private static async Task<ProcessResult> RunRawAsync(
-        string command, IEnumerable<string> args, ILogger? log, CancellationToken ct)
+        string command, IEnumerable<string> args, ILogger? log, CancellationToken ct, string? stdin = null)
     {
         var psi = new ProcessStartInfo(command)
         {
             UseShellExecute = false,
             RedirectStandardOutput = true,
-            RedirectStandardError = true
+            RedirectStandardError = true,
+            RedirectStandardInput = stdin is not null
         };
         foreach (var a in args)
         {
@@ -215,6 +267,12 @@ public sealed class KubectlRunner(KubernetesTargetConfig config, ILogger logger)
 
         proc.BeginOutputReadLine();
         proc.BeginErrorReadLine();
+
+        if (stdin is not null)
+        {
+            await proc.StandardInput.WriteAsync(stdin.AsMemory(), ct);
+            proc.StandardInput.Close();
+        }
 
         try
         {

@@ -8,6 +8,8 @@ using System.Threading.Tasks;
 using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
+using Deployify.Core.SecretBackends;
+using Deployify.Core.SecretBackends.KeyVault;
 using Microsoft.Extensions.Logging;
 
 namespace Deployify.Target.AzureContainerApps;
@@ -27,9 +29,60 @@ namespace Deployify.Target.AzureContainerApps;
 /// </summary>
 public sealed class AcaDeploymentTarget(
     IPublisher publisher,
-    ILogger<AcaDeploymentTarget> logger) : IDeploymentTarget
+    ILogger<AcaDeploymentTarget> logger) : IDeploymentTarget, ISecretStoreProvider
 {
     private readonly AcaManifestGenerator _generator = new();
+
+    // ── Secrets ───────────────────────────────────────────────────────────────
+
+    public IReadOnlyCollection<SecretBackendType> SupportedSecretBackends { get; } = [SecretBackendType.KeyVault];
+
+    public ISecretStore CreateSecretStore(EnvironmentConfig config, ILogger storeLogger)
+    {
+        var cfg = GetConfig(config);
+        var keyVault = config.Secrets.KeyVault;
+        return new KeyVaultSecretStore(
+            new AzureCliKeyVaultClient(cfg.SubscriptionId), KeyVaultSecrets.VaultName(keyVault), AcaKeyVault.Prefix(keyVault, cfg));
+    }
+
+    /// <summary>
+    /// Key Vault backend: writes an app's secret env vars to Key Vault before the app is
+    /// deployed, and records where they went. Returns true when an existing secret changed,
+    /// which a running revision only notices after a restart.
+    /// </summary>
+    internal static async Task<bool> SyncSecretsAsync(
+        AcaApp app, EnvironmentConfig config, AcaTargetConfig cfg, IKeyVaultClient client, CancellationToken ct)
+    {
+        if (config.Secrets.Backend != SecretBackendType.KeyVault || app.SecretEnv.Count == 0)
+        {
+            return false;
+        }
+
+        var keyVault = config.Secrets.KeyVault;
+        var vaultName = KeyVaultSecrets.VaultName(keyVault);
+        var names = AcaManifestGenerator.SecretNames(app);
+        var tags = new Dictionary<string, string>
+        {
+            [KeyVaultSecrets.StoreTag] = AcaKeyVault.Prefix(keyVault, cfg),
+            [KeyVaultSecrets.AppTag] = app.Name
+        };
+        var changed = false;
+        foreach (var (key, value) in app.SecretEnv.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        {
+            var name = AcaKeyVault.AppSecretName(keyVault, cfg, app.Name, names[key]);
+            var (version, written, existed) = await KeyVaultSecrets.SetIfChangedAsync(
+                client, vaultName, name, new SensitiveValue(value.ToString()), tags, ct);
+            changed |= written && existed;
+            config.Secrets.References[$"{app.Name}/{key}"] = new SecretReference
+            {
+                Backend = SecretBackendType.KeyVault,
+                Location = KeyVaultSecrets.SecretUrl(keyVault, name),
+                Version = version
+            };
+        }
+
+        return changed;
+    }
 
     public DeploymentTargetType TargetType => DeploymentTargetType.AzureContainerApps;
     public string DisplayName => "Azure Container Apps";
@@ -164,8 +217,18 @@ public sealed class AcaDeploymentTarget(
 
             try
             {
+                // Secrets first: a new revision reads its Key Vault references when it starts.
+                var secretsChanged = await SyncSecretsAsync(app, config, cfg, new AzureCliKeyVaultClient(cfg.SubscriptionId), ct);
                 var resourceId = await client.DeployAppAsync(specPath, app.Name, ct);
                 logger.LogInformation("Deployed Container App '{Name}' → {Id}", app.Name, resourceId);
+
+                // An unchanged spec makes no new revision, and Container Apps only re-reads
+                // Key Vault references periodically, so restart to pick up new values now.
+                if (secretsChanged && await client.GetLatestRevisionAsync(app.Name, ct) is { } revision &&
+                    !await client.RestartRevisionAsync(app.Name, revision, ct))
+                {
+                    logger.LogWarning("Secrets of {Name} changed but revision {Revision} could not be restarted.", app.Name, revision);
+                }
 
                 results.Add(new DeploymentResult
                 {

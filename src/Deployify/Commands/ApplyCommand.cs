@@ -84,7 +84,26 @@ public static class ApplyCommand
                 return 0;
             }
 
+            try
+            {
+                await resolved.SaveGeneratedSecretsAsync(ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(ex.Message)}");
+                return 1;
+            }
+
             var results = await target.ApplyAsync(manifest, config, outputDir, ct);
+
+            try
+            {
+                await resolved.SaveSecretReferencesAsync(ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                AnsiConsole.MarkupLine($"[yellow]![/] Could not record secret references: {Markup.Escape(ex.Message)}");
+            }
 
             var succeeded = results.Count(r => r.Success);
             var failed = results.Count(r => !r.Success);

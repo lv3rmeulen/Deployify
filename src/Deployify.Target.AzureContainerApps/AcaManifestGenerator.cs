@@ -9,6 +9,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Expressions;
 using Deployify.Core.Models;
+using Deployify.Core.SecretBackends;
+using Deployify.Core.SecretBackends.KeyVault;
 
 namespace Deployify.Target.AzureContainerApps;
 
@@ -117,7 +119,8 @@ public sealed class AcaManifestGenerator
     {
         Directory.CreateDirectory(outputDirectory);
 
-        var spec = BuildAppSpec(app, acaConfig);
+        var keyVault = config.Secrets.Backend == SecretBackendType.KeyVault ? config.Secrets.KeyVault : null;
+        var spec = BuildAppSpec(app, acaConfig, keyVault);
         var json = JsonSerializer.Serialize(spec, new JsonSerializerOptions
         {
             WriteIndented = true,
@@ -126,17 +129,23 @@ public sealed class AcaManifestGenerator
 
         var path = Path.Combine(outputDirectory, $"{app.Name}.containerapp.json");
         await File.WriteAllTextAsync(path, json, new UTF8Encoding(false), ct);
-        if (app.SecretEnv.Count > 0 && !OperatingSystem.IsWindows())
+        if (app.SecretEnv.Count > 0 && keyVault is null && !OperatingSystem.IsWindows())
         {
             File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         }
+
+        if (config.Secrets.IsExternal && app.SecretEnv.Count > 0)
+        {
+            SecretLeakScanner.EnsureClean([path], SecretKeys.SecretValues(app.SecretEnv.Values));
+        }
+
         app.SpecFilePath = path;
         return path;
     }
 
     // ── Spec builder ──────────────────────────────────────────────────────────
 
-    private static object BuildAppSpec(AcaApp app, AcaTargetConfig acaConfig)
+    private static object BuildAppSpec(AcaApp app, AcaTargetConfig acaConfig, KeyVaultConfig? keyVault)
     {
         var imageRef = ImageReference.Format(app.Image!, app.ImageTag);
 
@@ -180,7 +189,7 @@ public sealed class AcaManifestGenerator
 
         var properties = new Dictionary<string, object?>
         {
-            ["configuration"] = BuildConfiguration(app, acaConfig),
+            ["configuration"] = BuildConfiguration(app, acaConfig, keyVault),
             ["template"] = template
         };
         // Without a subscription ID the environment ID would be malformed. Plan and apply
@@ -209,22 +218,66 @@ public sealed class AcaManifestGenerator
             ["properties"] = properties
         };
 
-        // The registry entry refers to an identity, so the app must actually have one.
-        if (acaConfig.AcrLoginServer is not null)
+        if (BuildIdentity(app, acaConfig, keyVault) is { } identity)
         {
-            spec["identity"] = acaConfig.AcrIdentityResourceId is not null
-                ? new Dictionary<string, object>
-                {
-                    ["type"] = "UserAssigned",
-                    ["userAssignedIdentities"] = new Dictionary<string, object>
-                    {
-                        [acaConfig.AcrIdentityResourceId] = new Dictionary<string, object>()
-                    }
-                }
-                : new Dictionary<string, object> { ["type"] = "SystemAssigned" };
+            spec["identity"] = identity;
         }
 
         return spec;
+    }
+
+    /// <summary>
+    /// The registry entry and Key Vault secret references each name an identity, so the app
+    /// must actually have them: every user-assigned identity they name, plus the system one
+    /// when either uses "system".
+    /// </summary>
+    private static Dictionary<string, object>? BuildIdentity(AcaApp app, AcaTargetConfig acaConfig, KeyVaultConfig? keyVault)
+    {
+        var userAssigned = new List<string>();
+        var system = false;
+
+        void Use(string? identityResourceId)
+        {
+            if (identityResourceId is null)
+            {
+                system = true;
+            }
+            else if (!userAssigned.Contains(identityResourceId, StringComparer.OrdinalIgnoreCase))
+            {
+                userAssigned.Add(identityResourceId);
+            }
+        }
+
+        if (acaConfig.AcrLoginServer is not null)
+        {
+            Use(acaConfig.AcrIdentityResourceId);
+        }
+
+        if (keyVault is not null && app.SecretEnv.Count > 0)
+        {
+            Use(keyVault.IdentityResourceId);
+        }
+
+        if (!system && userAssigned.Count == 0)
+        {
+            return null;
+        }
+
+        var identity = new Dictionary<string, object>
+        {
+            ["type"] = (system, userAssigned.Count > 0) switch
+            {
+                (true, true) => "SystemAssigned,UserAssigned",
+                (true, false) => "SystemAssigned",
+                _ => "UserAssigned"
+            }
+        };
+        if (userAssigned.Count > 0)
+        {
+            identity["userAssignedIdentities"] = userAssigned.ToDictionary(id => id, _ => (object)new Dictionary<string, object>());
+        }
+
+        return identity;
     }
 
     /// <summary>
@@ -262,20 +315,31 @@ public sealed class AcaManifestGenerator
         return result;
     }
 
-    private static Dictionary<string, object?> BuildConfiguration(AcaApp app, AcaTargetConfig acaConfig)
+    private static Dictionary<string, object?> BuildConfiguration(AcaApp app, AcaTargetConfig acaConfig, KeyVaultConfig? keyVault)
     {
         var config = new Dictionary<string, object?>();
 
-        // Secret env values are declared as app secrets and referenced with secretRef.
+        // Secret env values are declared as app secrets and referenced with secretRef. With
+        // Key Vault, each app secret is a reference that Container Apps resolves with the
+        // managed identity; the spec only holds the secret's URL.
         if (app.SecretEnv.Count > 0)
         {
             var names = SecretNames(app);
             config["secrets"] = app.SecretEnv
-                .Select(kvp => new Dictionary<string, string>
-                {
-                    ["name"] = names[kvp.Key],
-                    ["value"] = kvp.Value.ToString()
-                })
+                .OrderBy(kvp => kvp.Key, StringComparer.Ordinal)
+                .Select(kvp => keyVault is null
+                    ? new Dictionary<string, string>
+                    {
+                        ["name"] = names[kvp.Key],
+                        ["value"] = kvp.Value.ToString()
+                    }
+                    : new Dictionary<string, string>
+                    {
+                        ["name"] = names[kvp.Key],
+                        ["keyVaultUrl"] = KeyVaultSecrets.SecretUrl(keyVault,
+                            AcaKeyVault.AppSecretName(keyVault, acaConfig, app.Name, names[kvp.Key])),
+                        ["identity"] = keyVault.IdentityResourceId ?? "system"
+                    })
                 .ToList();
         }
 

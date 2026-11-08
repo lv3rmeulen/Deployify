@@ -15,4 +15,7 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Deployify.Target.AzureContainerApps.Tests" />
+  </ItemGroup>
 </Project>

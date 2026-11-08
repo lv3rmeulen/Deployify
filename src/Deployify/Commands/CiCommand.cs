@@ -162,7 +162,9 @@ public static class CiCommand
             }
             else if (!await StepAsync("4/4 Apply", async stepCt =>
             {
+                await resolved.SaveGeneratedSecretsAsync(stepCt);
                 var results = await target.ApplyAsync(manifest, config, outputDir, stepCt);
+                await resolved.SaveSecretReferencesAsync(stepCt);
                 var failed = results.Where(r => !r.Success).ToList();
                 foreach (var r in results)
                 {

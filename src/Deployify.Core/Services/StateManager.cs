@@ -6,10 +6,15 @@ using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
+using Deployify.Core.SecretBackends;
 
 namespace Deployify.Core.Services;
 
-public sealed class StateManager : IStateManager
+/// <summary>
+/// Reads and writes deployify-state.json. When a <see cref="SecretRegistry"/> is supplied, a save
+/// is refused if the serialized file contains any secret value resolved during this run.
+/// </summary>
+public sealed class StateManager(SecretRegistry? secrets = null) : IStateManager
 {
     private const string StateFileName = "deployify-state.json";
 
@@ -42,11 +47,15 @@ public sealed class StateManager : IStateManager
         var path = Path.Combine(directory, StateFileName);
         // Write to a temp file and move it into place, so a failure part-way through
         // can never leave a truncated state file behind.
-        var tmp = path + ".tmp";
-        await using (var stream = File.Create(tmp))
+        var json = JsonSerializer.Serialize(stateFile, s_jsonOptions);
+        if (secrets is { Count: > 0 })
         {
-            await JsonSerializer.SerializeAsync(stream, stateFile, s_jsonOptions, ct);
+            SecretLeakScanner.ThrowIfAny(
+                SecretLeakScanner.ScanText(StateFileName, json, secrets.Snapshot()), "The state file");
         }
+
+        var tmp = path + ".tmp";
+        await File.WriteAllTextAsync(tmp, json, ct);
 
         File.Move(tmp, path, overwrite: true);
     }

@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Deployify.Core.SecretBackends;
 using Microsoft.Extensions.Logging;
 
 namespace Deployify.Target.Kubernetes;
@@ -17,7 +18,7 @@ namespace Deployify.Target.Kubernetes;
 /// Used as fallback when kubectl is unavailable.
 /// Reads credentials from the kubeconfig or in-cluster service account.
 /// </summary>
-public sealed class KubernetesApiClient : IDisposable
+public sealed class KubernetesApiClient : IDisposable, IKubernetesSecretClient
 {
     private readonly HttpClient _http;
     private readonly ILogger _logger;
@@ -159,6 +160,64 @@ public sealed class KubernetesApiClient : IDisposable
         }
     }
 
+    // ── Secrets ───────────────────────────────────────────────────────────────
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyDictionary<string, SensitiveValue>?> GetSecretDataAsync(
+        string namespaceName, string name, CancellationToken ct = default)
+    {
+        using var resp = await _http.GetAsync(BuildResourceUrl("", "v1", "Secret", namespaceName, name), ct);
+        if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+
+        if (!resp.IsSuccessStatusCode)
+        {
+            // The body of a failed request doesn't hold secret data, but don't log it anyway.
+            throw new InvalidOperationException($"Could not read secret {namespaceName}/{name}: HTTP {(int)resp.StatusCode}");
+        }
+
+        return KubernetesSecretManifest.ReadData(await resp.Content.ReadAsStringAsync(ct));
+    }
+
+    /// <inheritdoc />
+    public async Task<string?> GetResourceVersionAsync(string kind, string namespaceName, string name, CancellationToken ct = default)
+    {
+        using var resp = await _http.GetAsync(BuildResourceUrl("", "v1", kind, namespaceName, name), ct);
+        if (!resp.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+        return doc.RootElement.GetProperty("metadata").GetProperty("resourceVersion").GetString();
+    }
+
+    /// <inheritdoc />
+    public async Task<string> ServerSideApplyAsync(string json, CancellationToken ct = default)
+    {
+        using var obj = JsonDocument.Parse(json);
+        var root = obj.RootElement;
+        var meta = root.GetProperty("metadata");
+        var apiVersion = root.GetProperty("apiVersion").GetString()!;
+        var group = apiVersion.Contains('/') ? apiVersion.Split('/')[0] : string.Empty;
+        var version = apiVersion.Contains('/') ? apiVersion.Split('/')[1] : apiVersion;
+        var ns = meta.TryGetProperty("namespace", out var n) ? n.GetString() ?? "" : "";
+        var url = BuildResourceUrl(group, version, root.GetProperty("kind").GetString()!, ns, meta.GetProperty("name").GetString()!);
+
+        using var content = new StringContent(json, Encoding.UTF8, "application/apply-patch+yaml");
+        using var resp = await _http.PatchAsync($"{url}?fieldManager=deployify&force=true", content, ct);
+        if (!resp.IsSuccessStatusCode)
+        {
+            // Error bodies can echo the submitted object, which may be a Secret: report the status only.
+            throw new InvalidOperationException($"Kubernetes API apply failed: HTTP {(int)resp.StatusCode}");
+        }
+
+        using var result = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+        return result.RootElement.GetProperty("metadata").GetProperty("resourceVersion").GetString() ?? "";
+    }
+
     public void Dispose() => _http.Dispose();
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -181,6 +240,7 @@ public sealed class KubernetesApiClient : IDisposable
         "configmap" => "configmaps",
         "ingress" => "ingresses",
         "persistentvolumeclaim" => "persistentvolumeclaims",
+        "secretproviderclass" => "secretproviderclasses",
         _ => kind.ToLowerInvariant() + "s"
     };
 

@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Deployify.Core.SecretBackends;
 using Microsoft.Extensions.Logging;
 
 namespace Deployify.Target.AwsEcs;
@@ -18,7 +19,7 @@ namespace Deployify.Target.AwsEcs;
 /// keep credentials management simple (honors all standard AWS credential
 /// sources: env vars, ~/.aws/credentials, instance profiles, etc.).
 /// </summary>
-public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger)
+public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger) : ISsmParameterClient
 {
     // ── Availability ──────────────────────────────────────────────────────────
 
@@ -125,7 +126,7 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger)
     /// through a temporary owner-only input file rather than the command line, so it doesn't
     /// show up in the process list.
     /// </summary>
-    public async Task PutSecureStringParameterAsync(string name, string value, CancellationToken ct = default)
+    public async Task<long> PutSecureStringParameterAsync(string name, string value, CancellationToken ct = default)
     {
         var inputPath = Path.Combine(Path.GetTempPath(), $"deployify-ssm-{Guid.NewGuid():N}.json");
         try
@@ -149,12 +150,69 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger)
             {
                 throw new InvalidOperationException($"Failed to store secret parameter {name}: {output.Trim()}");
             }
+
+            using var doc = JsonDocument.Parse(output);
+            return doc.RootElement.TryGetProperty("Version", out var v) ? v.GetInt64() : 0;
         }
         finally
         {
             File.Delete(inputPath);
         }
     }
+
+    /// <inheritdoc />
+    public async Task<SsmParameter?> GetParameterAsync(string name, CancellationToken ct = default)
+    {
+        // Output holds the decrypted value: it's parsed and wrapped, never logged.
+        var (exit, output) = await RunAsync("aws",
+            BuildArgs($"ssm get-parameter --name \"{name}\" --with-decryption --output json"), ct);
+        if (exit != 0)
+        {
+            if (output.Contains("ParameterNotFound", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            throw new InvalidOperationException($"Failed to read secret parameter {name}: {output.Trim()}");
+        }
+
+        using var doc = JsonDocument.Parse(output);
+        return ReadParameter(doc.RootElement.GetProperty("Parameter"));
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyDictionary<string, SsmParameter>> GetParametersByPathAsync(
+        string path, CancellationToken ct = default)
+    {
+        // The CLI follows NextToken itself and returns every page.
+        var (exit, output) = await RunAsync("aws",
+            BuildArgs($"ssm get-parameters-by-path --path \"{path}\" --recursive --with-decryption --output json"), ct);
+        if (exit != 0)
+        {
+            throw new InvalidOperationException($"Failed to read secret parameters under {path}: {output.Trim()}");
+        }
+
+        return ParseParameters(output);
+    }
+
+    /// <summary>Parses <c>get-parameters-by-path</c> output.</summary>
+    internal static IReadOnlyDictionary<string, SsmParameter> ParseParameters(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var result = new Dictionary<string, SsmParameter>(StringComparer.Ordinal);
+        foreach (var p in doc.RootElement.GetProperty("Parameters").EnumerateArray())
+        {
+            var parameter = ReadParameter(p);
+            result[parameter.Name] = parameter;
+        }
+
+        return result;
+    }
+
+    private static SsmParameter ReadParameter(JsonElement p) => new(
+        p.GetProperty("Name").GetString()!,
+        new SensitiveValue(p.GetProperty("Value").GetString() ?? ""),
+        p.TryGetProperty("Version", out var v) ? v.GetInt64() : 0);
 
     // ── Create or update service ──────────────────────────────────────────────
 

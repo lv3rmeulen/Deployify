@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Expressions;
 using Deployify.Core.Models;
+using Deployify.Core.SecretBackends;
 
 namespace Deployify.Target.AwsEcs;
 
@@ -127,12 +128,24 @@ public sealed class EcsTaskDefinitionGenerator
         var path = Path.Combine(outputDirectory, $"{service.Name}.taskdef.json");
         // No BOM: the AWS CLI rejects JSON input that starts with one.
         await File.WriteAllTextAsync(path, json, new UTF8Encoding(false), ct);
+        if (config.Secrets.IsExternal && service.SecretEnv.Count > 0)
+        {
+            SecretLeakScanner.EnsureClean([path], SecretKeys.SecretValues(service.SecretEnv.Values));
+        }
+
         service.TaskDefinitionPath = path;
         return path;
     }
 
     /// <summary>The SSM parameter that holds secret env var <paramref name="key"/> of a service.</summary>
     public static string SecretParameterName(EcsTargetConfig ecsConfig, string serviceName, string key)
+        => $"{SecretsPrefix(ecsConfig)}/{serviceName}/{key}";
+
+    /// <summary>SSM path under which generated parameter values are kept (ssm backend).</summary>
+    public static string GeneratedParametersPath(EcsTargetConfig ecsConfig) => $"{SecretsPrefix(ecsConfig)}/_parameters";
+
+    /// <summary>The SSM path prefix: <c>secretsPrefix</c>, or <c>/deployify/{cluster}</c>.</summary>
+    public static string SecretsPrefix(EcsTargetConfig ecsConfig)
     {
         var prefix = string.IsNullOrWhiteSpace(ecsConfig.SecretsPrefix)
             ? $"/deployify/{ecsConfig.ClusterName}"
@@ -142,7 +155,7 @@ public sealed class EcsTaskDefinitionGenerator
             prefix = "/" + prefix;
         }
 
-        return $"{prefix}/{serviceName}/{key}";
+        return prefix;
     }
 
     // ── Task definition builder ───────────────────────────────────────────────

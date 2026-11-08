@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Models;
@@ -22,6 +23,16 @@ internal static class SecretsWarning
         {
             AnsiConsole.MarkupLine($"\n[red]![/] [cyan]{ParameterStore.FileName}[/] holds generated secrets and is not " +
                                    "git-ignored. Add it to .gitignore so the secrets aren't committed.");
+        }
+
+        // With an external backend, values from the parameters file are moved to the backend on
+        // the next apply; after that the file has nothing left to do.
+        if (state.Environments.Values.Any(e => e.Secrets.IsExternal) &&
+            System.IO.File.Exists(System.IO.Path.Combine(directory, ParameterStore.FileName)))
+        {
+            AnsiConsole.MarkupLine($"\n[dim]An external secret backend is configured. Generated values in " +
+                                   $"[cyan]{ParameterStore.FileName}[/] are copied to it on the next apply; " +
+                                   "delete the file after that.[/]");
         }
 
         var literal = StateFileSecrets.FindLiteral(state);

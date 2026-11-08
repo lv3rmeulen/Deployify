@@ -11,4 +11,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Deployify.Target.Kubernetes.Tests" />
+  </ItemGroup>
 </Project>

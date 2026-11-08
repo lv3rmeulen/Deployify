@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
+using Deployify.Core.SecretBackends;
 using Microsoft.Extensions.Logging;
 
 namespace Deployify.Target.AwsEcs;
@@ -29,9 +30,45 @@ namespace Deployify.Target.AwsEcs;
 /// </summary>
 public sealed class EcsDeploymentTarget(
     IPublisher publisher,
-    ILogger<EcsDeploymentTarget> logger) : IDeploymentTarget
+    ILogger<EcsDeploymentTarget> logger) : IDeploymentTarget, ISecretStoreProvider
 {
     private readonly EcsTaskDefinitionGenerator _generator = new();
+
+    // ── Secrets ───────────────────────────────────────────────────────────────
+
+    public IReadOnlyCollection<SecretBackendType> SupportedSecretBackends { get; } = [SecretBackendType.Ssm];
+
+    public ISecretStore CreateSecretStore(EnvironmentConfig config, ILogger storeLogger)
+    {
+        var cfg = GetConfig(config);
+        return new SsmSecretStore(new EcsCliClient(cfg, storeLogger), EcsTaskDefinitionGenerator.GeneratedParametersPath(cfg));
+    }
+
+    /// <summary>
+    /// Stores a service's secret env vars as SecureStrings. With the ssm backend, unchanged
+    /// values aren't rewritten and each parameter's version is recorded in the state file.
+    /// </summary>
+    internal static async Task SyncSecretsAsync(
+        EcsService svc, EnvironmentConfig config, EcsTargetConfig cfg, ISsmParameterClient client, CancellationToken ct)
+    {
+        foreach (var (key, value) in svc.SecretEnv)
+        {
+            var name = EcsTaskDefinitionGenerator.SecretParameterName(cfg, svc.Name, key);
+            if (!config.Secrets.IsExternal)
+            {
+                await client.PutSecureStringParameterAsync(name, value.ToString(), ct);
+                continue;
+            }
+
+            var (version, _) = await SsmSecrets.PutIfChangedAsync(client, name, new SensitiveValue(value.ToString()), ct);
+            config.Secrets.References[$"{svc.Name}/{key}"] = new SecretReference
+            {
+                Backend = SecretBackendType.Ssm,
+                Location = name,
+                Version = version.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            };
+        }
+    }
 
     public DeploymentTargetType TargetType => DeploymentTargetType.AwsEcs;
     public string DisplayName => "AWS ECS (Fargate)";
@@ -165,11 +202,7 @@ public sealed class EcsDeploymentTarget(
 
             try
             {
-                foreach (var (key, value) in svc.SecretEnv)
-                {
-                    await client.PutSecureStringParameterAsync(
-                        EcsTaskDefinitionGenerator.SecretParameterName(cfg, svc.Name, key), value.ToString(), ct);
-                }
+                await SyncSecretsAsync(svc, config, cfg, client, ct);
 
                 var taskDefArn = await client.RegisterTaskDefinitionAsync(taskDefPath, ct);
                 logger.LogInformation("Registered task definition: {Arn}", taskDefArn);

@@ -4,7 +4,9 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Interfaces;
+using Deployify.Core.Expressions;
 using Deployify.Core.Models;
+using Deployify.Core.SecretBackends;
 using Deployify.Core.Services;
 using Deployify.Target.AwsEcs;
 using Deployify.Target.AzureContainerApps;
@@ -24,7 +26,8 @@ internal static class DependencyInjection
     public static IServiceCollection AddDeployifyCore(this IServiceCollection services)
         => services
             .AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Information))
-            .AddSingleton<IStateManager, StateManager>()
+            .AddSingleton<SecretRegistry>()
+            .AddSingleton<IStateManager>(sp => new StateManager(sp.GetRequiredService<SecretRegistry>()))
             .AddSingleton<IManifestReader, ManifestReader>()
             .AddSingleton<JobGenerator>()
             .AddSingleton<IPublisher, Publisher>()
@@ -61,9 +64,46 @@ internal static class DependencyInjection
         var stateManager = sp0.GetRequiredService<IStateManager>();
         var (config, envName) = await stateManager.LoadActiveAsync(stateDirectory, envOverride, ct);
 
+        var targetType = targetOverride ?? config.Target;
+        var factory = sp0.GetRequiredService<IDeploymentTargetFactory>();
+        var target = factory.Get(targetType);
+
         // Parameter values: explicit config, Parameters__* env vars, manifest defaults, then
-        // generated values kept in deployify-parameters.json so every deploy reuses them.
-        config.ParameterSource = ParameterStore.Load(stateDirectory, envName).CreateSource(config);
+        // generated values. Those are kept in deployify-parameters.json, or with an external
+        // secret backend, in the backend itself so no generated password is written to disk.
+        var parameterStore = ParameterStore.Load(stateDirectory, envName);
+        GeneratedSecretSession? generatedSecrets = null;
+        IParameterSource parameters;
+        if (config.Secrets.IsExternal)
+        {
+            if (target is not ISecretStoreProvider provider ||
+                !provider.SupportedSecretBackends.Contains(config.Secrets.Backend))
+            {
+                var supported = target is ISecretStoreProvider p
+                    ? string.Join(", ", p.SupportedSecretBackends.Prepend(SecretBackendType.Inline))
+                    : nameof(SecretBackendType.Inline);
+                throw new NotSupportedException(
+                    $"The {target.DisplayName} target doesn't support the {config.Secrets.Backend} secret backend " +
+                    $"(set in secrets.backend). Supported: {supported}.");
+            }
+
+            var logger = sp0.GetRequiredService<ILoggerFactory>().CreateLogger("Deployify.Secrets");
+            generatedSecrets = await GeneratedSecretSession.OpenAsync(
+                provider.CreateSecretStore(config, logger),
+                new System.Collections.Generic.Dictionary<string, string>(parameterStore.Values),
+                logger, ct);
+            parameters = ParameterSources.Default(
+                ParameterResolution.ExplicitValues(config), generatedSecrets.Values,
+                onGenerated: generatedSecrets.OnGenerated);
+        }
+        else
+        {
+            parameters = parameterStore.CreateSource(config);
+        }
+
+        // Every secret value resolved in this run is remembered, so the state file and
+        // artifacts can be checked for it before they're written.
+        config.ParameterSource = new RecordingParameterSource(parameters, sp0.GetRequiredService<SecretRegistry>());
 
         // Prefer AppHostPath from state; fall back to the path the user passed.
         // Manifest resource paths are relative to the AppHost project directory.
@@ -71,13 +111,10 @@ internal static class DependencyInjection
             ? config.AppHostPath
             : appHostDirectory;
 
-        var targetType = targetOverride ?? config.Target;
-        var factory = sp0.GetRequiredService<IDeploymentTargetFactory>();
-        var target = factory.Get(targetType);
-
         return new ResolvedContext(sp0, config, envName, targetType, target, stateDirectory)
         {
-            AppHostDirectory = resolvedAppHostDir
+            AppHostDirectory = resolvedAppHostDir,
+            GeneratedSecrets = generatedSecrets
         };
     }
 
@@ -113,6 +150,43 @@ internal sealed record ResolvedContext(
     /// (e.g. repo root) and --project-path points to the AppHost subdirectory.
     /// </summary>
     public string AppHostDirectory { get; init; } = Directory;
+
+    /// <summary>
+    /// Generated parameter values held in an external secret backend, or null when the
+    /// environment uses the inline backend (values kept in deployify-parameters.json).
+    /// </summary>
+    public GeneratedSecretSession? GeneratedSecrets { get; init; }
+
+    /// <summary>
+    /// Writes newly generated secret values to the backend. Apply calls this before deploying,
+    /// so a service is never started with a password that isn't stored anywhere.
+    /// </summary>
+    public async Task SaveGeneratedSecretsAsync(CancellationToken ct = default)
+    {
+        if (GeneratedSecrets is { Pending.Count: > 0 } session)
+        {
+            var count = session.Pending.Count;
+            await session.FlushAsync(ct);
+            AnsiConsole.MarkupLine($"[dim]Stored {count} generated secret(s) in {Markup.Escape(session.Store.Description)}.[/]");
+        }
+    }
+
+    /// <summary>Records where apply wrote each secret (locations and versions only) in the state file.</summary>
+    public async Task SaveSecretReferencesAsync(CancellationToken ct = default)
+    {
+        if (!Config.Secrets.IsExternal || Config.Secrets.References.Count == 0)
+        {
+            return;
+        }
+
+        var stateManager = Services.GetRequiredService<IStateManager>();
+        var file = await stateManager.LoadFileAsync(Directory, ct);
+        if (file.Environments.TryGetValue(EnvName, out var env))
+        {
+            env.Secrets.References = Config.Secrets.References;
+            await stateManager.SaveFileAsync(file, Directory, ct);
+        }
+    }
 
     /// <summary>
     /// Human-readable address/location for the active target, e.g. the Nomad address,

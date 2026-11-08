@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Text.Json.Serialization;
 using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
+using Deployify.Core.SecretBackends;
 
 namespace Deployify.Core.Models;
 
@@ -109,6 +110,12 @@ public sealed class EnvironmentConfig
     /// or when dapr annotations are present on a resource.
     /// </summary>
     public DaprConfig Dapr { get; set; } = new();
+
+    /// <summary>
+    /// Where secret values are kept. With an external backend (Kubernetes Secrets, SSM, Vault)
+    /// generated artifacts and this file only hold references; see <see cref="SecretsConfig"/>.
+    /// </summary>
+    public SecretsConfig Secrets { get; set; } = new();
 
     /// <summary>
     /// Target-specific configuration bag.
@@ -255,6 +262,6 @@ public static class TargetConfigJsonOptions
     public static readonly System.Text.Json.JsonSerializerOptions Default = new()
     {
         PropertyNameCaseInsensitive = true,
-        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+        Converters = { new JsonStringEnumConverter() }
     };
 }
