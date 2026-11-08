@@ -31,7 +31,7 @@ namespace Deployify.Target.NomadConsul;
 public sealed class NomadConsulDeploymentTarget(
     IPublisher publisher,
     ILogger<NomadConsulDeploymentTarget> logger,
-    ILoggerFactory loggerFactory) : IDeploymentTarget, IRolloutTarget
+    ILoggerFactory loggerFactory) : IDeploymentTarget, IRolloutTarget, IResourceLifecycle
 {
     private readonly NomadRollout _rollout = new(logger);
 
@@ -343,6 +343,23 @@ public sealed class NomadConsulDeploymentTarget(
     public bool HasNativeRollback(EnvironmentConfig config) => GetConfig(config).AutoRevert;
 
     // ── Publish ───────────────────────────────────────────────────────────────
+
+    // ── Lifecycle (destroy / prune) ───────────────────────────────────────────
+
+    public async Task<IReadOnlyList<ManagedService>> ListManagedAsync(EnvironmentConfig config, CancellationToken ct = default)
+    {
+        using var client = BuildNomadClient(GetConfig(config));
+        return await NomadLifecycle.ListManagedAsync(client, ct);
+    }
+
+    public async Task DeleteServiceAsync(EnvironmentConfig config, string service, DeleteOptions options, CancellationToken ct = default)
+    {
+        using var client = BuildNomadClient(GetConfig(config));
+        await NomadLifecycle.DeleteServiceAsync(client, service, options, logger, ct);
+    }
+
+    public IReadOnlyList<string> DescribeKept(EnvironmentConfig config, DeleteOptions options)
+        => [.. NomadLifecycle.DescribeKept(GetConfig(config).NomadNamespace, options), "Consul itself (service registrations go away with the jobs; Deployify writes no intentions or config entries)"];
 
     public async Task PublishAsync(
         AspireManifest manifest,

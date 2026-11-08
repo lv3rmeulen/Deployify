@@ -44,7 +44,7 @@ public static class RollbackCommand
                 resolved = await DependencyInjection.ResolveAsync(
                     parseResult.GetValue(GlobalOptions.ProjectPath)!,
                     parseResult.GetValue(GlobalOptions.Environment),
-                    parseResult.GetValue(GlobalOptions.Target), ct);
+                    parseResult.GetValue(GlobalOptions.Target), ct, lockFor: "rollback");
             }
             catch (Exception ex)
             {
@@ -52,13 +52,17 @@ public static class RollbackCommand
                 return 1;
             }
 
+            await using var _ = resolved;
+
             if (resolved.Target is not IRolloutTarget rollout)
             {
                 AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {resolved.Target.DisplayName} has no health-gated rollouts, so there is nothing to roll back.");
                 return 1;
             }
 
-            var rollouts = await RolloutJournal.ListAsync(resolved.Directory, resolved.EnvName, ct);
+            // Destroy and prune journals record deletions; there is nothing in them to roll back.
+            var rollouts = (await RolloutJournal.ListAsync(resolved.Directory, resolved.EnvName, ct))
+                .Where(r => r.Record.Operation == RolloutOperation.Rollout).ToList();
             var wanted = parseResult.GetValue(rolloutId);
             var chosen = wanted is null
                 ? rollouts.FirstOrDefault()
@@ -121,7 +125,7 @@ public static class RollbackCommand
             RolloutJournal journal;
             try
             {
-                journal = await RolloutJournal.OpenAsync(resolved.Directory, path, ct);
+                journal = await RolloutJournal.OpenAsync(resolved.Directory, path, ct, resolved.State.JournalSink);
             }
             catch (InvalidOperationException ex)
             {

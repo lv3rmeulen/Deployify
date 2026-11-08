@@ -69,6 +69,18 @@ public sealed class NomadClient : IDisposable
     }
 
     /// <summary>
+    /// Every job in the namespace that carries Deployify's meta key, stopped (dead) ones included,
+    /// so destroy also purges jobs a rollback took out of service. Throws when Nomad can't be reached.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> GetManagedJobNamesAsync(CancellationToken ct = default)
+    {
+        var resp = await _http.GetAsync($"v1/jobs?{Ns}&meta=true", ct);
+        await EnsureSuccessAsync(resp, "list jobs", ct);
+        var jobs = await resp.Content.ReadFromJsonAsync<List<NomadJobStub>>(ct) ?? [];
+        return [.. jobs.Where(j => j.Meta is not null && j.Meta.ContainsKey(ManagedMetaKey)).Select(j => j.Id)];
+    }
+
+    /// <summary>
     /// Asks Nomad what submitting <paramref name="hclPath"/> would change, using the job
     /// plan API. Returns Nomad's diff type: "None", "Added", "Edited" or "Deleted".
     /// </summary>

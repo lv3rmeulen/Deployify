@@ -33,7 +33,7 @@ namespace Deployify.Target.Compose;
 /// </summary>
 public sealed class ComposeDeploymentTarget(
     IPublisher publisher,
-    ILogger<ComposeDeploymentTarget> logger) : IDeploymentTarget, IRolloutTarget
+    ILogger<ComposeDeploymentTarget> logger) : IDeploymentTarget, IRolloutTarget, IResourceLifecycle
 {
     private readonly ComposeFileGenerator _generator = new();
 
@@ -501,6 +501,60 @@ public sealed class ComposeDeploymentTarget(
     }
 
     // ── Publish ───────────────────────────────────────────────────────────────
+
+    // ── Lifecycle (destroy / prune) ───────────────────────────────────────────
+
+    /// <summary>
+    /// The services with containers in this Compose project. The project name is the ownership
+    /// marker: Compose labels every container with it. Dapr sidecars (<c>svc-dapr</c>) count as
+    /// part of their service.
+    /// </summary>
+    public async Task<IReadOnlyList<ManagedService>> ListManagedAsync(EnvironmentConfig config, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        if (!await CliAvailableAsync(ct))
+        {
+            throw new InvalidOperationException("docker compose was not found on PATH.");
+        }
+
+        var services = await Runner(cfg).GetProjectServicesAsync(ct);
+        var set = services.ToHashSet(StringComparer.Ordinal);
+        return
+        [
+            .. services
+                .Where(s => !(s.EndsWith("-dapr", StringComparison.Ordinal) && set.Contains(s[..^5])))
+                .Select(s => new ManagedService(s))
+        ];
+    }
+
+    /// <summary>Stops and removes the service's containers, and its Dapr sidecar's.</summary>
+    public async Task DeleteServiceAsync(EnvironmentConfig config, string service, DeleteOptions options, CancellationToken ct = default)
+    {
+        var runner = Runner(GetConfig(config));
+        foreach (var name in new[] { service, service + "-dapr" })
+        {
+            var containers = await runner.GetServiceContainersAsync(name, ct);
+            await runner.RemoveContainersAsync(containers.Select(c => c.Id), ct);
+        }
+    }
+
+    /// <summary>The project network, and with --volumes the project's and the declared named volumes.</summary>
+    public Task<IReadOnlyList<string>> DestroyEnvironmentAsync(EnvironmentConfig config, DeleteOptions options, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        return Runner(cfg).RemoveProjectResourcesAsync(cfg.Volumes.Keys, options.RemoveVolumes, ct);
+    }
+
+    public IReadOnlyList<string> DescribeKept(EnvironmentConfig config, DeleteOptions options)
+    {
+        var kept = new List<string> { "images in the local image store" };
+        if (!options.RemoveVolumes)
+        {
+            kept.Add("volumes (pass --volumes to remove them)");
+        }
+
+        return kept;
+    }
 
     public async Task PublishAsync(
         AspireManifest manifest,

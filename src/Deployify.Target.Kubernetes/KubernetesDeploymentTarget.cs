@@ -18,7 +18,7 @@ namespace Deployify.Target.Kubernetes;
 
 public sealed class KubernetesDeploymentTarget(
     IPublisher publisher,
-    ILogger<KubernetesDeploymentTarget> logger) : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget
+    ILogger<KubernetesDeploymentTarget> logger) : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget, IResourceLifecycle
 {
     private readonly KubernetesManifestGenerator _generator = new();
 
@@ -439,6 +439,67 @@ public sealed class KubernetesDeploymentTarget(
 
         return entries;
     }
+
+    // ── Lifecycle (destroy / prune) ───────────────────────────────────────────
+
+    /// <summary>How long destroy waits for one namespace (and everything in it) to be deleted.</summary>
+    private static readonly TimeSpan s_namespaceDeleteTimeout = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Every service gets a namespace of its own, labelled managed-by=deployify; those
+    /// namespaces under the configured prefix are what Deployify owns here.
+    /// </summary>
+    public async Task<IReadOnlyList<ManagedService>> ListManagedAsync(EnvironmentConfig config, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var kubectl = await RequireKubectlForLifecycleAsync(cfg, ct);
+        var prefix = cfg.NamespacePrefix + "-";
+        return
+        [
+            .. (await kubectl.GetNamespacesWithPrefixAsync(cfg.NamespacePrefix, ct))
+                .Select(ns => new ManagedService(ns[prefix.Length..], TargetId: ns))
+        ];
+    }
+
+    /// <summary>
+    /// Deletes the service's namespace, which takes its Deployment, Service, ConfigMap and Secret
+    /// with it. Only a namespace carrying Deployify's label is ever deleted.
+    /// </summary>
+    public async Task DeleteServiceAsync(EnvironmentConfig config, string service, DeleteOptions options, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var kubectl = await RequireKubectlForLifecycleAsync(cfg, ct);
+        var ns = KubernetesManifestGenerator.NamespaceFor(cfg, service);
+        var managed = await kubectl.GetNamespacesWithPrefixAsync(cfg.NamespacePrefix, ct);
+        if (!managed.Contains(ns, StringComparer.OrdinalIgnoreCase))
+        {
+            logger.LogInformation("Namespace {Namespace} is not there (or not Deployify's); nothing to delete.", ns);
+            return;
+        }
+
+        await kubectl.DeleteNamespaceOrThrowAsync(ns, s_namespaceDeleteTimeout, ct);
+        logger.LogInformation("Deleted namespace {Namespace}.", ns);
+    }
+
+    public IReadOnlyList<string> DescribeKept(EnvironmentConfig config, DeleteOptions options)
+    {
+        var cfg = GetConfig(config);
+        var kept = new List<string>
+        {
+            $"the secrets namespace '{SecretsNamespace(cfg)}' with generated parameter values, and Vault / Key Vault secrets"
+        };
+        if (options.KeepSecrets)
+        {
+            kept.Add("not the services' own Kubernetes Secrets: they live in the service namespaces, so --keep-secrets can't keep them");
+        }
+
+        return kept;
+    }
+
+    private async Task<KubectlRunner> RequireKubectlForLifecycleAsync(KubernetesTargetConfig cfg, CancellationToken ct)
+        => await KubectlAvailableAsync(ct)
+            ? Kubectl(cfg)
+            : throw new InvalidOperationException("Destroy and prune on Kubernetes need kubectl on PATH.");
 
     // ── Rollout (health-gated apply) ──────────────────────────────────────────
 

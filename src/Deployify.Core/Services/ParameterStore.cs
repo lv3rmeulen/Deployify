@@ -62,6 +62,23 @@ public sealed class ParameterStore
         return new ParameterStore(path, environment, environments);
     }
 
+    /// <summary>The saved values of one environment (empty when there are none), for copying to remote state.</summary>
+    public static Dictionary<string, string> ReadSection(string directory, string environment)
+        => new(Load(directory, environment).Values, StringComparer.Ordinal);
+
+    /// <summary>Replaces one environment's values in the file, leaving the other environments as they are.</summary>
+    public static void WriteSection(string directory, string environment, IReadOnlyDictionary<string, string> values)
+    {
+        var store = Load(directory, environment);
+        store.Values.Clear();
+        foreach (var (k, v) in values)
+        {
+            store.Values[k] = v;
+        }
+
+        store.Save();
+    }
+
     /// <summary>
     /// A parameter source for <paramref name="config"/>: explicit values, then environment
     /// variables, then manifest defaults, then generated values that are saved here as they're made.

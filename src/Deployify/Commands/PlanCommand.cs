@@ -33,7 +33,7 @@ public static class PlanCommand
                 return 1;
             }
 
-            var (_, config, envName, _, target, directory) = resolved;
+            var (_, config, envName, targetType, target, directory) = resolved;
             var outputDir = Path.Combine(directory, config.OutputPath);
 
             AnsiConsole.MarkupLineInterpolated($"[dim]Environment: [cyan]{envName}[/] Target: [cyan]{target.DisplayName}[/][/]\n");
@@ -66,6 +66,7 @@ public static class PlanCommand
             PlanOutput.PrintUnknown(plan);
 
             AnsiConsole.MarkupLine(PlanOutput.Summary(plan));
+            StateCli.PrintLeftInPlace(plan, targetType, pruning: config.Prune);
 
             // Only when every service is known to match: an unchecked one isn't "up to date".
             if (plan.IsUpToDate)

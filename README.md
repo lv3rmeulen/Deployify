@@ -70,6 +70,16 @@ deployify ci --skip-validate
 | `apply` | Deploy artifacts to the target (prompts for confirmation) |
 | `package` | Zip build output and upload to an artifact store (raw_exec Nomad only) |
 | `diff` | Compare live cluster state against local artifacts |
+| `destroy` | Remove everything Deployify deployed in an environment |
+
+### State
+
+| Command | Description |
+|---|---|
+| `state show` | Where state is kept, who holds the lock, what is recorded as deployed |
+| `state unlock <id>` | Free a lock left behind by a run that died |
+| `state adopt` | Record services deployed before Deployify kept an inventory |
+| `state push` | Copy local state into a newly configured remote backend |
 
 ### Insight
 
@@ -224,6 +234,63 @@ deployify rollback --rollout <id>       # undo a specific one
 `rollback` restores every service the rollout touched that isn't already back, in reverse order,
 and waits for each one to be healthy. It exits `0` when everything is restored and `3` when a
 service could not be.
+
+#### Pruning services that left the manifest
+
+By default `apply` never deletes anything: when a service disappears from the AppHost, plan lists
+it as "to delete" and says it stays in place. Pass `--prune` (or set `"Prune": true` on the
+environment) to remove such services after a successful deploy:
+
+```bash
+deployify apply --auto-approve --prune
+deployify apply --auto-approve --prune --force-prune   # allow removing more than half, or all
+```
+
+A service is pruned only when it is **both** in the environment's inventory (see
+[Deployment state](#deployment-state-locking-and-remote-backends)) **and** carries Deployify's
+ownership marker on the platform, so neither a stale inventory nor something another team runs
+in the same cluster is ever deleted. The prune runs after every service passed its health gate,
+in reverse dependency order, and is journalled like a rollout (`deployify status`). It is refused,
+and `apply` exits `4` with the deploy itself done, when:
+
+- the target can't be asked what Deployify manages (an outage never looks like "nothing there"),
+- plan could not check some service (`?` in the plan),
+- it would remove every managed service, or more than half of them, without `--force-prune`.
+
+Compose is the exception: `docker compose up --remove-orphans` has always removed a project's
+orphaned containers, and still does.
+
+### `destroy`
+
+```bash
+deployify destroy --dry-run                     # show the destroy plan, change nothing
+deployify destroy                               # asks you to type the environment name
+deployify destroy --auto-approve                # required without an interactive terminal
+deployify destroy --service worker,api          # only these services
+deployify destroy --keep-secrets                # keep Nomad variables / SSM parameters
+deployify destroy --volumes                     # Compose: also remove data volumes
+```
+
+Destroy takes the environment lock, lists what the inventory records and what the platform marks
+as Deployify's, and deletes what is in both, dependents first. Each service is dropped from the
+inventory as soon as it is gone and every step is journalled, so after a failure (it stops at the
+first one) running `destroy` again continues with what is left. Services recorded in state but
+already gone are only dropped from state; services marked as Deployify's but not in this
+environment's state are listed and left alone (`deployify state adopt` takes them in).
+
+Set `"Protected": true` on an environment to make `destroy` refuse to run against it.
+
+What each target removes, and keeps:
+
+| Target | Removes | Keeps |
+|---|---|---|
+| Nomad, Nomad + Consul | purges each job; its `nomad/jobs/<job>` variable and rollback copies (unless `--keep-secrets`) | the namespace |
+| Kubernetes | each service's namespace (only ones labelled `app.kubernetes.io/managed-by=deployify`) | the `<prefix>-system` secrets namespace, Vault / Key Vault secrets |
+| Compose | the services' containers, then the project network; volumes with `--volumes` | images, volumes by default |
+| AWS ECS | `delete-service --force`, every revision of its task definition family, its SSM parameters under `<secretsPrefix>/<service>` (unless `--keep-secrets`) | the cluster, networking, load balancers, log groups, generated parameter values |
+| Azure Container Apps | each Container App | the resource group, the Container Apps environment, Key Vault secrets |
+
+Registry images are never deleted.
 
 ### `package`
 
@@ -989,6 +1056,96 @@ State file:
 
 ---
 
+## Deployment state, locking and remote backends
+
+Next to the configuration in `deployify-state.json` (which you commit), Deployify keeps the
+**deployment state** of each environment:
+
+| Key | What |
+|---|---|
+| `{prefix}/{env}/inventory.json` | every service Deployify deployed, with its dependencies (what destroy and prune work from) |
+| `{prefix}/{env}/lock.json` | who is changing the environment right now |
+| `{prefix}/{env}/parameters.json` | generated parameter values (remote backends only; locally they are `deployify-parameters.json`) |
+| `{prefix}/{env}/rollouts/{id}.json` | rollout, prune and destroy journals (remote backends only; locally `.deployify/rollouts/`) |
+
+By default it all lives in `.deployify/state/` next to the state file, which is fine for one
+machine. Keep `.deployify/` and `deployify-parameters.json` out of git.
+
+### Ownership
+
+Every resource Deployify creates carries an ownership marker:
+
+| Target | Marker |
+|---|---|
+| Nomad, Nomad + Consul | job meta `deployify-managed = "true"` |
+| Kubernetes | namespace label `app.kubernetes.io/managed-by=deployify` |
+| Compose | the Compose project (`com.docker.compose.project` label) |
+| AWS ECS | service tags `deployify-managed-by=deployify` and `deployify-env=<environment>` |
+| Azure Container Apps | resource tags `deployify-managed-by=deployify` and `deployify-env=<environment>` |
+
+ECS services and Container Apps are tagged when they are created and on every later deploy, so
+services that existed before tagging are adopted on their next `apply`. Plan only lists a service
+as "to delete" when it carries the marker (and, on ECS and ACA, this environment's tag).
+
+Deployments made before Deployify kept an inventory aren't in it. Run `deployify state adopt` once
+to record everything the platform marks as Deployify's in this environment.
+
+### The lock
+
+`apply`, `ci` (unless `--skip-apply`), `rollback`, `destroy`, `state adopt` and `state push` take
+the environment's lock first; `plan`, `diff`, `status` and `state show` don't need it. A second run
+fails at once with who holds it:
+
+```
+✗ Environment 'prod' is locked by ci@runner-7, apply, started 4 min ago (lock id 3f9a1c2e7b4d),
+  run: https://github.com/acme/shop/actions/runs/123. If that run is no longer going, wait for the
+  lock to expire (14:31:07) or run 'deployify state unlock 3f9a1c2e7b4d'.
+```
+
+The lock is a lease: its holder renews it every third of `LockTtlSeconds` (default 180), so a run
+that crashes frees it within that time. Set `LockWaitSeconds` to wait for a busy lock instead of
+failing (useful when CI jobs queue up). The CI run URL comes from GitHub Actions, GitLab CI or
+Azure Pipelines variables, or from `DEPLOYIFY_RUN_URL`. Every state write is compare-and-swap,
+so a run that lost its lock (it expired while the run hung) can't overwrite the next run's state.
+Machines sharing a lock need roughly synchronized clocks (NTP is plenty).
+
+### Remote state
+
+Configure a backend per environment under `State`, so CI runners and colleagues share the lock,
+the inventory, the generated parameter values and the rollout journals:
+
+```json
+"prod": {
+  "Target": "AwsEcs",
+  "Protected": true,
+  "State": {
+    "Backend": "S3",
+    "Prefix": "shop",
+    "S3": { "Bucket": "acme-deploy-state", "Region": "eu-west-1" }
+  }
+}
+```
+
+| Backend | Section | Lock and writes use | Needs |
+|---|---|---|---|
+| `Local` (default) | — | a content hash, guarded by a file lock | — |
+| `AzureBlob` | `"AzureBlob": { "AccountName": "...", "Container": "deployify-state", "SasToken": "env:STATE_SAS" }` | blob ETags (`If-Match` / `If-None-Match: *`) | a SAS token, or `az login` with Storage Blob Data Contributor |
+| `S3` | `"S3": { "Bucket": "...", "Region": "...", "Profile": "..." }` | S3 conditional writes | AWS CLI 2.22+ |
+| `Consul` | `"Consul": { "Address": "http://consul:8500", "Token": "env:CONSUL_HTTP_TOKEN" }` | KV check-and-set | — |
+| `Kubernetes` | `"Kubernetes": { "Namespace": "deployify-state", "Context": "..." }` | Secret `resourceVersion` | kubectl; the namespace must exist |
+
+Commands work on local copies as before: when they start they pull this environment's parameter
+values and journals from the backend, and they push them back as they change (each journal save,
+and the parameter values before anything is deployed). Read-only commands fall back to the local
+copy, with a warning, when the backend can't be reached; commands that take the lock fail instead.
+
+Remote state holds generated passwords: keep the bucket, container, Consul path or namespace
+private, and encrypted at rest.
+
+To move an existing environment to remote state, add the `State` section and run
+`deployify state push` once. It refuses to replace remote state of another lineage, or a newer one,
+without `--force`.
+
 ## State file (`deployify-state.json`)
 
 ```json
@@ -1129,12 +1286,16 @@ src/
       GraphCommand.cs
       CiCommand.cs
       WatchCommand.cs
+      DestroyCommand.cs
+      StateCommand.cs                     state show | unlock | adopt | push
+      StateCli.cs                         prune, removal plans, lock output
       GlobalOptions.cs
       DependencyInjection.cs
     Program.cs
   Deployify.Core/                         Domain models and interfaces
     Interfaces/
       IDeploymentTarget.cs                implement this to add a target
+      IResourceLifecycle.cs               optional: list / delete what Deployify deployed
       IManifestReader.cs
       IPublisher.cs
       IJobGenerator.cs
@@ -1143,6 +1304,9 @@ src/
       DeployifyState.cs                   EnvironmentConfig, ContainerRuntime
       AspireManifest.cs
       PlanResult.cs
+    State/                                IStateBackend (local, AzureBlob, S3, Consul, Kubernetes),
+                                          StateLease (the lock), InventoryStore, StateSession
+    Lifecycle/                            RemovalPlanner (what may be deleted), ServiceRemover
     Services/
       ManifestReader.cs
       Publisher.cs                        Podman socket auto-detection
@@ -1176,3 +1340,6 @@ test/
    ```
 4. Add init flags in `InitCommand.cs` and display address handling in `EnvCommand.cs`.
 5. All commands (`generate`, `validate`, `plan`, `apply`, `ci`, `watch`, etc.) pick it up automatically via the target factory.
+6. For `destroy` and `apply --prune`, also implement `IResourceLifecycle`: put an ownership marker
+   on everything the target creates, list what carries it (throwing when the platform can't be
+   asked), and delete one service. Which services may be deleted is decided for you.

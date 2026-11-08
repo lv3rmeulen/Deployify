@@ -99,7 +99,8 @@ internal static class RolloutCli
             OutputDirectory = outputDir,
             StateDirectory = resolved.Directory,
             Options = options,
-            OnProgress = Print
+            OnProgress = Print,
+            OnJournalSaved = resolved.State.JournalSink
         };
 
         RolloutResult result;
@@ -115,6 +116,11 @@ internal static class RolloutCli
         }
 
         PrintSummary(result, resolved.EnvName);
+        foreach (var w in result.Warnings.Where(w => w.Contains("remote state", StringComparison.Ordinal)))
+        {
+            StateCli.Warn(w);
+        }
+
         return result;
     }
 

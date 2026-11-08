@@ -29,7 +29,7 @@ namespace Deployify.Target.AzureContainerApps;
 /// </summary>
 public sealed class AcaDeploymentTarget(
     IPublisher publisher,
-    ILogger<AcaDeploymentTarget> logger) : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget
+    ILogger<AcaDeploymentTarget> logger) : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget, IResourceLifecycle
 {
     private readonly AcaManifestGenerator _generator = new();
 
@@ -183,7 +183,7 @@ public sealed class AcaDeploymentTarget(
         {
             ToCreate = [.. desired.Except(running)],
             ToUpdate = [.. desired.Intersect(running)],
-            ToDelete = [.. running.Except(desired)],
+            ToDelete = [.. (await RemovableAsync(client, cfg, ct)).Except(desired)],
             Unchanged = []
         };
     }
@@ -567,7 +567,8 @@ public sealed class AcaDeploymentTarget(
             });
         }
 
-        foreach (var name in running.Except(desired))
+        // Only apps Deployify tagged (for this environment) are candidates for deletion.
+        foreach (var name in (await RemovableAsync(client, cfg, ct)).Except(desired))
         {
             entries.Add(new DiffEntry { ServiceName = name, Kind = DiffKind.Removed });
         }
@@ -575,15 +576,58 @@ public sealed class AcaDeploymentTarget(
         return entries;
     }
 
+    /// <summary>
+    /// Apps plan may list for deletion: tagged as Deployify's and not tagged for another
+    /// environment. Empty when Azure can't be asked, so an outage never shows up as deletions.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> RemovableAsync(AcaCliClient client, AcaTargetConfig cfg, CancellationToken ct)
+    {
+        try
+        {
+            return
+            [
+                .. (await client.GetManagedAppsAsync(ct))
+                    .Where(m => m.Environment is null || cfg.DeployifyEnvironment is null || m.Environment == cfg.DeployifyEnvironment)
+                    .Select(m => m.Name)
+            ];
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogDebug("Could not list Deployify's Container Apps: {Message}", ex.Message);
+            return [];
+        }
+    }
+
+    // ── Lifecycle (destroy / prune) ───────────────────────────────────────────
+
+    public async Task<IReadOnlyList<ManagedService>> ListManagedAsync(EnvironmentConfig config, CancellationToken ct = default)
+        => [.. (await Client(GetConfig(config)).GetManagedAppsAsync(ct)).Select(m => new ManagedService(m.Name, m.Id, m.Environment))];
+
+    public async Task DeleteServiceAsync(EnvironmentConfig config, string service, DeleteOptions options, CancellationToken ct = default)
+    {
+        await Client(GetConfig(config)).DeleteAppAsync(service, ct);
+        logger.LogInformation("Deleted Container App {Name}.", service);
+    }
+
+    public IReadOnlyList<string> DescribeKept(EnvironmentConfig config, DeleteOptions options)
+    {
+        var cfg = GetConfig(config);
+        return
+        [
+            $"the resource group '{cfg.ResourceGroup}', the Container Apps environment '{cfg.EnvironmentName}' and its Log Analytics workspace",
+            "Key Vault secrets (Deployify only references them)",
+            "images in the registry"
+        ];
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static AcaTargetConfig GetConfig(EnvironmentConfig config)
     {
-        if (config.TargetConfig.TryGetValue("aca", out var raw) && raw is JsonElement el)
-        {
-            return el.Deserialize<AcaTargetConfig>(TargetConfigJsonOptions.Default) ?? new AcaTargetConfig();
-        }
-
-        return new AcaTargetConfig();
+        var cfg = config.TargetConfig.TryGetValue("aca", out var raw) && raw is JsonElement el
+            ? el.Deserialize<AcaTargetConfig>(TargetConfigJsonOptions.Default) ?? new AcaTargetConfig()
+            : new AcaTargetConfig();
+        cfg.DeployifyEnvironment = config.Name;
+        return cfg;
     }
 }

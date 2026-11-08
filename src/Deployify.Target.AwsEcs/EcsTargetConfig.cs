@@ -100,6 +100,13 @@ public sealed class EcsTargetConfig
     /// this path (and <c>kms:Decrypt</c> if the parameters use a customer-managed key).
     /// </summary>
     public string? SecretsPrefix { get; set; }
+
+    /// <summary>
+    /// The Deployify environment this config belongs to. Not part of the config file: filled in
+    /// from the environment's name, and written to every service as the deployify-env tag.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? DeployifyEnvironment { get; set; }
 }
 
 public enum EcsLaunchType

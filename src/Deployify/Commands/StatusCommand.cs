@@ -55,11 +55,12 @@ public static class StatusCommand
                     return 0;
                 }
 
-                var list = new Table().AddColumns("Rollout", "Started", "State", "Reason");
+                var list = new Table().AddColumns("Rollout", "Operation", "Started", "State", "Reason");
                 foreach (var (_, r) in rollouts.Take(Math.Max(1, parseResult.GetValue(limit))))
                 {
                     list.AddRow(
                         Markup.Escape(r.Id),
+                        Markup.Escape(r.Operation.ToString().ToLowerInvariant()),
                         Markup.Escape(r.StartedAt.ToLocalTime().ToString("g")),
                         StateMarkup(r.State),
                         Markup.Escape(r.Reason ?? ""));
@@ -77,7 +78,8 @@ public static class StatusCommand
             }
 
             var record = match.Record;
-            AnsiConsole.MarkupLineInterpolated($"[bold]{record.Id}[/] to {record.Target}, started {record.StartedAt.ToLocalTime():g}");
+            var operation = record.Operation.ToString().ToLowerInvariant();
+            AnsiConsole.MarkupLineInterpolated($"[bold]{record.Id}[/] ({operation}) on {record.Target}, started {record.StartedAt.ToLocalTime():g}");
             AnsiConsole.MarkupLine($"State: {StateMarkup(record.State)}" +
                                    (record.Reason is null ? "" : $" — {Markup.Escape(record.Reason)}"));
 
@@ -94,6 +96,11 @@ public static class StatusCommand
             }
 
             AnsiConsole.Write(services);
+            foreach (var e in record.Events.Where(e => e.Service is null))
+            {
+                AnsiConsole.MarkupLineInterpolated($"[dim]{e.At.ToLocalTime():T} {e.Message}[/]");
+            }
+
             AnsiConsole.MarkupLineInterpolated($"[dim]Journal: {match.Path}[/]");
             return 0;
         });

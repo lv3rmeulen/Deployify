@@ -63,6 +63,16 @@ public static class StateFileSecrets
                 }
             }
 
+            if (Secrets.IsLiteral(env.State?.Consul?.Token))
+            {
+                found.Add($"{envName}.state.consul.token");
+            }
+
+            if (Secrets.IsLiteral(env.State?.AzureBlob?.SasToken))
+            {
+                found.Add($"{envName}.state.azureBlob.sasToken");
+            }
+
             foreach (var (key, value) in env.TargetConfig)
             {
                 var element = value switch

@@ -56,6 +56,7 @@ public static class CiCommand
         cmd.Options.Add(failOnChanges);
         cmd.Options.Add(autoApprove);
         RolloutCli.AddTo(cmd);
+        StateCli.AddPruneOptions(cmd);
 
         cmd.SetAction(async (parseResult, ct) =>
         {
@@ -70,7 +71,8 @@ public static class CiCommand
             ResolvedContext resolved;
             try
             {
-                resolved = await DependencyInjection.ResolveAsync(projectPath, envOverride, targetOpt, ct);
+                resolved = await DependencyInjection.ResolveAsync(projectPath, envOverride, targetOpt, ct,
+                    lockFor: doSkipApply ? null : "ci");
             }
             catch (Exception ex)
             {
@@ -78,7 +80,9 @@ public static class CiCommand
                 return 1;
             }
 
-            var (_, config, envName, _, target, directory) = resolved;
+            await using var _ = resolved;
+            var (_, config, envName, targetType, target, directory) = resolved;
+            var prune = StateCli.PruneRequested(parseResult, config);
             var outputDir = Path.Combine(directory, config.OutputPath);
 
             AnsiConsole.MarkupLineInterpolated($"[bold]Deployify CI[/] — environment: [cyan]{envName}[/] target: [cyan]{target.DisplayName}[/]\n");
@@ -128,7 +132,7 @@ public static class CiCommand
             }
 
             // ── Step 3: Plan ───────────────────────────────────────────────────
-            PlanResult? plan;
+            PlanResult? plan = null;
             if (!await StepAsync("3/4 Plan", async stepCt =>
             {
                 plan = await target.PlanAsync(manifest, config, outputDir, stepCt);
@@ -139,6 +143,8 @@ public static class CiCommand
                 {
                     AnsiConsole.MarkupLineInterpolated($"[dim]   ? {u.ServiceName}: {u.Reason}[/]");
                 }
+
+                StateCli.PrintLeftInPlace(plan, targetType, prune || doSkipApply);
 
                 // A service that couldn't be checked may have drifted, so it counts as a change here.
                 if (doFailOnChanges && !plan.IsUpToDate)
@@ -167,6 +173,10 @@ public static class CiCommand
             {
                 AnsiConsole.MarkupLine("[yellow]Apply cancelled.[/]");
                 return 0;
+            }
+            else if (!await StateCli.RecordDeploymentAsync(resolved, manifest, ct))
+            {
+                return 1;
             }
             else if (await RolloutCli.ResolveAsync(parseResult, target, config, ct) is { } gated)
             {
@@ -222,6 +232,15 @@ public static class CiCommand
             }, ct))
             {
                 return 1;
+            }
+
+            if (prune && !doSkipApply)
+            {
+                var pruned = await StateCli.PruneAsync(resolved, manifest, plan, parseResult.GetValue(StateCli.ForcePrune), ct);
+                if (pruned != 0)
+                {
+                    return pruned;
+                }
             }
 
             AnsiConsole.MarkupLine("\n[green]✓ CI pipeline complete.[/]");

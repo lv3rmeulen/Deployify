@@ -115,6 +115,20 @@ public sealed class KubectlRunner(KubernetesTargetConfig config, ILogger logger,
         return result.ExitCode == 0;
     }
 
+    /// <summary>
+    /// Deletes a namespace and waits until it is gone (up to <paramref name="timeout"/>). Throws
+    /// with kubectl's error when it can't; a namespace that doesn't exist is not an error.
+    /// </summary>
+    public async Task DeleteNamespaceOrThrowAsync(string namespaceName, TimeSpan timeout, CancellationToken ct = default)
+    {
+        var result = await RunAsync(ct, "delete", "namespace", namespaceName, "--ignore-not-found", "--wait=true",
+            $"--timeout={(int)timeout.TotalSeconds}s");
+        if (!result.Ok)
+        {
+            throw new InvalidOperationException($"kubectl could not delete namespace {namespaceName}: {result.Stderr.Trim()}");
+        }
+    }
+
     /// <summary>Gets the current rollout status of a deployment.</summary>
     public async Task<string> GetRolloutStatusAsync(string deploymentName, string namespaceName, CancellationToken ct = default)
     {

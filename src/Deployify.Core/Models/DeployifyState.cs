@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
 using Deployify.Core.SecretBackends;
+using Deployify.Core.State;
 
 namespace Deployify.Core.Models;
 
@@ -26,6 +27,13 @@ public sealed class DeployifyStateFile
 /// </summary>
 public sealed class EnvironmentConfig
 {
+    /// <summary>
+    /// The environment's name (its key in <see cref="DeployifyStateFile.Environments"/>). Not
+    /// persisted: set when the environment is loaded, so targets can tag what they create with it.
+    /// </summary>
+    [JsonIgnore]
+    public string? Name { get; set; }
+
     /// <summary>
     /// The deployment platform for this environment.
     /// Drives which <see cref="IDeploymentTarget"/> is resolved at runtime.
@@ -123,6 +131,22 @@ public sealed class EnvironmentConfig
     /// Deserialized into the appropriate config type by the target itself.
     /// </summary>
     public Dictionary<string, object?> TargetConfig { get; set; } = [];
+
+    /// <summary>
+    /// Where deployment state (inventory, generated parameters, rollout journals and the lock)
+    /// is kept. Null keeps it in local files next to this one; set a remote backend so CI runners
+    /// and colleagues share it.
+    /// </summary>
+    public StateBackendConfig? State { get; set; }
+
+    /// <summary>When true, <c>deployify destroy</c> refuses to run against this environment.</summary>
+    public bool Protected { get; set; }
+
+    /// <summary>
+    /// When true, apply removes services that are no longer in the manifest (as <c>apply --prune</c>).
+    /// Only services Deployify deployed and still marks as its own are ever removed.
+    /// </summary>
+    public bool Prune { get; set; }
 }
 
 /// <summary>

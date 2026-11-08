@@ -71,6 +71,7 @@ public sealed class StateManager(SecretRegistry? secrets = null) : IStateManager
                 $"Environment '{envName}' not found. Available: {string.Join(", ", file.Environments.Keys)}");
         }
 
+        config.Name = envName;
         return (config, envName);
     }
 }

@@ -8,6 +8,7 @@ using Deployify.Core.Expressions;
 using Deployify.Core.Models;
 using Deployify.Core.SecretBackends;
 using Deployify.Core.Services;
+using Deployify.Core.State;
 using Deployify.Target.AwsEcs;
 using Deployify.Target.AzureContainerApps;
 using Deployify.Target.Compose;
@@ -44,11 +45,16 @@ internal static class DependencyInjection
     /// Resolves the project directory, active environment config, and target —
     /// then returns a fully wired service provider.
     /// </summary>
+    /// <param name="lockFor">
+    /// Takes the environment's state lock for this operation (apply, destroy, …) before anything
+    /// else is read, and holds it until the context is disposed. Null for read-only commands.
+    /// </param>
     public static async Task<ResolvedContext> ResolveAsync(
         string projectPath,
         string? envOverride,
         DeploymentTargetType? targetOverride,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? lockFor = null)
     {
         var appHostDirectory = File.Exists(projectPath)
             ? Path.GetDirectoryName(Path.GetFullPath(projectPath))!
@@ -67,6 +73,49 @@ internal static class DependencyInjection
         var targetType = targetOverride ?? config.Target;
         var factory = sp0.GetRequiredService<IDeploymentTargetFactory>();
         var target = factory.Get(targetType);
+
+        // Deployment state: lock first, then copy remote state in, so parameter values below
+        // are the ones the last run (on any machine) stored.
+        var state = new StateSession(stateDirectory, envName, config.State, onWarning: StateCli.Warn);
+        try
+        {
+            if (lockFor is not null)
+            {
+                var lease = await state.LockAsync(lockFor, ct);
+                AnsiConsole.MarkupLineInterpolated($"[dim]Locked {envName} in {state.Backend.Description} (lock id {lease.Info.Id}).[/]");
+            }
+
+            try
+            {
+                await state.PullAsync(ct);
+            }
+            catch (Exception ex) when (lockFor is null && ex is not OperationCanceledException)
+            {
+                // Read-only commands still work from the local copy.
+                StateCli.Warn($"Could not read remote state ({ex.Message}); using the local copy.");
+            }
+        }
+        catch
+        {
+            await state.DisposeAsync();
+            throw;
+        }
+
+        try
+        {
+            return await ResolveRestAsync(sp0, config, envName, targetType, target, stateDirectory, appHostDirectory, state, ct);
+        }
+        catch
+        {
+            await state.DisposeAsync();
+            throw;
+        }
+    }
+
+    private static async Task<ResolvedContext> ResolveRestAsync(
+        IServiceProvider sp0, EnvironmentConfig config, string envName, DeploymentTargetType targetType,
+        IDeploymentTarget target, string stateDirectory, string appHostDirectory, StateSession state, CancellationToken ct)
+    {
 
         // Parameter values: explicit config, Parameters__* env vars, manifest defaults, then
         // generated values. Those are kept in deployify-parameters.json, or with an external
@@ -114,7 +163,8 @@ internal static class DependencyInjection
         return new ResolvedContext(sp0, config, envName, targetType, target, stateDirectory)
         {
             AppHostDirectory = resolvedAppHostDir,
-            GeneratedSecrets = generatedSecrets
+            GeneratedSecrets = generatedSecrets,
+            State = state
         };
     }
 
@@ -142,8 +192,14 @@ internal sealed record ResolvedContext(
     string EnvName,
     DeploymentTargetType TargetType,
     IDeploymentTarget Target,
-    string Directory)
+    string Directory) : IAsyncDisposable
 {
+    /// <summary>The environment's deployment state; holds the lock when the command asked for one.</summary>
+    public required StateSession State { get; init; }
+
+    /// <summary>Releases the state lock.</summary>
+    public ValueTask DisposeAsync() => State.DisposeAsync();
+
     /// <summary>
     /// The Aspire AppHost project directory — used to resolve manifest resource paths.
     /// Differs from <see cref="Directory"/> when the state file is in a parent folder
@@ -169,6 +225,9 @@ internal sealed record ResolvedContext(
             await session.FlushAsync(ct);
             AnsiConsole.MarkupLineInterpolated($"[dim]Stored {count} generated secret(s) in {session.Store.Description}.[/]");
         }
+
+        // Inline backend: generated values are in deployify-parameters.json; share them through remote state.
+        await State.PushParametersAsync(ct);
     }
 
     /// <summary>Records where apply wrote each secret (locations and versions only) in the state file.</summary>

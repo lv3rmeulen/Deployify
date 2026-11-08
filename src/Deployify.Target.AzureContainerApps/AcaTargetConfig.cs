@@ -64,6 +64,13 @@ public sealed class AcaTargetConfig
 
     /// <summary>Base port for services whose Aspire bindings carry no port.</summary>
     public int BasePort { get; set; } = 8080;
+
+    /// <summary>
+    /// The Deployify environment this config belongs to. Not part of the config file: filled in
+    /// from the environment's name, and written to every app as the deployify-env tag.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? DeployifyEnvironment { get; set; }
 }
 
 public enum AcaIngressType

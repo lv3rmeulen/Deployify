@@ -32,7 +32,7 @@ namespace Deployify.Target.AwsEcs;
 /// </summary>
 public sealed class EcsDeploymentTarget(
     IPublisher publisher,
-    ILogger<EcsDeploymentTarget> logger) : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget
+    ILogger<EcsDeploymentTarget> logger) : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget, IResourceLifecycle
 {
     private readonly EcsTaskDefinitionGenerator _generator = new();
 
@@ -179,7 +179,7 @@ public sealed class EcsDeploymentTarget(
         {
             ToCreate = [.. desired.Except(running)],
             ToUpdate = [.. desired.Intersect(running)],
-            ToDelete = [.. running.Except(desired)],
+            ToDelete = [.. (await RemovableAsync(client, cfg, ct)).Except(desired)],
             Unchanged = []
         };
     }
@@ -509,7 +509,8 @@ public sealed class EcsDeploymentTarget(
             });
         }
 
-        foreach (var name in running.Except(desired))
+        // Only services Deployify tagged (for this environment) are candidates for deletion.
+        foreach (var name in (await RemovableAsync(client, cfg, ct)).Except(desired))
         {
             entries.Add(new DiffEntry { ServiceName = name, Kind = DiffKind.Removed });
         }
@@ -517,15 +518,80 @@ public sealed class EcsDeploymentTarget(
         return entries;
     }
 
+    /// <summary>
+    /// Services plan may list for deletion: tagged as Deployify's and not tagged for another
+    /// environment. Empty when ECS can't be asked, so an outage never shows up as deletions.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> RemovableAsync(EcsCliClient client, EcsTargetConfig cfg, CancellationToken ct)
+    {
+        try
+        {
+            return
+            [
+                .. (await client.GetManagedServicesAsync(ct))
+                    .Where(m => m.Environment is null || cfg.DeployifyEnvironment is null || m.Environment == cfg.DeployifyEnvironment)
+                    .Select(m => m.Name)
+            ];
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogDebug("Could not list Deployify's ECS services: {Message}", ex.Message);
+            return [];
+        }
+    }
+
+    // ── Lifecycle (destroy / prune) ───────────────────────────────────────────
+
+    public async Task<IReadOnlyList<ManagedService>> ListManagedAsync(EnvironmentConfig config, CancellationToken ct = default)
+        => [.. (await ClientFor(GetConfig(config)).GetManagedServicesAsync(ct)).Select(m => new ManagedService(m.Name, m.Arn, m.Environment))];
+
+    /// <summary>
+    /// Deletes the service, deregisters its task definition revisions, and (unless secrets are
+    /// kept) deletes its SSM parameters under <c>{secretsPrefix}/{service}</c>.
+    /// </summary>
+    public async Task DeleteServiceAsync(EnvironmentConfig config, string service, DeleteOptions options, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var client = ClientFor(cfg);
+        await client.DeleteServiceAsync(service, ct);
+        var revisions = await client.DeregisterTaskDefinitionsAsync(service, ct);
+        logger.LogInformation("Deleted ECS service {Service} and deregistered {Count} task definition revision(s).", service, revisions);
+        if (!options.KeepSecrets)
+        {
+            var path = $"{EcsTaskDefinitionGenerator.SecretsPrefix(cfg)}/{service}";
+            var count = await client.DeleteParametersByPathAsync(path, ct);
+            if (count > 0)
+            {
+                logger.LogInformation("Deleted {Count} SSM parameter(s) under {Path}.", count, path);
+            }
+        }
+    }
+
+    public IReadOnlyList<string> DescribeKept(EnvironmentConfig config, DeleteOptions options)
+    {
+        var cfg = GetConfig(config);
+        var kept = new List<string>
+        {
+            $"the cluster '{cfg.ClusterName}', its networking, load balancers and log groups",
+            $"generated parameter values under {EcsTaskDefinitionGenerator.GeneratedParametersPath(cfg)}",
+            "images in the registry"
+        };
+        if (options.KeepSecrets)
+        {
+            kept.Add($"the services' SSM parameters under {EcsTaskDefinitionGenerator.SecretsPrefix(cfg)} (--keep-secrets)");
+        }
+
+        return kept;
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static EcsTargetConfig GetConfig(EnvironmentConfig config)
     {
-        if (config.TargetConfig.TryGetValue("ecs", out var raw) && raw is JsonElement el)
-        {
-            return el.Deserialize<EcsTargetConfig>(TargetConfigJsonOptions.Default) ?? new EcsTargetConfig();
-        }
-
-        return new EcsTargetConfig();
+        var cfg = config.TargetConfig.TryGetValue("ecs", out var raw) && raw is JsonElement el
+            ? el.Deserialize<EcsTargetConfig>(TargetConfigJsonOptions.Default) ?? new EcsTargetConfig()
+            : new EcsTargetConfig();
+        cfg.DeployifyEnvironment = config.Name;
+        return cfg;
     }
 }

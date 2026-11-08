@@ -242,6 +242,82 @@ public sealed class ComposeRunner(ComposeTargetConfig config, ILogger logger, IP
         }
     }
 
+    // ── Lifecycle (destroy / prune) ───────────────────────────────────────────
+
+    /// <summary>
+    /// Names of the services that have containers in this project, running or not. Throws when
+    /// the Docker daemon can't be asked.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> GetProjectServicesAsync(CancellationToken ct = default)
+    {
+        var ps = await RunDockerAsync(
+        [
+            "ps", "-a", "--filter", $"label=com.docker.compose.project={config.ProjectName}",
+            "--format", "{{.Label \"com.docker.compose.service\"}}"
+        ], ct);
+        if (!ps.Ok)
+        {
+            throw new InvalidOperationException($"docker could not list the containers of project '{config.ProjectName}': {ps.Stderr.Trim()}");
+        }
+
+        return
+        [
+            .. ps.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)
+        ];
+    }
+
+    /// <summary>Removes the project's network (when it exists) and, when asked, its volumes. Returns what it removed.</summary>
+    public async Task<IReadOnlyList<string>> RemoveProjectResourcesAsync(
+        IEnumerable<string> declaredVolumes, bool removeVolumes, CancellationToken ct = default)
+    {
+        var removed = new List<string>();
+        if ((await RunDockerAsync(["network", "inspect", config.ProjectName], ct)).Ok)
+        {
+            var rm = await RunDockerAsync(["network", "rm", config.ProjectName], ct);
+            if (!rm.Ok)
+            {
+                throw new InvalidOperationException($"docker could not remove network {config.ProjectName}: {rm.Stderr.Trim()}");
+            }
+
+            removed.Add($"network {config.ProjectName}");
+        }
+
+        if (!removeVolumes)
+        {
+            return removed;
+        }
+
+        var ls = await RunDockerAsync(["volume", "ls", "-q", "--filter", $"label=com.docker.compose.project={config.ProjectName}"], ct);
+        if (!ls.Ok)
+        {
+            throw new InvalidOperationException($"docker could not list volumes: {ls.Stderr.Trim()}");
+        }
+
+        var volumes = ls.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Concat(declaredVolumes)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        foreach (var volume in volumes)
+        {
+            if (!(await RunDockerAsync(["volume", "inspect", volume], ct)).Ok)
+            {
+                continue;
+            }
+
+            var rm = await RunDockerAsync(["volume", "rm", volume], ct);
+            if (!rm.Ok)
+            {
+                throw new InvalidOperationException($"docker could not remove volume {volume}: {rm.Stderr.Trim()}");
+            }
+
+            removed.Add($"volume {volume}");
+        }
+
+        return removed;
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private async Task<ProcessResult> RunAsync(IEnumerable<string> args, CancellationToken ct)

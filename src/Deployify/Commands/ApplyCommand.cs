@@ -3,6 +3,7 @@ using System.CommandLine;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using Deployify.Core.Models;
 using Spectre.Console;
 
 namespace Deployify.Commands;
@@ -24,6 +25,7 @@ public static class ApplyCommand
         cmd.Options.Add(GlobalOptions.DryRun);
         cmd.Options.Add(autoApprove);
         RolloutCli.AddTo(cmd);
+        StateCli.AddPruneOptions(cmd);
 
         cmd.SetAction(async (parseResult, ct) =>
         {
@@ -37,7 +39,8 @@ public static class ApplyCommand
             ResolvedContext resolved;
             try
             {
-                resolved = await DependencyInjection.ResolveAsync(projectPath, envOverride, targetOpt, ct);
+                resolved = await DependencyInjection.ResolveAsync(projectPath, envOverride, targetOpt, ct,
+                    lockFor: dryRun ? null : "apply");
             }
             catch (Exception ex)
             {
@@ -45,7 +48,9 @@ public static class ApplyCommand
                 return 1;
             }
 
-            var (_, config, envName, _, target, directory) = resolved;
+            await using var _ = resolved;
+            var (_, config, envName, targetType, target, directory) = resolved;
+            var prune = StateCli.PruneRequested(parseResult, config);
             var outputDir = Path.Combine(directory, config.OutputPath);
 
             AnsiConsole.MarkupLineInterpolated($"[dim]Environment: [cyan]{envName}[/] Target: [cyan]{target.DisplayName}[/][/]\n");
@@ -59,11 +64,13 @@ public static class ApplyCommand
             // PlanAsync writes artifacts to disk AND diffs against the live cluster.
             // If the cluster is unreachable during dry-run we still want to exit 0
             // because the artifact generation phase completed successfully.
+            PlanResult? plan = null;
             try
             {
-                var plan = await target.PlanAsync(manifest, config, outputDir, ct);
+                plan = await target.PlanAsync(manifest, config, outputDir, ct);
                 PlanOutput.PrintUnknown(plan);
                 AnsiConsole.MarkupLine(PlanOutput.Summary(plan, "[bold]Plan:[/]"));
+                StateCli.PrintLeftInPlace(plan, targetType, prune);
             }
             catch (Exception ex) when (dryRun)
             {
@@ -83,6 +90,11 @@ public static class ApplyCommand
             {
                 AnsiConsole.MarkupLine("Aborted.");
                 return 0;
+            }
+
+            if (!await StateCli.RecordDeploymentAsync(resolved, manifest, ct))
+            {
+                return 1;
             }
 
             try
@@ -110,7 +122,12 @@ public static class ApplyCommand
                     AnsiConsole.MarkupLineInterpolated($"[yellow]![/] Could not record secret references: {ex.Message}");
                 }
 
-                return rolloutResult.ExitCode;
+                if (rolloutResult.ExitCode != 0 || !prune)
+                {
+                    return rolloutResult.ExitCode;
+                }
+
+                return await StateCli.PruneAsync(resolved, manifest, plan, parseResult.GetValue(StateCli.ForcePrune), ct);
             }
 
             var results = await target.ApplyAsync(manifest, config, outputDir, ct);
@@ -154,6 +171,10 @@ public static class ApplyCommand
             if (failed > 0)
             {
                 exitCode = 1;
+            }
+            else if (prune)
+            {
+                exitCode = await StateCli.PruneAsync(resolved, manifest, plan, parseResult.GetValue(StateCli.ForcePrune), ct);
             }
 
             return exitCode;

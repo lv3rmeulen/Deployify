@@ -25,6 +25,9 @@ public sealed class RolloutRequest
 
     public RolloutOptions Options { get; init; } = new();
     public Action<RolloutProgress>? OnProgress { get; init; }
+
+    /// <summary>Called after every journal save, e.g. to copy it to remote state.</summary>
+    public Func<RolloutRecord, CancellationToken, Task>? OnJournalSaved { get; init; }
 }
 
 /// <summary>
@@ -51,7 +54,8 @@ public sealed class RolloutEngine
         }
 
         await using var journal = await RolloutJournal.BeginAsync(
-            request.StateDirectory, request.EnvironmentName, target.DisplayName, waves, ct: ct);
+            request.StateDirectory, request.EnvironmentName, target.DisplayName, waves, ct: ct,
+            onSaved: request.OnJournalSaved);
         var record = journal.Record;
 
         void Report(RolloutProgressKind kind, string? service, string message)
@@ -275,6 +279,11 @@ public sealed class RolloutEngine
         journal.Record.Reason = reason;
         journal.Record.FinishedAt = DateTimeOffset.UtcNow;
         await journal.SaveAsync();
+        if (journal.SyncError is { } sync)
+        {
+            warnings = [.. warnings, $"Could not copy the rollout journal to remote state: {sync}"];
+        }
+
         return new RolloutResult
         {
             Outcome = outcome,

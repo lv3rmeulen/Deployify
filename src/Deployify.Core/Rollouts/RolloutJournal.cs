@@ -30,13 +30,33 @@ public enum ServiceRolloutState
     Failed,
     RevertedByPlatform,
     RolledBack,
-    RollbackFailed
+    RollbackFailed,
+
+    /// <summary>Removed by destroy or prune.</summary>
+    Deleted,
+
+    /// <summary>Destroy or prune tried to remove it and failed.</summary>
+    DeleteFailed
+}
+
+/// <summary>What a journal records.</summary>
+public enum RolloutOperation
+{
+    /// <summary>A deployment (apply or ci), possibly with a prune at the end.</summary>
+    Rollout,
+
+    /// <summary><c>deployify destroy</c>: services removed, nothing to roll back.</summary>
+    Destroy,
+
+    /// <summary>The prune at the end of an apply: services no longer in the manifest removed.</summary>
+    Prune
 }
 
 /// <summary>Everything one rollout did, as written to <c>.deployify/rollouts/{id}.json</c>.</summary>
 public sealed class RolloutRecord
 {
     public string Id { get; set; } = string.Empty;
+    public RolloutOperation Operation { get; set; } = RolloutOperation.Rollout;
     public string Environment { get; set; } = string.Empty;
     public string Target { get; set; } = string.Empty;
     public DateTimeOffset StartedAt { get; set; }
@@ -89,15 +109,24 @@ public sealed class RolloutJournal : IAsyncDisposable
 
     private readonly FileStream _lock;
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly Func<RolloutRecord, CancellationToken, Task>? _onSaved;
 
-    private RolloutJournal(RolloutRecord record, string path, FileStream lockFile)
+    private RolloutJournal(RolloutRecord record, string path, FileStream lockFile,
+        Func<RolloutRecord, CancellationToken, Task>? onSaved)
     {
         Record = record;
         Path = path;
         _lock = lockFile;
+        _onSaved = onSaved;
     }
 
     public RolloutRecord Record { get; }
+
+    /// <summary>
+    /// Why the last copy to remote state failed, or null. The local file is always written
+    /// first, so a failed copy never loses the record; it only means other machines don't see it yet.
+    /// </summary>
+    public string? SyncError { get; private set; }
 
     /// <summary>Full path of the journal file.</summary>
     public string Path { get; }
@@ -108,17 +137,20 @@ public sealed class RolloutJournal : IAsyncDisposable
     /// </summary>
     public static async Task<RolloutJournal> BeginAsync(
         string stateDirectory, string environment, string target,
-        IReadOnlyList<IReadOnlyList<string>> waves, DateTimeOffset? now = null, CancellationToken ct = default)
+        IReadOnlyList<IReadOnlyList<string>> waves, DateTimeOffset? now = null, CancellationToken ct = default,
+        RolloutOperation operation = RolloutOperation.Rollout, Func<RolloutRecord, CancellationToken, Task>? onSaved = null)
     {
         var started = now ?? DateTimeOffset.UtcNow;
         var dir = System.IO.Path.Combine(stateDirectory, DirectoryName);
         var safeEnv = Sanitize(environment);
         var lockFile = AcquireLock(stateDirectory, environment);
 
-        var id = $"{started.UtcDateTime.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture)}-{safeEnv}";
+        var id = $"{started.UtcDateTime.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture)}-{safeEnv}" +
+                 (operation == RolloutOperation.Rollout ? "" : "-" + operation.ToString().ToLowerInvariant());
         var record = new RolloutRecord
         {
             Id = id,
+            Operation = operation,
             Environment = environment,
             Target = target,
             StartedAt = started,
@@ -126,7 +158,7 @@ public sealed class RolloutJournal : IAsyncDisposable
             Services = [.. waves.SelectMany(w => w).Select(s => new ServiceRolloutRecord { Name = s })]
         };
 
-        var journal = new RolloutJournal(record, System.IO.Path.Combine(dir, $"{id}.json"), lockFile);
+        var journal = new RolloutJournal(record, System.IO.Path.Combine(dir, $"{id}.json"), lockFile, onSaved);
         await journal.SaveAsync(ct);
         return journal;
     }
@@ -151,6 +183,19 @@ public sealed class RolloutJournal : IAsyncDisposable
             var tmp = Path + ".tmp";
             await File.WriteAllTextAsync(tmp, json, ct);
             File.Move(tmp, Path, overwrite: true);
+
+            if (_onSaved is not null)
+            {
+                try
+                {
+                    await _onSaved(Record, ct);
+                    SyncError = null;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    SyncError = ex.Message;
+                }
+            }
         }
         finally
         {
@@ -162,12 +207,18 @@ public sealed class RolloutJournal : IAsyncDisposable
     /// Re-opens an existing journal to add to it, e.g. for <c>deployify rollback</c>. Takes the
     /// environment's lock like <see cref="BeginAsync"/> does.
     /// </summary>
-    public static async Task<RolloutJournal> OpenAsync(string stateDirectory, string journalPath, CancellationToken ct = default)
+    public static async Task<RolloutJournal> OpenAsync(string stateDirectory, string journalPath, CancellationToken ct = default,
+        Func<RolloutRecord, CancellationToken, Task>? onSaved = null)
     {
         var record = await ReadAsync(journalPath, ct)
                      ?? throw new InvalidDataException($"Rollout journal '{journalPath}' is empty or unreadable.");
-        return new RolloutJournal(record, journalPath, AcquireLock(stateDirectory, record.Environment));
+        return new RolloutJournal(record, journalPath, AcquireLock(stateDirectory, record.Environment), onSaved);
     }
+
+    /// <summary>The journal as it is stored, for copying to and from remote state.</summary>
+    public static byte[] Serialize(RolloutRecord record) => JsonSerializer.SerializeToUtf8Bytes(record, s_jsonOptions);
+
+    public static RolloutRecord? Deserialize(byte[] data) => JsonSerializer.Deserialize<RolloutRecord>(data, s_jsonOptions);
 
     /// <summary>The rollouts recorded for <paramref name="environment"/>, newest first.</summary>
     public static async Task<IReadOnlyList<(string Path, RolloutRecord Record)>> ListAsync(

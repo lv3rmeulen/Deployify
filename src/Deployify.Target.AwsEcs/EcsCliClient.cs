@@ -351,6 +351,7 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger, IProces
             "--network-configuration", networkConfig,
             .. await ServiceConnectArgsAsync(serviceName, ct),
             .. CircuitBreakerArgs(),
+            "--tags", .. OwnershipTagArgs(),
             "--output", "json"
         ]);
 
@@ -386,7 +387,129 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger, IProces
         }
 
         var doc = JsonDocument.Parse(output);
-        return doc.RootElement.GetProperty("service").GetProperty("serviceArn").GetString()!;
+        var arn = doc.RootElement.GetProperty("service").GetProperty("serviceArn").GetString()!;
+        await TagServiceAsync(serviceName, arn, ct);
+        return arn;
+    }
+
+    /// <summary>
+    /// Puts the ownership tags on an existing service, so services created before Deployify
+    /// tagged them become prunable from their next deploy on. A failure (for example no
+    /// ecs:TagResource permission) is only a warning: the deploy itself worked.
+    /// </summary>
+    private async Task TagServiceAsync(string serviceName, string serviceArn, CancellationToken ct)
+    {
+        var (exit, output) = await RunAsync(BuildArgs(["ecs", "tag-resource", "--resource-arn", serviceArn, "--tags", .. OwnershipTagArgs()]), ct);
+        if (exit != 0)
+        {
+            logger.LogWarning("Could not tag ECS service {Service} as Deployify's ({Output}); destroy and prune will leave it alone.",
+                serviceName, output.Trim());
+        }
+    }
+
+    /// <summary><c>key=…,value=…</c> items for <c>--tags</c>: the ownership marker and the environment.</summary>
+    private string[] OwnershipTagArgs()
+        => config.DeployifyEnvironment is { Length: > 0 } env
+            ? [$"key={EcsOwnership.ManagedByTag},value={EcsOwnership.ManagedByValue}", $"key={EcsOwnership.EnvironmentTag},value={env}"]
+            : [$"key={EcsOwnership.ManagedByTag},value={EcsOwnership.ManagedByValue}"];
+
+    // ── Lifecycle (destroy / prune) ───────────────────────────────────────────
+
+    /// <summary>
+    /// Services in the cluster that carry Deployify's ownership tag, with their environment tag.
+    /// Throws when ECS can't be asked.
+    /// </summary>
+    public async Task<IReadOnlyList<EcsManagedService>> GetManagedServicesAsync(CancellationToken ct = default)
+    {
+        var (exit, output) = await RunAsync(BuildArgs("ecs", "list-services", "--cluster", config.ClusterName, "--output", "json"), ct);
+        if (exit != 0)
+        {
+            throw new InvalidOperationException($"Failed to list ECS services in {config.ClusterName}: {output.Trim()}");
+        }
+
+        var arns = JsonDocument.Parse(output).RootElement.GetProperty("serviceArns").EnumerateArray()
+            .Select(e => e.GetString()!).ToList();
+        var result = new List<EcsManagedService>();
+
+        // describe-services takes at most 10 services per call.
+        foreach (var batch in arns.Chunk(10))
+        {
+            var (dExit, dOutput) = await RunAsync(BuildArgs(
+                ["ecs", "describe-services", "--cluster", config.ClusterName, "--services", .. batch, "--include", "TAGS", "--output", "json"]), ct);
+            if (dExit != 0)
+            {
+                throw new InvalidOperationException($"Failed to describe ECS services in {config.ClusterName}: {dOutput.Trim()}");
+            }
+
+            result.AddRange(EcsOwnership.ParseManaged(dOutput));
+        }
+
+        return result;
+    }
+
+    /// <summary>Deletes the service (draining its tasks first: --force scales it down). An already deleted service is fine.</summary>
+    public async Task DeleteServiceAsync(string serviceName, CancellationToken ct = default)
+    {
+        var (exit, output) = await RunAsync(BuildArgs(
+            "ecs", "delete-service", "--cluster", config.ClusterName, "--service", serviceName, "--force", "--output", "json"), ct);
+        if (exit != 0 && !output.Contains("ServiceNotFoundException", StringComparison.Ordinal) &&
+            !output.Contains("ServiceNotActiveException", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"Failed to delete ECS service '{serviceName}': {output.Trim()}");
+        }
+    }
+
+    /// <summary>Deregisters every active revision of the task definition family named after the service. Returns how many.</summary>
+    public async Task<int> DeregisterTaskDefinitionsAsync(string family, CancellationToken ct = default)
+    {
+        var (exit, output) = await RunAsync(BuildArgs(
+            "ecs", "list-task-definitions", "--family-prefix", family, "--status", "ACTIVE", "--output", "json"), ct);
+        if (exit != 0)
+        {
+            throw new InvalidOperationException($"Failed to list task definitions of '{family}': {output.Trim()}");
+        }
+
+        // --family-prefix is a prefix: "api" also lists "api-gateway". Keep the exact family only.
+        var arns = JsonDocument.Parse(output).RootElement.GetProperty("taskDefinitionArns").EnumerateArray()
+            .Select(e => e.GetString()!)
+            .Where(arn => arn.Split('/').Last().Split(':')[0] == family)
+            .ToList();
+        foreach (var arn in arns)
+        {
+            var (dExit, dOutput) = await RunAsync(BuildArgs("ecs", "deregister-task-definition", "--task-definition", arn, "--output", "json"), ct);
+            if (dExit != 0)
+            {
+                throw new InvalidOperationException($"Failed to deregister task definition {arn}: {dOutput.Trim()}");
+            }
+        }
+
+        return arns.Count;
+    }
+
+    /// <summary>Deletes every SSM parameter under <paramref name="path"/>. Returns how many.</summary>
+    public async Task<int> DeleteParametersByPathAsync(string path, CancellationToken ct = default)
+    {
+        // Names only: no --with-decryption, no secret values in the output.
+        var (exit, output) = await RunAsync(BuildArgs(
+            "ssm", "get-parameters-by-path", "--path", path, "--recursive", "--query", "Parameters[].Name", "--output", "json"), ct);
+        if (exit != 0)
+        {
+            throw new InvalidOperationException($"Failed to list SSM parameters under {path}: {output.Trim()}");
+        }
+
+        var names = string.IsNullOrWhiteSpace(output) || output.Trim() == "null"
+            ? []
+            : JsonSerializer.Deserialize<List<string>>(output) ?? [];
+        foreach (var batch in names.Chunk(10))
+        {
+            var (dExit, dOutput) = await RunAsync(BuildArgs(["ssm", "delete-parameters", "--names", .. batch, "--output", "json"]), ct);
+            if (dExit != 0)
+            {
+                throw new InvalidOperationException($"Failed to delete SSM parameters under {path}: {dOutput.Trim()}");
+            }
+        }
+
+        return names.Count;
     }
 
     /// <summary>Port mappings (name → port) per service, used for Service Connect.</summary>

@@ -95,15 +95,50 @@ public sealed class AcaCliClient(AcaTargetConfig config, ILogger logger, IProces
                 $"Failed to deploy Container App '{appName}': {output.Trim()}");
         }
 
+        string id;
         try
         {
             var doc = JsonDocument.Parse(output);
-            return doc.RootElement.GetProperty("id").GetString()!;
+            id = doc.RootElement.GetProperty("id").GetString()!;
         }
         catch
         {
             return $"{config.ResourceGroup}/{appName}";
         }
+
+        await TagAppAsync(appName, id, ct);
+        return id;
+    }
+
+    /// <summary>
+    /// Puts the ownership tags on the app (an ARM tag change, no new revision), so apps created
+    /// before Deployify tagged them are adopted on their next deploy. A failure is only a warning.
+    /// </summary>
+    private async Task TagAppAsync(string appName, string resourceId, CancellationToken ct)
+    {
+        string[] tags = config.DeployifyEnvironment is { Length: > 0 } env
+            ? [$"{AcaOwnership.ManagedByTag}={AcaOwnership.ManagedByValue}", $"{AcaOwnership.EnvironmentTag}={env}"]
+            : [$"{AcaOwnership.ManagedByTag}={AcaOwnership.ManagedByValue}"];
+        var (exit, output) = await RunAsync(BuildArgs(
+            ["resource", "tag", "--ids", resourceId, "--is-incremental", "--tags", .. tags, "--output", "none"]), ct);
+        if (exit != 0)
+        {
+            logger.LogWarning("Could not tag Container App {Name} as Deployify's ({Output}); destroy and prune will leave it alone.",
+                appName, output.Trim());
+        }
+    }
+
+    /// <summary>Apps in the resource group that carry Deployify's ownership tag. Throws when Azure can't be asked.</summary>
+    public async Task<IReadOnlyList<AcaManagedApp>> GetManagedAppsAsync(CancellationToken ct = default)
+    {
+        var (exit, output) = await RunAsync(BuildArgs(
+            "containerapp", "list", "--resource-group", config.ResourceGroup, "--output", "json"), ct);
+        if (exit != 0)
+        {
+            throw new InvalidOperationException($"Failed to list Container Apps in {config.ResourceGroup}: {output.Trim()}");
+        }
+
+        return AcaOwnership.ParseManaged(output);
     }
 
     // ── Validate ─────────────────────────────────────────────────────────────

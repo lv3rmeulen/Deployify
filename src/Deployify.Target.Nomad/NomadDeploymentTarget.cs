@@ -20,7 +20,7 @@ public sealed class NomadDeploymentTarget(
     JobGenerator jobGenerator,
     IPublisher publisher,
     ILogger<NomadDeploymentTarget> logger,
-    ILoggerFactory loggerFactory) : IDeploymentTarget, IRolloutTarget
+    ILoggerFactory loggerFactory) : IDeploymentTarget, IRolloutTarget, IResourceLifecycle
 {
     private readonly NomadRollout _rollout = new(logger);
 
@@ -249,6 +249,23 @@ public sealed class NomadDeploymentTarget(
     }
 
     public bool HasNativeRollback(EnvironmentConfig config) => GetConfig(config).AutoRevert;
+
+    // ── Lifecycle (destroy / prune) ───────────────────────────────────────────
+
+    public async Task<IReadOnlyList<ManagedService>> ListManagedAsync(EnvironmentConfig config, CancellationToken ct = default)
+    {
+        using var client = BuildClient(GetConfig(config));
+        return await NomadLifecycle.ListManagedAsync(client, ct);
+    }
+
+    public async Task DeleteServiceAsync(EnvironmentConfig config, string service, DeleteOptions options, CancellationToken ct = default)
+    {
+        using var client = BuildClient(GetConfig(config));
+        await NomadLifecycle.DeleteServiceAsync(client, service, options, logger, ct);
+    }
+
+    public IReadOnlyList<string> DescribeKept(EnvironmentConfig config, DeleteOptions options)
+        => NomadLifecycle.DescribeKept(GetConfig(config).Namespace, options);
 
     public async Task PublishAsync(
         AspireManifest manifest, EnvironmentConfig config, string appHostDirectory, CancellationToken ct = default)
