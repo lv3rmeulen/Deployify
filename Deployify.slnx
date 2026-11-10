@@ -15,6 +15,7 @@
     <Project Path="src/Deployify.Target.AwsEcs/Deployify.Target.AwsEcs.csproj" />
     <Project Path="src/Deployify.Target.AzureContainerApps/Deployify.Target.AzureContainerApps.csproj" />
     <Project Path="src/Deployify.Target.Compose/Deployify.Target.Compose.csproj" />
+    <Project Path="src/Deployify.Target.Helm/Deployify.Target.Helm.csproj" />
     <Project Path="src/Deployify.Target.Kubernetes/Deployify.Target.Kubernetes.csproj" />
     <Project Path="src/Deployify.Target.Nomad/Deployify.Target.Nomad.csproj" />
     <Project Path="src/Deployify.Target.NomadConsul/Deployify.Target.NomadConsul.csproj" />
@@ -26,6 +27,7 @@
     <Project Path="test/Deployify.Target.AwsEcs.Tests/Deployify.Target.AwsEcs.Tests.csproj" />
     <Project Path="test/Deployify.Target.AzureContainerApps.Tests/Deployify.Target.AzureContainerApps.Tests.csproj" />
     <Project Path="test/Deployify.Target.Compose.Tests/Deployify.Target.Compose.Tests.csproj" />
+    <Project Path="test/Deployify.Target.Helm.Tests/Deployify.Target.Helm.Tests.csproj" />
     <Project Path="test/Deployify.Target.Kubernetes.Tests/Deployify.Target.Kubernetes.Tests.csproj" />
     <Project Path="test/Deployify.Target.Nomad.Tests/Deployify.Target.Nomad.Tests.csproj" />
     <Project Path="test/Deployify.Target.NomadConsul.Tests/Deployify.Target.NomadConsul.Tests.csproj" />

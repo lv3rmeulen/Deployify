@@ -850,7 +850,7 @@ public sealed class KubernetesDeploymentTarget(
         return (Get("kind"), Get("apiVersion"), GetInMeta("name"), GetInMeta("namespace") is "" or null ? null : GetInMeta("namespace"));
     }
 
-    private static KubernetesTargetConfig GetConfig(EnvironmentConfig config)
+    internal static KubernetesTargetConfig GetConfig(EnvironmentConfig config)
     {
         if (config.TargetConfig.TryGetValue("kubernetes", out var raw) && raw is JsonElement el)
         {

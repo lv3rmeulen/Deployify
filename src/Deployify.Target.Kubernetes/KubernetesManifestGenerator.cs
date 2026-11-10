@@ -217,6 +217,16 @@ public sealed class KubernetesManifestGenerator
         return name.Length == 0 ? "port" : name;
     }
 
+    /// <summary>File holding the service's inline secret values; written readable by the owner only.</summary>
+    internal const string SecretFileName = "secret.yaml";
+
+    /// <summary>
+    /// Files a service has only with some settings. apply reads every file in the folder, so one
+    /// the service no longer has (above all a secret) is deleted rather than left behind.
+    /// </summary>
+    private static readonly string[] s_optionalFiles =
+        [SecretFileName, "serviceaccount.yaml", "vault-policy.hcl", "secretproviderclass.yaml"];
+
     public async Task<List<string>> WriteYamlAsync(
         KubernetesServiceManifest svc,
         string outputDirectory,
@@ -225,75 +235,20 @@ public sealed class KubernetesManifestGenerator
         var dir = Path.Combine(outputDirectory, svc.ServiceName);
         Directory.CreateDirectory(dir);
 
-        var files = new List<string> { await WriteAsync(dir, "namespace.yaml", RenderNamespace(svc), ct) };
-
-        if (svc.HasConfigMap)
+        var rendered = Render(svc);
+        var files = new List<string>();
+        foreach (var (name, content) in rendered)
         {
-            files.Add(await WriteAsync(dir, "configmap.yaml", RenderConfigMap(svc), ct));
-        }
-
-        var secretPath = Path.Combine(dir, "secret.yaml");
-        if (svc.WritesSecretManifest)
-        {
-            files.Add(await WriteAsync(dir, "secret.yaml", RenderSecret(svc), ct));
-            if (!OperatingSystem.IsWindows())
+            files.Add(await WriteAsync(dir, name, content, ct));
+            if (name == SecretFileName)
             {
-                File.SetUnixFileMode(secretPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                RestrictToOwner(files[^1]);
             }
         }
-        else if (File.Exists(secretPath))
-        {
-            // apply reads every file in the folder; don't leave a secret behind that no longer exists.
-            File.Delete(secretPath);
-        }
 
-        // Vault: the pod logs in with its own service account, bound to a read-only policy.
-        var serviceAccountPath = Path.Combine(dir, "serviceaccount.yaml");
-        if (svc.NeedsServiceAccount)
+        foreach (var stale in s_optionalFiles.Except(rendered.Select(r => r.FileName)))
         {
-            files.Add(await WriteAsync(dir, "serviceaccount.yaml", RenderServiceAccount(svc), ct));
-        }
-        else
-        {
-            File.Delete(serviceAccountPath);
-        }
-
-        var policyPath = Path.Combine(dir, "vault-policy.hcl");
-        if (svc.UsesVaultAgent)
-        {
-            // For reference (and for setting up roles by hand when manageAuth is off); kubectl ignores .hcl files.
-            files.Add(await WriteAsync(dir, "vault-policy.hcl", VaultPolicy.ReadOnly(svc.VaultKvApiPath!), ct));
-        }
-        else
-        {
-            File.Delete(policyPath);
-        }
-
-        // Key Vault: the CSI driver reads the secrets with the pod's identity and syncs them into a Secret.
-        var providerClassPath = Path.Combine(dir, "secretproviderclass.yaml");
-        if (svc.UsesKeyVaultCsi)
-        {
-            files.Add(await WriteAsync(dir, "secretproviderclass.yaml", RenderSecretProviderClass(svc), ct));
-        }
-        else
-        {
-            File.Delete(providerClassPath);
-        }
-
-        files.Add(await WriteAsync(dir, "deployment.yaml", RenderDeployment(svc), ct));
-        if (svc.HasService)
-        {
-            files.Add(await WriteAsync(dir, "service.yaml", RenderService(svc), ct));
-        }
-
-        if (svc.HasIngress)
-        {
-            files.Add(await WriteAsync(dir, "ingress.yaml", RenderIngress(svc), ct));
-        }
-
-        if (svc.HasPvc)
-        {
-            files.Add(await WriteAsync(dir, "pvc.yaml", RenderPvc(svc), ct));
+            File.Delete(Path.Combine(dir, stale));
         }
 
         // Whatever the renderers do, an external backend means no secret value on disk.
@@ -304,6 +259,70 @@ public sealed class KubernetesManifestGenerator
 
         svc.GeneratedFiles = files;
         return files;
+    }
+
+    /// <summary>
+    /// Every file of one service, in apply order, as (file name, content). The Helm chart writer
+    /// templates these same manifests, so kubectl and Helm deploy identical objects.
+    /// </summary>
+    internal static IReadOnlyList<(string FileName, string Content)> Render(KubernetesServiceManifest svc)
+    {
+        var files = new List<(string, string)> { ("namespace.yaml", RenderNamespace(svc)) };
+
+        if (svc.HasConfigMap)
+        {
+            files.Add(("configmap.yaml", RenderConfigMap(svc)));
+        }
+
+        if (svc.WritesSecretManifest)
+        {
+            files.Add((SecretFileName, RenderSecret(svc)));
+        }
+
+        // Vault: the pod logs in with its own service account, bound to a read-only policy.
+        if (svc.NeedsServiceAccount)
+        {
+            files.Add(("serviceaccount.yaml", RenderServiceAccount(svc)));
+        }
+
+        if (svc.UsesVaultAgent)
+        {
+            // For reference (and for setting up roles by hand when manageAuth is off); kubectl ignores .hcl files.
+            files.Add(("vault-policy.hcl", VaultPolicy.ReadOnly(svc.VaultKvApiPath!)));
+        }
+
+        // Key Vault: the CSI driver reads the secrets with the pod's identity and syncs them into a Secret.
+        if (svc.UsesKeyVaultCsi)
+        {
+            files.Add(("secretproviderclass.yaml", RenderSecretProviderClass(svc)));
+        }
+
+        files.Add(("deployment.yaml", RenderDeployment(svc)));
+        if (svc.HasService)
+        {
+            files.Add(("service.yaml", RenderService(svc)));
+        }
+
+        if (svc.HasIngress)
+        {
+            files.Add(("ingress.yaml", RenderIngress(svc)));
+        }
+
+        if (svc.HasPvc)
+        {
+            files.Add(("pvc.yaml", RenderPvc(svc)));
+        }
+
+        return files;
+    }
+
+    /// <summary>Makes a file that holds secret values readable and writable by its owner only.</summary>
+    internal static void RestrictToOwner(string path)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
     }
 
     // ── YAML renderers ────────────────────────────────────────────────────────
@@ -767,7 +786,7 @@ spec:
     /// which take their line endings from the source file, so normalizing here keeps the
     /// output identical however the repository is checked out.
     /// </summary>
-    private static async Task<string> WriteAsync(string dir, string filename, string content, CancellationToken ct)
+    internal static async Task<string> WriteAsync(string dir, string filename, string content, CancellationToken ct)
     {
         var path = Path.Combine(dir, filename);
         await File.WriteAllTextAsync(path, content.ReplaceLineEndings("\n"), new UTF8Encoding(false), ct);

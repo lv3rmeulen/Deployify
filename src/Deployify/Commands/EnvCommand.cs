@@ -10,6 +10,7 @@ using Deployify.Core.Services;
 using Deployify.Target.AwsEcs;
 using Deployify.Target.AzureContainerApps;
 using Deployify.Target.Compose;
+using Deployify.Target.Helm;
 using Deployify.Target.Kubernetes;
 using Deployify.Target.Nomad;
 using Deployify.Target.NomadConsul;
@@ -627,6 +628,18 @@ public static class EnvCommand
             DeploymentTargetType.AwsEcs => Serialize("ecs", new EcsTargetConfig()),
             DeploymentTargetType.AzureContainerApps => Serialize("aca", new AcaTargetConfig()),
             DeploymentTargetType.NomadConsul => Serialize("nomadconsul", new NomadConsulTargetConfig()),
+            // Helm deploys the Kubernetes target's manifests, so it reads the same settings.
+            DeploymentTargetType.Helm => new Dictionary<string, object?>
+            {
+                ["kubernetes"] = JsonSerializer.SerializeToElement(new KubernetesTargetConfig
+                {
+                    Context = string.IsNullOrWhiteSpace(kubernetesContext) ? null : kubernetesContext,
+                    NamespacePrefix = kubernetesPrefix ?? "deployify",
+                    IngressBaseDomain = string.IsNullOrWhiteSpace(kubernetesDomain) ? null : kubernetesDomain,
+                    GenerateIngress = !string.IsNullOrWhiteSpace(kubernetesDomain)
+                }, TargetConfigJsonOptions.Default),
+                ["helm"] = JsonSerializer.SerializeToElement(new HelmTargetConfig(), TargetConfigJsonOptions.Default)
+            },
             _ => []
         };
     }
@@ -639,7 +652,7 @@ public static class EnvCommand
         var key = cfg.Target switch
         {
             DeploymentTargetType.Nomad => "nomad",
-            DeploymentTargetType.Kubernetes => "kubernetes",
+            DeploymentTargetType.Kubernetes or DeploymentTargetType.Helm => "kubernetes",
             DeploymentTargetType.Compose => "compose",
             DeploymentTargetType.AwsEcs => "ecs",
             DeploymentTargetType.AzureContainerApps => "aca",
@@ -654,7 +667,7 @@ public static class EnvCommand
         return cfg.Target switch
         {
             DeploymentTargetType.Nomad => el.TryGetProperty("address", out var a) ? a.GetString() ?? "-" : "-",
-            DeploymentTargetType.Kubernetes => el.TryGetProperty("context", out var c) ? c.GetString() ?? "(current)" : "(current)",
+            DeploymentTargetType.Kubernetes or DeploymentTargetType.Helm => el.TryGetProperty("context", out var c) ? c.GetString() ?? "(current)" : "(current)",
             DeploymentTargetType.Compose => el.TryGetProperty("projectName", out var p) ? p.GetString() ?? "-" : "-",
             DeploymentTargetType.AwsEcs => el.TryGetProperty("region", out var r) ? r.GetString() ?? "-" : "-",
             DeploymentTargetType.AzureContainerApps => el.TryGetProperty("location", out var l) ? l.GetString() ?? "-" : "-",

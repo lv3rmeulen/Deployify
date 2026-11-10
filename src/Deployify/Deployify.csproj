@@ -30,6 +30,7 @@
     <ProjectReference Include="..\Deployify.Target.AwsEcs\Deployify.Target.AwsEcs.csproj" />
     <ProjectReference Include="..\Deployify.Target.AzureContainerApps\Deployify.Target.AzureContainerApps.csproj" />
     <ProjectReference Include="..\Deployify.Target.NomadConsul\Deployify.Target.NomadConsul.csproj" />
+    <ProjectReference Include="..\Deployify.Target.Helm\Deployify.Target.Helm.csproj" />
   </ItemGroup>
 
   <ItemGroup>

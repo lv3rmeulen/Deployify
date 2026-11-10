@@ -7,5 +7,8 @@ public enum DeploymentTargetType
     Compose,
     AwsEcs,
     AzureContainerApps,
-    NomadConsul
+    NomadConsul,
+
+    /// <summary>Kubernetes, with each service installed as a Helm release.</summary>
+    Helm
 }

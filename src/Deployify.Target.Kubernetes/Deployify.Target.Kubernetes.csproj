@@ -13,5 +13,7 @@
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Deployify.Target.Kubernetes.Tests" />
+    <InternalsVisibleTo Include="Deployify.Target.Helm" />
+    <InternalsVisibleTo Include="Deployify.Target.Helm.Tests" />
   </ItemGroup>
 </Project>

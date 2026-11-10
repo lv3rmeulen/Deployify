@@ -12,6 +12,7 @@ using Deployify.Core.State;
 using Deployify.Target.AwsEcs;
 using Deployify.Target.AzureContainerApps;
 using Deployify.Target.Compose;
+using Deployify.Target.Helm;
 using Deployify.Target.Kubernetes;
 using Deployify.Target.Nomad;
 using Deployify.Target.NomadConsul;
@@ -38,6 +39,7 @@ internal static class DependencyInjection
             .AddSingleton<IDeploymentTarget, EcsDeploymentTarget>()
             .AddSingleton<IDeploymentTarget, AcaDeploymentTarget>()
             .AddSingleton<IDeploymentTarget, NomadConsulDeploymentTarget>()
+            .AddSingleton<IDeploymentTarget, HelmDeploymentTarget>()
             .AddSingleton<IDeploymentTargetFactory>(sp =>
                 new DeploymentTargetFactory(sp.GetServices<IDeploymentTarget>()));
 
@@ -258,7 +260,7 @@ internal sealed record ResolvedContext(
             var key = Config.Target switch
             {
                 DeploymentTargetType.Nomad => "nomad",
-                DeploymentTargetType.Kubernetes => "kubernetes",
+                DeploymentTargetType.Kubernetes or DeploymentTargetType.Helm => "kubernetes",
                 DeploymentTargetType.Compose => "compose",
                 DeploymentTargetType.AwsEcs => "ecs",
                 DeploymentTargetType.AzureContainerApps => "aca",
@@ -275,7 +277,7 @@ internal sealed record ResolvedContext(
             {
                 DeploymentTargetType.Nomad =>
                     el.TryGetProperty("address", out var a) ? a.GetString() ?? "-" : "-",
-                DeploymentTargetType.Kubernetes =>
+                DeploymentTargetType.Kubernetes or DeploymentTargetType.Helm =>
                     el.TryGetProperty("context", out var c) ? c.GetString() ?? "(current)" : "(current)",
                 DeploymentTargetType.Compose =>
                     el.TryGetProperty("projectName", out var p) ? p.GetString() ?? "-" : "-",

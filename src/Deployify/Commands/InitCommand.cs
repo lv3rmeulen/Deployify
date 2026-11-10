@@ -11,6 +11,7 @@ using Deployify.Core.Services;
 using Deployify.Target.AwsEcs;
 using Deployify.Target.AzureContainerApps;
 using Deployify.Target.Compose;
+using Deployify.Target.Helm;
 using Deployify.Target.Kubernetes;
 using Deployify.Target.Nomad;
 using Deployify.Target.NomadConsul;
@@ -516,7 +517,8 @@ public static class InitCommand
                     DeploymentTargetType.Compose,
                     DeploymentTargetType.AwsEcs,
                     DeploymentTargetType.AzureContainerApps,
-                    DeploymentTargetType.NomadConsul)
+                    DeploymentTargetType.NomadConsul,
+                    DeploymentTargetType.Helm)
                 .HighlightStyle(new Style(foreground: Color.Cyan1)), ct);
 
         var registry = await ConsolePrompts.AskAsync("Container registry [dim](blank to skip)[/]:", string.Empty, ct);
@@ -607,6 +609,7 @@ public static class InitCommand
                 break;
 
             case DeploymentTargetType.Kubernetes:
+            case DeploymentTargetType.Helm:
                 AnsiConsole.MarkupLine("[dim]Kubernetes settings:[/]");
                 kubernetesContext = await ConsolePrompts.AskAsync("kubectl context [dim](blank = current)[/]:", string.Empty, ct);
                 kubernetesPrefix = await ConsolePrompts.AskAsync("Namespace prefix:", envName, ct);
@@ -768,6 +771,18 @@ public static class InitCommand
                     ConsulToken = string.IsNullOrWhiteSpace(ncConsulToken) ? null : ncConsulToken,
                     EnableIngressGateway = ncIngress
                 }
+            },
+            // Helm deploys the Kubernetes target's manifests, so it reads the same settings.
+            DeploymentTargetType.Helm => new Dictionary<string, object?>
+            {
+                ["kubernetes"] = new KubernetesTargetConfig
+                {
+                    Context = string.IsNullOrWhiteSpace(kubernetesContext) ? null : kubernetesContext,
+                    NamespacePrefix = kubernetesPrefix,
+                    IngressBaseDomain = string.IsNullOrWhiteSpace(kubernetesDomain) ? null : kubernetesDomain,
+                    GenerateIngress = !string.IsNullOrWhiteSpace(kubernetesDomain)
+                },
+                ["helm"] = new HelmTargetConfig()
             },
             _ => []
         };

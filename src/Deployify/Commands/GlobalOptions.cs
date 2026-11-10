@@ -21,7 +21,7 @@ public static class GlobalOptions
     /// </summary>
     public static readonly Option<DeploymentTargetType?> Target = new("--target", "-t")
     {
-        Description = "Deployment target: nomad | kubernetes | compose. Required."
+        Description = "Deployment target: nomad | kubernetes | helm | compose | awsecs | azurecontainerapps | nomadconsul."
     };
 
     public static readonly Option<string?> Environment = new("--env", "-e")
