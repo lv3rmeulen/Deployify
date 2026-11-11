@@ -12,6 +12,7 @@ using Deployify.Target.AzureContainerApps;
 using Deployify.Target.Compose;
 using Deployify.Target.GitOps;
 using Deployify.Target.Helm;
+using Deployify.Target.Iis;
 using Deployify.Target.Kubernetes;
 using Deployify.Target.OvhCloud;
 using Deployify.Target.Nomad;
@@ -669,6 +670,8 @@ public static class EnvCommand
                 }, TargetConfigJsonOptions.Default),
                 ["ovhcloud"] = JsonSerializer.SerializeToElement(new OvhCloudTargetConfig { Endpoint = "ovh-eu" }, TargetConfigJsonOptions.Default)
             },
+            // Deploys to this machine until iis.host is set.
+            DeploymentTargetType.Names.Iis => Serialize("iis", new IisTargetConfig()),
             _ => []
         };
     }
@@ -688,6 +691,7 @@ public static class EnvCommand
             DeploymentTargetType.Names.NomadConsul => "nomadconsul",
             DeploymentTargetType.Names.ArgoCd or DeploymentTargetType.Names.Flux => "gitops",
             DeploymentTargetType.Names.OvhCloud => "ovhcloud",
+            DeploymentTargetType.Names.Iis => "iis",
             _ => cfg.Target.ToString().ToLower()
         };
         if (!cfg.TargetConfig.TryGetValue(key, out var raw) || raw is not JsonElement el)
@@ -705,6 +709,7 @@ public static class EnvCommand
             DeploymentTargetType.Names.NomadConsul => el.TryGetProperty("nomadAddress", out var na) ? na.GetString() ?? "-" : "-",
             DeploymentTargetType.Names.ArgoCd or DeploymentTargetType.Names.Flux => el.TryGetProperty("repoUrl", out var g) ? g.GetString() ?? "-" : "-",
             DeploymentTargetType.Names.OvhCloud => el.TryGetProperty("clusterId", out var k) || el.TryGetProperty("ClusterId", out k) ? k.GetString() ?? "-" : "-",
+            DeploymentTargetType.Names.Iis => el.TryGetProperty("host", out var h) || el.TryGetProperty("Host", out h) ? h.GetString() ?? "localhost" : "localhost",
             _ => "-"
         };
     }

@@ -22,7 +22,7 @@ deployify watch [options]
 |---|---|---|
 | `--project-path`, `-p` | Path to the Aspire AppHost .csproj or its directory. | current directory |
 | `--env`, `-e` | Environment to use, overriding the active environment (e.g. local, prod). |  |
-| `--target`, `-t` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| ovhcloud \| compose \| awsecs \| azurecontainerapps \| nomadconsul, or the ID of a plugin target. |  |
+| `--target`, `-t` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| ovhcloud \| compose \| awsecs \| azurecontainerapps \| nomadconsul \| iis, or the ID of a plugin target. |  |
 | `--debounce` | Milliseconds to wait after the last file change before re-running (default: 500). | `500` |
 | `--no-generate` | Skip re-generating artifacts; only re-run the plan diff against the cluster. | `false` |
 

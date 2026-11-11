@@ -20,7 +20,7 @@ import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 <CardGrid stagger>
 	<Card title="One AppHost, many targets" icon="rocket">
 		Docker Compose, Kubernetes (kubectl, Helm, Argo CD, Flux), OVHcloud Managed Kubernetes, Nomad, Nomad + Consul,
-		AWS ECS and Azure Container Apps — or your own platform as a plugin.
+		AWS ECS, Azure Container Apps and IIS on Windows Server — or your own platform as a plugin.
 	</Card>
 	<Card title="Plan, then apply" icon="list-format">
 		`deployify plan` shows what will change on the target before anything does.
@@ -45,4 +45,5 @@ import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 	<LinkCard title="Nomad + Consul Connect" href="/Deployify/targets/nomad-consul/" />
 	<LinkCard title="AWS ECS (Fargate)" href="/Deployify/targets/aws-ecs/" />
 	<LinkCard title="Azure Container Apps" href="/Deployify/targets/azure-container-apps/" />
+	<LinkCard title="IIS (Windows Server)" href="/Deployify/targets/iis/" />
 </CardGrid>

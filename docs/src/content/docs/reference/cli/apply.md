@@ -22,7 +22,7 @@ deployify apply [options]
 |---|---|---|
 | `--project-path`, `-p` | Path to the Aspire AppHost .csproj or its directory. | current directory |
 | `--env`, `-e` | Environment to use, overriding the active environment (e.g. local, prod). |  |
-| `--target`, `-t` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| ovhcloud \| compose \| awsecs \| azurecontainerapps \| nomadconsul, or the ID of a plugin target. |  |
+| `--target`, `-t` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| ovhcloud \| compose \| awsecs \| azurecontainerapps \| nomadconsul \| iis, or the ID of a plugin target. |  |
 | `--dry-run` | Simulate the operation without making changes. | `false` |
 | `--auto-approve` | Skip confirmation prompt. | `false` |
 | `--no-health-gate` | Deploy without waiting for services to become healthy and without automatic rollback. | `false` |

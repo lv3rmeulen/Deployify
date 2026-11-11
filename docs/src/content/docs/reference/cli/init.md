@@ -23,7 +23,7 @@ deployify init [options]
 | `--project-path`, `-p` | Path to the Aspire AppHost .csproj or its directory. | current directory |
 | `--non-interactive` | Disable interactive prompts; fail on missing required values. | `false` |
 | `--env-name` | Environment name. | `local` |
-| `--target` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| ovhcloud \| compose \| awsecs \| azurecontainerapps \| nomadconsul, or the ID of a plugin target. |  |
+| `--target` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| ovhcloud \| compose \| awsecs \| azurecontainerapps \| nomadconsul \| iis, or the ID of a plugin target. |  |
 | `--container-registry` | Container registry URL. |  |
 | `--image-tag` | Default image tag. | `latest` |
 | `--output-path` | Output folder for artifacts. | `deployify-output` |
@@ -61,6 +61,10 @@ deployify init [options]
 | `--ovh-endpoint` | OVHcloud API endpoint: ovh-eu \| ovh-ca \| ovh-us. | `ovh-eu` |
 | `--ovh-project` | OVHcloud Public Cloud project ID. Default: OVH_CLOUD_PROJECT_SERVICE at run time. |  |
 | `--ovh-cluster` | OVHcloud Managed Kubernetes cluster ID. |  |
+| `--iis-host` | Windows server running IIS. Default: this machine. |  |
+| `--iis-transport` | How to reach --iis-host: WinRm \| Ssh. | `WinRm` |
+| `--iis-user` | User to connect as. WinRM reads the password from IIS_PASSWORD. |  |
+| `--iis-sites-root` | Folder on the server for the sites and their releases. | `C:\inetpub\deployify` |
 | `--compose-project` | Docker Compose project name. | `deployify` |
 | `--compose-restart` | Restart policy. | `unless-stopped` |
 | `--ecs-region` | AWS region. | `us-east-1` |

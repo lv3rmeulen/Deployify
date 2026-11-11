@@ -7,6 +7,7 @@ using Deployify.Target.AzureContainerApps;
 using Deployify.Target.Compose;
 using Deployify.Target.GitOps;
 using Deployify.Target.Helm;
+using Deployify.Target.Iis;
 using Deployify.Target.Kubernetes;
 using Deployify.Target.Nomad;
 using Deployify.Target.NomadConsul;
@@ -40,6 +41,7 @@ public static class DeployifyServiceCollectionExtensions
             .AddSingleton<IDeploymentTarget, ArgoCdDeploymentTarget>()
             .AddSingleton<IDeploymentTarget, FluxDeploymentTarget>()
             .AddSingleton<IDeploymentTarget, OvhCloudDeploymentTarget>()
+            .AddSingleton<IDeploymentTarget, IisDeploymentTarget>()
             .AddSingleton(_ => new PluginCatalog())
             .AddSingleton(sp => new PluginTargetSource(
                 sp.GetRequiredService<PluginCatalog>(), sp.GetService<ILoggerFactory>()))

@@ -3,7 +3,7 @@ title: "Health-gated rollouts and rollback"
 description: "How apply deploys in waves, gates on health, and rolls back."
 ---
 
-On every target (**AWS ECS**, **Nomad**, **Nomad + Consul**, **Kubernetes**, **Azure Container Apps** and **Docker Compose**), `apply` and `ci` deploy services in
+On every target (**AWS ECS**, **Nomad**, **Nomad + Consul**, **Kubernetes**, **Azure Container Apps**, **Docker Compose** and **IIS**), `apply` and `ci` deploy services in
 dependency order, one wave at a time, and wait for each wave to become healthy before moving on.
 If a service fails, doesn't become healthy within the timeout, or the run is canceled with
 Ctrl+C, every service the rollout touched is put back on the revision it ran before, in reverse
@@ -81,6 +81,17 @@ the rollout saves its container's environment to `.deployify-rollback/<service>.
 to the compose files (owner-readable only, like the generated `.env` files, since it holds the same
 secrets; the newest 5 per service are kept), and the override replaces the service's environment
 with it. That uses Compose's `!override` tag, which needs Docker Compose 2.24.4 or later.
+
+On IIS, a revision is a release folder on the server (`{tag}-{fingerprint}`), so rolling back
+switches the site back to the folder it ran from before. The site's settings come back with it:
+each apply also keeps that release's bindings and environment variables, secrets included, in
+`settings/{release}.json` next to the releases, readable by Administrators and SYSTEM only. The
+journal only records the release name. A site is healthy when it runs the new release, its site and
+application pool are started, and a request from the server to `healthPath` (default `/`) gets a
+response below 500. The ASP.NET Core Module's "app failed to start" pages (`500.3x`, `502.5`), a
+pool stopped by rapid-fail protection, or a site IIS couldn't start (a port in use) fail the rollout
+at once. A site the rollout created is removed. A rollback can only go back to a release still on
+the server: the newest `keepReleases` (default 3, at least 2) are kept.
 
 ```bash
 deployify status                        # recent rollouts in this environment

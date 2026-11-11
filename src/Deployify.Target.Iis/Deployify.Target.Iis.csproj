@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>Deployify.Target.Iis</RootNamespace>
+    <Description>Deployify deployment target for IIS on Windows Server: each project becomes an IIS site.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Deployify.Core\Deployify.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Scripts\deployify-iis.ps1" LogicalName="Deployify.Target.Iis.deployify-iis.ps1" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Deployify.Target.Iis.Tests" />
+  </ItemGroup>
+
+</Project>

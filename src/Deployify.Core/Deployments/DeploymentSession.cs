@@ -124,6 +124,7 @@ public sealed record DeploymentSession(
                 DeploymentTargetType.Names.NomadConsul => "nomadconsul",
                 DeploymentTargetType.Names.ArgoCd or DeploymentTargetType.Names.Flux => "gitops",
                 DeploymentTargetType.Names.OvhCloud => "ovhcloud",
+                DeploymentTargetType.Names.Iis => "iis",
                 _ => Config.Target.ToString().ToLower()
             };
             if (!Config.TargetConfig.TryGetValue(key, out var raw) ||
@@ -150,6 +151,8 @@ public sealed record DeploymentSession(
                     el.TryGetProperty("repoUrl", out var g) ? g.GetString() ?? "-" : "-",
                 DeploymentTargetType.Names.OvhCloud =>
                     el.TryGetProperty("clusterId", out var k) || el.TryGetProperty("ClusterId", out k) ? k.GetString() ?? "-" : "-",
+                DeploymentTargetType.Names.Iis =>
+                    el.TryGetProperty("host", out var h) || el.TryGetProperty("Host", out h) ? h.GetString() ?? "localhost" : "localhost",
                 _ => "-"
             };
         }

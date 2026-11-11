@@ -22,7 +22,7 @@ deployify status [options]
 |---|---|---|
 | `--project-path`, `-p` | Path to the Aspire AppHost .csproj or its directory. | current directory |
 | `--env`, `-e` | Environment to use, overriding the active environment (e.g. local, prod). |  |
-| `--target`, `-t` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| ovhcloud \| compose \| awsecs \| azurecontainerapps \| nomadconsul, or the ID of a plugin target. |  |
+| `--target`, `-t` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| ovhcloud \| compose \| awsecs \| azurecontainerapps \| nomadconsul \| iis, or the ID of a plugin target. |  |
 | `--rollout` | Show the services and events of this rollout instead of the list. |  |
 | `--limit` | How many rollouts to list (default: 10). | `10` |
 

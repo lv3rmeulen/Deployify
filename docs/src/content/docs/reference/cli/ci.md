@@ -22,7 +22,7 @@ deployify ci [options]
 |---|---|---|
 | `--project-path`, `-p` | Path to the Aspire AppHost .csproj or its directory. | current directory |
 | `--env`, `-e` | Environment to use, overriding the active environment (e.g. local, prod). |  |
-| `--target`, `-t` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| ovhcloud \| compose \| awsecs \| azurecontainerapps \| nomadconsul, or the ID of a plugin target. |  |
+| `--target`, `-t` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| ovhcloud \| compose \| awsecs \| azurecontainerapps \| nomadconsul \| iis, or the ID of a plugin target. |  |
 | `--skip-validate` | Skip the validate step (useful when the cluster is not reachable during CI). | `false` |
 | `--skip-apply` | Stop after plan — generate and validate but do not deploy. | `false` |
 | `--fail-on-changes` | Exit non-zero if the plan detects any create/update/delete changes (drift gating). | `false` |

@@ -13,6 +13,7 @@ using Deployify.Target.AzureContainerApps;
 using Deployify.Target.Compose;
 using Deployify.Target.GitOps;
 using Deployify.Target.Helm;
+using Deployify.Target.Iis;
 using Deployify.Target.Kubernetes;
 using Deployify.Target.Nomad;
 using Deployify.Target.NomadConsul;
@@ -226,6 +227,26 @@ public static class InitCommand
             Description = "OVHcloud Managed Kubernetes cluster ID."
         };
 
+        // IIS-specific
+        var iisHostOpt = new Option<string?>("--iis-host")
+        {
+            Description = "Windows server running IIS. Default: this machine."
+        };
+        var iisTransportOpt = new Option<IisTransport>("--iis-transport")
+        {
+            Description = "How to reach --iis-host: WinRm | Ssh.",
+            DefaultValueFactory = _ => IisTransport.WinRm
+        };
+        var iisUserOpt = new Option<string?>("--iis-user")
+        {
+            Description = "User to connect as. WinRM reads the password from IIS_PASSWORD."
+        };
+        var iisSitesRootOpt = new Option<string>("--iis-sites-root")
+        {
+            Description = "Folder on the server for the sites and their releases.",
+            DefaultValueFactory = _ => @"C:\inetpub\deployify"
+        };
+
         // Compose-specific
         var composeProjectOpt = new Option<string>("--compose-project")
         {
@@ -365,6 +386,10 @@ public static class InitCommand
         cmd.Options.Add(ovhEndpointOpt);
         cmd.Options.Add(ovhProjectOpt);
         cmd.Options.Add(ovhClusterOpt);
+        cmd.Options.Add(iisHostOpt);
+        cmd.Options.Add(iisTransportOpt);
+        cmd.Options.Add(iisUserOpt);
+        cmd.Options.Add(iisSitesRootOpt);
         cmd.Options.Add(composeProjectOpt);
         cmd.Options.Add(composeRestartOpt);
         cmd.Options.Add(ecsRegionOpt);
@@ -471,7 +496,11 @@ public static class InitCommand
                         pr.GetValue(gitopsPathOpt),
                         pr.GetValue(ovhEndpointOpt)!,
                         pr.GetValue(ovhProjectOpt),
-                        pr.GetValue(ovhClusterOpt))
+                        pr.GetValue(ovhClusterOpt),
+                        pr.GetValue(iisHostOpt),
+                        pr.GetValue(iisTransportOpt),
+                        pr.GetValue(iisUserOpt),
+                        pr.GetValue(iisSitesRootOpt)!)
                 };
                 // Add to (or replace) this one environment; keep any others already defined.
                 stateFile = stateManager.Exists(directory)
@@ -499,8 +528,8 @@ public static class InitCommand
                 $"  Environments: {string.Join(", ", stateFile.Environments.Keys.Select(k => $"[cyan]{Markup.Escape(k)}[/]"))}");
             AnsiConsole.WriteLine();
             AnsiConsole.MarkupLine("Next steps:");
-            AnsiConsole.MarkupLine("  [cyan]deployify plan --target <nomad|kubernetes|compose|awsecs|azurecontainerapps|ovhcloud>[/]");
-            AnsiConsole.MarkupLine("  [cyan]deployify apply --target <nomad|kubernetes|compose|awsecs|azurecontainerapps|ovhcloud>[/]");
+            AnsiConsole.MarkupLine("  [cyan]deployify plan --target <nomad|kubernetes|compose|awsecs|azurecontainerapps|ovhcloud|iis>[/]");
+            AnsiConsole.MarkupLine("  [cyan]deployify apply --target <nomad|kubernetes|compose|awsecs|azurecontainerapps|ovhcloud|iis>[/]");
         });
 
         return cmd;
@@ -566,7 +595,8 @@ public static class InitCommand
                     DeploymentTargetType.Helm,
                     DeploymentTargetType.ArgoCd,
                     DeploymentTargetType.Flux,
-                    DeploymentTargetType.OvhCloud)
+                    DeploymentTargetType.OvhCloud,
+                    DeploymentTargetType.Iis)
                 .HighlightStyle(new Style(foreground: Color.Cyan1)), ct);
 
         var registry = await ConsolePrompts.AskAsync("Container registry [dim](blank to skip)[/]:", string.Empty, ct);
@@ -629,6 +659,9 @@ public static class InitCommand
         var gitopsBranch = "main";
         var ovhEndpoint = "ovh-eu";
         string? ovhProject = null, ovhCluster = null;
+        string? iisHost = null, iisUser = null;
+        var iisTransport = IisTransport.WinRm;
+        var iisSitesRoot = @"C:\inetpub\deployify";
 
         switch (target.Value)
         {
@@ -693,6 +726,24 @@ public static class InitCommand
                                        "OVH_CONSUMER_KEY, or OVH_CLIENT_ID and OVH_CLIENT_SECRET.[/]");
                 break;
 
+            case DeploymentTargetType.Names.Iis:
+                AnsiConsole.MarkupLine("[dim]IIS settings:[/]");
+                iisHost = await ConsolePrompts.AskAsync("IIS server [dim](blank = this machine)[/]:", string.Empty, ct);
+                if (!string.IsNullOrWhiteSpace(iisHost))
+                {
+                    iisTransport = await ConsolePrompts.PromptAsync(
+                        new SelectionPrompt<IisTransport>()
+                            .Title("Connect with PowerShell remoting over:")
+                            .AddChoices(IisTransport.WinRm, IisTransport.Ssh), ct);
+                    iisUser = await ConsolePrompts.AskAsync(
+                        "User [dim](blank = current Windows identity / SSH user)[/]:", string.Empty, ct);
+                }
+
+                iisSitesRoot = await ConsolePrompts.AskAsync("Sites folder on the server:", iisSitesRoot, ct);
+                AnsiConsole.MarkupLine("[dim]Projects are published for win-x64 with 'deployify publish'; the server needs IIS and the " +
+                                       "ASP.NET Core Hosting Bundle. A WinRM password is read from IIS_PASSWORD.[/]");
+                break;
+
             case DeploymentTargetType.Names.Compose:
                 AnsiConsole.MarkupLine("[dim]Docker Compose settings:[/]");
                 composeProject = await ConsolePrompts.AskAsync("Project name:", envName, ct);
@@ -753,7 +804,8 @@ public static class InitCommand
                 ncNomadAddr, ncNomadToken, ncNomadNs, ncNomadDc,
                 ncConsulAddr, ncConsulToken, ncIngress,
                 gitopsRepo, gitopsBranch, gitopsPath,
-                ovhEndpoint, ovhProject, ovhCluster)
+                ovhEndpoint, ovhProject, ovhCluster,
+                iisHost, iisTransport, iisUser, iisSitesRoot)
         };
     }
 
@@ -773,7 +825,8 @@ public static class InitCommand
         string ncNomadAddr, string? ncNomadToken, string ncNomadNs, string ncNomadDc,
         string ncConsulAddr, string? ncConsulToken, bool ncIngress,
         string? gitopsRepo, string gitopsBranch, string? gitopsPath,
-        string ovhEndpoint, string? ovhProject, string? ovhCluster)
+        string ovhEndpoint, string? ovhProject, string? ovhCluster,
+        string? iisHost, IisTransport iisTransport, string? iisUser, string iisSitesRoot)
         => target.Value switch
         {
             DeploymentTargetType.Names.Nomad => new Dictionary<string, object?>
@@ -899,6 +952,16 @@ public static class InitCommand
                     Endpoint = string.IsNullOrWhiteSpace(ovhEndpoint) ? "ovh-eu" : ovhEndpoint,
                     ProjectId = string.IsNullOrWhiteSpace(ovhProject) ? null : ovhProject,
                     ClusterId = string.IsNullOrWhiteSpace(ovhCluster) ? null : ovhCluster
+                }
+            },
+            DeploymentTargetType.Names.Iis => new Dictionary<string, object?>
+            {
+                ["iis"] = new IisTargetConfig
+                {
+                    Host = string.IsNullOrWhiteSpace(iisHost) ? null : iisHost,
+                    Transport = iisTransport,
+                    UserName = string.IsNullOrWhiteSpace(iisUser) ? null : iisUser,
+                    SitesRoot = string.IsNullOrWhiteSpace(iisSitesRoot) ? @"C:\inetpub\deployify" : iisSitesRoot
                 }
             },
             _ => []
