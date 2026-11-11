@@ -5,14 +5,14 @@ description: "How apply deploys in waves, gates on health, and rolls back."
 
 On every target (**AWS ECS**, **Nomad**, **Nomad + Consul**, **Kubernetes**, **Azure Container Apps** and **Docker Compose**), `apply` and `ci` deploy services in
 dependency order, one wave at a time, and wait for each wave to become healthy before moving on.
-If a service fails, doesn't become healthy within the timeout, or the run is cancelled with
+If a service fails, doesn't become healthy within the timeout, or the run is canceled with
 Ctrl+C, every service the rollout touched is put back on the revision it ran before, in reverse
 order, and each restored service is checked for health again.
 
 ```bash
 deployify apply --auto-approve --health-timeout 300   # seconds per service (default 600)
 deployify apply --auto-approve --no-rollback          # gate on health, leave a failure in place
-deployify apply --auto-approve --no-health-gate       # old behaviour: deploy and return
+deployify apply --auto-approve --no-health-gate       # old behavior: deploy and return
 deployify apply --auto-approve --rollback-timeout 600 # budget for the whole rollback (default 900)
 ```
 
@@ -51,7 +51,7 @@ progress deadline fails. Rolling back puts the service's ConfigMap and Secret ba
 `kubectl rollout undo` to the captured revision and restores the replica count; a Deployment that
 the rollout created is scaled to zero. So that a later `deployify rollback` can restore them too,
 the rollout keeps copies of the ConfigMap and Secret in the service's namespace
-(`<service>-config-rollback-g<generation>`, `<service>-secrets-rollback-g<generation>`, labelled
+(`<service>-config-rollback-g<generation>`, `<service>-secrets-rollback-g<generation>`, labeled
 `deployify/rollback-of=<service>`; the newest 5 are kept), and the journal records only their
 names. Key Vault–backed Secrets are managed by the CSI driver and aren't copied. Kubernetes keeps 10 old ReplicaSets by default (`revisionHistoryLimit`); older revisions can't be
 rolled back to.

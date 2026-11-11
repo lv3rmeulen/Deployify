@@ -46,7 +46,7 @@ Set in code, or per run through configuration under `Deployify:` (environment va
 | Option | Key | Default |
 |---|---|---|
 | `Environment` | `Deployify:Environment` | the state file's active environment |
-| `ProjectPath` | `Deployify:ProjectPath` | AppHost directory (state file searched upwards) |
+| `ProjectPath` | `Deployify:ProjectPath` | AppHost directory (state file searched upward) |
 | `Target` | `Deployify:Target` | the environment's target |
 | `Publish` | `Deployify:Publish` | `true` — Deployify builds and pushes project images |
 | `ImageTag` | `Deployify:ImageTag` | the environment's `ImageTag` |

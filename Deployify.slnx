@@ -1,12 +1,18 @@
 <Solution>
   <Folder Name="/samples/">
     <Project Path="samples/Deployify.Plugin.Sample.Compose/Deployify.Plugin.Sample.Compose.csproj" />
+    <Project Path="samples/hello-aspire/HelloAspire.Api/HelloAspire.Api.csproj" />
+    <Project Path="samples/hello-aspire/HelloAspire.AppHost/HelloAspire.AppHost.csproj" />
+    <Project Path="samples/aspire-deploy/AspireDeploy.Api/AspireDeploy.Api.csproj" />
+    <Project Path="samples/aspire-deploy/AspireDeploy.AppHost/AspireDeploy.AppHost.csproj" />
   </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
     <File Path=".gitattributes" />
     <File Path=".github/workflows/build.yml" />
+    <File Path=".github/workflows/docs.yml" />
     <File Path=".github/workflows/release.yml" />
+    <File Path=".github/workflows/samples.yml" />
     <File Path=".gitignore" />
     <File Path="Directory.Build.props" />
     <File Path="Directory.Packages.props" />

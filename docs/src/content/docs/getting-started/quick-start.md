@@ -1,6 +1,6 @@
 ---
 title: "Quick start"
-description: "Initialise an environment and deploy your AppHost."
+description: "Initialize an environment and deploy your AppHost."
 ---
 
 :::tip
@@ -25,7 +25,7 @@ Or run the full pipeline in one command:
 deployify ci --skip-validate
 ```
 
-## Initialising for your target
+## Initializing for your target
 
 ```bash
 deployify init

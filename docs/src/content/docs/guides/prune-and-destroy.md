@@ -18,7 +18,7 @@ A service is pruned only when it is **both** in the environment's inventory (see
 [Deployment state](/Deployify/concepts/state/)) **and** carries Deployify's
 ownership marker on the platform, so neither a stale inventory nor something another team runs
 in the same cluster is ever deleted. The prune runs after every service passed its health gate,
-in reverse dependency order, and is journalled like a rollout (`deployify status`). It is refused,
+in reverse dependency order, and is journaled like a rollout (`deployify status`). It is refused,
 and `apply` exits `4` with the deploy itself done, when:
 
 - the target can't be asked what Deployify manages (an outage never looks like "nothing there"),
@@ -41,7 +41,7 @@ deployify destroy --volumes                     # Compose: also remove data volu
 
 Destroy takes the environment lock, lists what the inventory records and what the platform marks
 as Deployify's, and deletes what is in both, dependents first. Each service is dropped from the
-inventory as soon as it is gone and every step is journalled, so after a failure (it stops at the
+inventory as soon as it is gone and every step is journaled, so after a failure (it stops at the
 first one) running `destroy` again continues with what is left. Services recorded in state but
 already gone are only dropped from state; services marked as Deployify's but not in this
 environment's state are listed and left alone (`deployify state adopt` takes them in).
@@ -53,7 +53,7 @@ What each target removes, and keeps:
 | Target | Removes | Keeps |
 |---|---|---|
 | Nomad, Nomad + Consul | purges each job; its `nomad/jobs/<job>` variable and rollback copies (unless `--keep-secrets`) | the namespace |
-| Kubernetes | each service's namespace (only ones labelled `app.kubernetes.io/managed-by=deployify`) | the `<prefix>-system` secrets namespace, Vault / Key Vault secrets |
+| Kubernetes | each service's namespace (only ones labeled `app.kubernetes.io/managed-by=deployify`) | the `<prefix>-system` secrets namespace, Vault / Key Vault secrets |
 | Compose | the services' containers, then the project network; volumes with `--volumes` | images, volumes by default |
 | AWS ECS | `delete-service --force`, every revision of its task definition family, its SSM parameters under `<secretsPrefix>/<service>` (unless `--keep-secrets`) | the cluster, networking, load balancers, log groups, generated parameter values |
 | Azure Container Apps | each Container App | the resource group, the Container Apps environment, Key Vault secrets |

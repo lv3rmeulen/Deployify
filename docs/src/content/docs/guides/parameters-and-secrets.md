@@ -148,7 +148,7 @@ that needs it does.
 
 | `keyVault` setting (Kubernetes) | Default | |
 |---|---|---|
-| `kubernetesIdentity` | `WorkloadIdentity` | `WorkloadIdentity`: each service gets a ServiceAccount annotated with `clientId`, and pods are labelled `azure.workload.identity/use`. `VmManagedIdentity`: the node pool's identity (e.g. the add-on's), no ServiceAccount |
+| `kubernetesIdentity` | `WorkloadIdentity` | `WorkloadIdentity`: each service gets a ServiceAccount annotated with `clientId`, and pods are labeled `azure.workload.identity/use`. `VmManagedIdentity`: the node pool's identity (e.g. the add-on's), no ServiceAccount |
 | `cloudName` | public cloud | e.g. `AzureChinaCloud` |
 | `subscriptionId` | `az` default | Subscription of the vault, for `apply` |
 
