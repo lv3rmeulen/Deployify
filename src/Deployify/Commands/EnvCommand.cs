@@ -10,6 +10,7 @@ using Deployify.Core.Services;
 using Deployify.Target.AwsEcs;
 using Deployify.Target.AzureContainerApps;
 using Deployify.Target.Compose;
+using Deployify.Target.GitOps;
 using Deployify.Target.Helm;
 using Deployify.Target.Kubernetes;
 using Deployify.Target.Nomad;
@@ -640,6 +641,21 @@ public static class EnvCommand
                 }, TargetConfigJsonOptions.Default),
                 ["helm"] = JsonSerializer.SerializeToElement(new HelmTargetConfig(), TargetConfigJsonOptions.Default)
             },
+            // The GitOps targets render the Kubernetes target's manifests; set gitops.repoUrl before applying.
+            DeploymentTargetType.ArgoCd or DeploymentTargetType.Flux => new Dictionary<string, object?>
+            {
+                ["kubernetes"] = JsonSerializer.SerializeToElement(new KubernetesTargetConfig
+                {
+                    Context = string.IsNullOrWhiteSpace(kubernetesContext) ? null : kubernetesContext,
+                    NamespacePrefix = kubernetesPrefix ?? "deployify",
+                    IngressBaseDomain = string.IsNullOrWhiteSpace(kubernetesDomain) ? null : kubernetesDomain,
+                    GenerateIngress = !string.IsNullOrWhiteSpace(kubernetesDomain)
+                }, TargetConfigJsonOptions.Default),
+                ["gitops"] = JsonSerializer.SerializeToElement(new GitOpsTargetConfig(), TargetConfigJsonOptions.Default),
+                [target == DeploymentTargetType.ArgoCd ? "argocd" : "flux"] = target == DeploymentTargetType.ArgoCd
+                    ? JsonSerializer.SerializeToElement(new ArgoCdTargetConfig(), TargetConfigJsonOptions.Default)
+                    : JsonSerializer.SerializeToElement(new FluxTargetConfig(), TargetConfigJsonOptions.Default)
+            },
             _ => []
         };
     }
@@ -657,6 +673,7 @@ public static class EnvCommand
             DeploymentTargetType.AwsEcs => "ecs",
             DeploymentTargetType.AzureContainerApps => "aca",
             DeploymentTargetType.NomadConsul => "nomadconsul",
+            DeploymentTargetType.ArgoCd or DeploymentTargetType.Flux => "gitops",
             _ => cfg.Target.ToString().ToLower()
         };
         if (!cfg.TargetConfig.TryGetValue(key, out var raw) || raw is not JsonElement el)
@@ -672,6 +689,7 @@ public static class EnvCommand
             DeploymentTargetType.AwsEcs => el.TryGetProperty("region", out var r) ? r.GetString() ?? "-" : "-",
             DeploymentTargetType.AzureContainerApps => el.TryGetProperty("location", out var l) ? l.GetString() ?? "-" : "-",
             DeploymentTargetType.NomadConsul => el.TryGetProperty("nomadAddress", out var na) ? na.GetString() ?? "-" : "-",
+            DeploymentTargetType.ArgoCd or DeploymentTargetType.Flux => el.TryGetProperty("repoUrl", out var g) ? g.GetString() ?? "-" : "-",
             _ => "-"
         };
     }

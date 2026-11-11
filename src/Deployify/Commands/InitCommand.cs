@@ -11,6 +11,7 @@ using Deployify.Core.Services;
 using Deployify.Target.AwsEcs;
 using Deployify.Target.AzureContainerApps;
 using Deployify.Target.Compose;
+using Deployify.Target.GitOps;
 using Deployify.Target.Helm;
 using Deployify.Target.Kubernetes;
 using Deployify.Target.Nomad;
@@ -193,6 +194,21 @@ public static class InitCommand
             Description = "Ingress base domain."
         };
 
+        // GitOps-specific (Argo CD, Flux)
+        var gitopsRepoOpt = new Option<string?>("--gitops-repo")
+        {
+            Description = "Config repository the GitOps controller watches (https or ssh URL)."
+        };
+        var gitopsBranchOpt = new Option<string>("--gitops-branch")
+        {
+            Description = "Branch Deployify commits to.",
+            DefaultValueFactory = _ => "main"
+        };
+        var gitopsPathOpt = new Option<string?>("--gitops-path")
+        {
+            Description = "Folder in the repository for this environment. Default: deployify/{env}."
+        };
+
         // Compose-specific
         var composeProjectOpt = new Option<string>("--compose-project")
         {
@@ -326,6 +342,9 @@ public static class InitCommand
         cmd.Options.Add(kubernetesContextOpt);
         cmd.Options.Add(kubernetesPrefixOpt);
         cmd.Options.Add(kubernetesDomainOpt);
+        cmd.Options.Add(gitopsRepoOpt);
+        cmd.Options.Add(gitopsBranchOpt);
+        cmd.Options.Add(gitopsPathOpt);
         cmd.Options.Add(composeProjectOpt);
         cmd.Options.Add(composeRestartOpt);
         cmd.Options.Add(ecsRegionOpt);
@@ -426,7 +445,10 @@ public static class InitCommand
                         pr.GetValue(ncNomadDcOpt)!,
                         pr.GetValue(ncConsulAddrOpt)!,
                         pr.GetValue(ncConsulTokenOpt),
-                        pr.GetValue(ncIngressOpt))
+                        pr.GetValue(ncIngressOpt),
+                        pr.GetValue(gitopsRepoOpt),
+                        pr.GetValue(gitopsBranchOpt)!,
+                        pr.GetValue(gitopsPathOpt))
                 };
                 // Add to (or replace) this one environment; keep any others already defined.
                 stateFile = stateManager.Exists(directory)
@@ -518,7 +540,9 @@ public static class InitCommand
                     DeploymentTargetType.AwsEcs,
                     DeploymentTargetType.AzureContainerApps,
                     DeploymentTargetType.NomadConsul,
-                    DeploymentTargetType.Helm)
+                    DeploymentTargetType.Helm,
+                    DeploymentTargetType.ArgoCd,
+                    DeploymentTargetType.Flux)
                 .HighlightStyle(new Style(foreground: Color.Cyan1)), ct);
 
         var registry = await ConsolePrompts.AskAsync("Container registry [dim](blank to skip)[/]:", string.Empty, ct);
@@ -577,6 +601,8 @@ public static class InitCommand
         string? ncNomadToken = null, ncConsulToken = null;
         string ncConsulAddr = string.Empty;
         bool ncIngress = false;
+        string? gitopsRepo = null, gitopsPath = null;
+        var gitopsBranch = "main";
 
         switch (target)
         {
@@ -610,10 +636,20 @@ public static class InitCommand
 
             case DeploymentTargetType.Kubernetes:
             case DeploymentTargetType.Helm:
+            case DeploymentTargetType.ArgoCd:
+            case DeploymentTargetType.Flux:
                 AnsiConsole.MarkupLine("[dim]Kubernetes settings:[/]");
                 kubernetesContext = await ConsolePrompts.AskAsync("kubectl context [dim](blank = current)[/]:", string.Empty, ct);
                 kubernetesPrefix = await ConsolePrompts.AskAsync("Namespace prefix:", envName, ct);
                 kubernetesDomain = await ConsolePrompts.AskAsync("Ingress base domain [dim](blank to skip)[/]:", string.Empty, ct);
+                if (target is DeploymentTargetType.ArgoCd or DeploymentTargetType.Flux)
+                {
+                    AnsiConsole.MarkupLine("[dim]GitOps settings:[/]");
+                    gitopsRepo = await ConsolePrompts.AskAsync("Config repository URL:", string.Empty, ct);
+                    gitopsBranch = await ConsolePrompts.AskAsync("Branch:", "main", ct);
+                    gitopsPath = await ConsolePrompts.AskAsync("Folder in the repository:", $"deployify/{envName}", ct);
+                }
+
                 break;
 
             case DeploymentTargetType.Compose:
@@ -674,7 +710,8 @@ public static class InitCommand
                 ecsRegion, ecsCluster, ecsProfile, ecsSubnets, ecsSecGroups, ecsExecRole,
                 acaSub, acaRg, acaLocation, acaEnv, acaAcr,
                 ncNomadAddr, ncNomadToken, ncNomadNs, ncNomadDc,
-                ncConsulAddr, ncConsulToken, ncIngress)
+                ncConsulAddr, ncConsulToken, ncIngress,
+                gitopsRepo, gitopsBranch, gitopsPath)
         };
     }
 
@@ -692,7 +729,8 @@ public static class InitCommand
         string? ecsProfile, string? ecsSubnets, string? ecsSecGroups, string? ecsExecRole,
         string? acaSub, string acaRg, string acaLocation, string acaEnv, string? acaAcr,
         string ncNomadAddr, string? ncNomadToken, string ncNomadNs, string ncNomadDc,
-        string ncConsulAddr, string? ncConsulToken, bool ncIngress)
+        string ncConsulAddr, string? ncConsulToken, bool ncIngress,
+        string? gitopsRepo, string gitopsBranch, string? gitopsPath)
         => target switch
         {
             DeploymentTargetType.Nomad => new Dictionary<string, object?>
@@ -783,6 +821,26 @@ public static class InitCommand
                     GenerateIngress = !string.IsNullOrWhiteSpace(kubernetesDomain)
                 },
                 ["helm"] = new HelmTargetConfig()
+            },
+            // The GitOps targets render the Kubernetes target's manifests and commit them.
+            DeploymentTargetType.ArgoCd or DeploymentTargetType.Flux => new Dictionary<string, object?>
+            {
+                ["kubernetes"] = new KubernetesTargetConfig
+                {
+                    Context = string.IsNullOrWhiteSpace(kubernetesContext) ? null : kubernetesContext,
+                    NamespacePrefix = kubernetesPrefix,
+                    IngressBaseDomain = string.IsNullOrWhiteSpace(kubernetesDomain) ? null : kubernetesDomain,
+                    GenerateIngress = !string.IsNullOrWhiteSpace(kubernetesDomain)
+                },
+                ["gitops"] = new GitOpsTargetConfig
+                {
+                    RepoUrl = gitopsRepo ?? string.Empty,
+                    Branch = string.IsNullOrWhiteSpace(gitopsBranch) ? "main" : gitopsBranch,
+                    Path = string.IsNullOrWhiteSpace(gitopsPath) ? null : gitopsPath
+                },
+                [target == DeploymentTargetType.ArgoCd ? "argocd" : "flux"] = target == DeploymentTargetType.ArgoCd
+                    ? new ArgoCdTargetConfig()
+                    : new FluxTargetConfig()
             },
             _ => []
         };

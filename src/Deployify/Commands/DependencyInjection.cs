@@ -12,6 +12,7 @@ using Deployify.Core.State;
 using Deployify.Target.AwsEcs;
 using Deployify.Target.AzureContainerApps;
 using Deployify.Target.Compose;
+using Deployify.Target.GitOps;
 using Deployify.Target.Helm;
 using Deployify.Target.Kubernetes;
 using Deployify.Target.Nomad;
@@ -40,6 +41,8 @@ internal static class DependencyInjection
             .AddSingleton<IDeploymentTarget, AcaDeploymentTarget>()
             .AddSingleton<IDeploymentTarget, NomadConsulDeploymentTarget>()
             .AddSingleton<IDeploymentTarget, HelmDeploymentTarget>()
+            .AddSingleton<IDeploymentTarget, ArgoCdDeploymentTarget>()
+            .AddSingleton<IDeploymentTarget, FluxDeploymentTarget>()
             .AddSingleton<IDeploymentTargetFactory>(sp =>
                 new DeploymentTargetFactory(sp.GetServices<IDeploymentTarget>()));
 
@@ -265,6 +268,7 @@ internal sealed record ResolvedContext(
                 DeploymentTargetType.AwsEcs => "ecs",
                 DeploymentTargetType.AzureContainerApps => "aca",
                 DeploymentTargetType.NomadConsul => "nomadconsul",
+                DeploymentTargetType.ArgoCd or DeploymentTargetType.Flux => "gitops",
                 _ => Config.Target.ToString().ToLower()
             };
             if (!Config.TargetConfig.TryGetValue(key, out var raw) ||
@@ -287,6 +291,8 @@ internal sealed record ResolvedContext(
                     el.TryGetProperty("location", out var l) ? l.GetString() ?? "-" : "-",
                 DeploymentTargetType.NomadConsul =>
                     el.TryGetProperty("nomadAddress", out var na) ? na.GetString() ?? "-" : "-",
+                DeploymentTargetType.ArgoCd or DeploymentTargetType.Flux =>
+                    el.TryGetProperty("repoUrl", out var g) ? g.GetString() ?? "-" : "-",
                 _ => "-"
             };
         }

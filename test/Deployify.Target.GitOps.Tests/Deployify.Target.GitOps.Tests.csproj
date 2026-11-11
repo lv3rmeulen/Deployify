@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="NSubstitute" />
+    <PackageReference Include="Shouldly" />
+    <PackageReference Include="GitHubActionsTestLogger" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Deployify.Core\Deployify.Core.csproj" />
+    <ProjectReference Include="..\..\src\Deployify.Target.Kubernetes\Deployify.Target.Kubernetes.csproj" />
+    <ProjectReference Include="..\..\src\Deployify.Target.GitOps\Deployify.Target.GitOps.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared\FakeProcessRunner.cs" Link="Shared\FakeProcessRunner.cs" />
+  </ItemGroup>
+</Project>

@@ -15,5 +15,7 @@
     <InternalsVisibleTo Include="Deployify.Target.Kubernetes.Tests" />
     <InternalsVisibleTo Include="Deployify.Target.Helm" />
     <InternalsVisibleTo Include="Deployify.Target.Helm.Tests" />
+    <InternalsVisibleTo Include="Deployify.Target.GitOps" />
+    <InternalsVisibleTo Include="Deployify.Target.GitOps.Tests" />
   </ItemGroup>
 </Project>
