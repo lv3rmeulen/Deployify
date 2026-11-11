@@ -20,10 +20,13 @@
     <Project Path="src/Deployify.Target.Kubernetes/Deployify.Target.Kubernetes.csproj" />
     <Project Path="src/Deployify.Target.Nomad/Deployify.Target.Nomad.csproj" />
     <Project Path="src/Deployify.Target.NomadConsul/Deployify.Target.NomadConsul.csproj" />
+    <Project Path="src/Deployify.Targets/Deployify.Targets.csproj" />
+    <Project Path="src/Deployify.Hosting/Deployify.Hosting.csproj" />
     <Project Path="src/Deployify/Deployify.csproj" />
   </Folder>
   <Folder Name="/test/">
     <Project Path="test/Deployify.Core.Tests/Deployify.Core.Tests.csproj" />
+    <Project Path="test/Deployify.Hosting.Tests/Deployify.Hosting.Tests.csproj" />
     <Project Path="test/Deployify.Integration.Tests/Deployify.Integration.Tests.csproj" />
     <Project Path="test/Deployify.Target.AwsEcs.Tests/Deployify.Target.AwsEcs.Tests.csproj" />
     <Project Path="test/Deployify.Target.AzureContainerApps.Tests/Deployify.Target.AzureContainerApps.Tests.csproj" />

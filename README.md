@@ -513,6 +513,28 @@ deployify graph
 
 ---
 
+## Running from `aspire deploy`
+
+`Deployify.Hosting` plugs Deployify into Aspire's deployment pipeline, so `aspire deploy` runs it
+like any other deployment integration. Reference it from the AppHost and add one line:
+
+```csharp
+builder.AddDeployify();
+```
+
+`aspire deploy` then runs a `deployify-deploy` step after Aspire's `publish-manifest` step. It uses
+the manifest Aspire just wrote and does what `deployify apply` does for the active environment:
+plan, ask for approval, publish project images, record state, and apply (health-gated where the
+target supports it). In CI, set `Deployify__AutoApprove=true`; other settings (`Environment`,
+`ImageTag`, `Publish`, …) work the same way. See
+[src/Deployify.Hosting/README.md](src/Deployify.Hosting/README.md).
+
+```
+aspire deploy --list-steps   # publish-manifest → deployify-deploy → deploy
+```
+
+Not yet from `aspire deploy`: `--prune` (use `deployify apply --prune`).
+
 ## Deployment targets
 
 ### `Nomad` — HashiCorp Nomad

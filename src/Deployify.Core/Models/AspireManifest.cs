@@ -435,6 +435,28 @@ public static class AspireManifestExtensions
         new(@"\{(?<res>[A-Za-z0-9_-]+)\.", RegexOptions.Compiled);
 
     /// <summary>
+    /// Makes every resource <c>path</c> (project files) absolute. Aspire writes them relative to
+    /// the manifest file's folder, so a manifest read from anywhere other than one level below
+    /// the AppHost (where the CLI keeps it) needs its paths anchored to that folder.
+    /// </summary>
+    public static AspireManifest WithProjectPathsRelativeTo(this AspireManifest manifest, string manifestDirectory)
+    {
+        foreach (var resource in manifest.Resources.Values)
+        {
+            if (string.IsNullOrEmpty(resource.Path) || System.IO.Path.IsPathRooted(resource.Path))
+            {
+                continue;
+            }
+
+            var normalized = resource.Path.Replace('\\', System.IO.Path.DirectorySeparatorChar)
+                                          .Replace('/', System.IO.Path.DirectorySeparatorChar);
+            resource.Path = System.IO.Path.GetFullPath(System.IO.Path.Combine(manifestDirectory, normalized));
+        }
+
+        return manifest;
+    }
+
+    /// <summary>
     /// Aspire's manifest has no <c>references</c> field: a dependency shows up as a
     /// <c>{other.bindings.http.url}</c> or <c>{db.connectionString}</c> placeholder.
     /// This fills <see cref="AspireResource.References"/> from those placeholders for every
