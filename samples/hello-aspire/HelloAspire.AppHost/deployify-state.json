@@ -1,0 +1,15 @@
+{
+  "ActiveEnvironment": "local",
+  "Environments": {
+    "local": {
+      "Target": "Compose",
+      "ImageTag": "local",
+      "OutputPath": "deployify-output",
+      "TargetConfig": {
+        "compose": {
+          "ProjectName": "hello-aspire"
+        }
+      }
+    }
+  }
+}

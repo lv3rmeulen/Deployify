@@ -1,0 +1,18 @@
+<Project Sdk="Aspire.AppHost.Sdk/13.6.5">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <UserSecretsId>deployify-sample-aspire-deploy</UserSecretsId>
+    <!-- Deployify.Hosting builds on Aspire's experimental pipeline APIs. -->
+    <NoWarn>$(NoWarn);ASPIREPIPELINES001</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AspireDeploy.Api\AspireDeploy.Api.csproj" />
+
+    <!-- Built from this repository so the sample always runs the current code.
+         In your own AppHost: <PackageReference Include="Deployify.Hosting" /> -->
+    <ProjectReference Include="..\..\..\src\Deployify.Hosting\Deployify.Hosting.csproj" IsAspireProjectResource="false" />
+  </ItemGroup>
+
+</Project>

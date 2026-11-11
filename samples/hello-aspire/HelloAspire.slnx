@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="HelloAspire.Api/HelloAspire.Api.csproj" />
+  <Project Path="HelloAspire.AppHost/HelloAspire.AppHost.csproj" />
+</Solution>

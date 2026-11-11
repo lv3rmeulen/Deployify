@@ -1,6 +1,6 @@
 # Deployify.Hosting
 
-Runs [Deployify](https://github.com/lv3rmeulen/Deployify) inside `aspire deploy`.
+Runs [Deployify](https://github.com/lv3rmeulen/Deployify) inside `aspire deploy`. Docs: <https://lv3rmeulen.github.io/Deployify/guides/aspire-deploy/>
 
 ```csharp
 var builder = DistributedApplication.CreateBuilder(args);

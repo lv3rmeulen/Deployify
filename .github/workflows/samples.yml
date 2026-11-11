@@ -1,0 +1,173 @@
+name: Samples
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  #schedule:
+  #  - cron: '17 3 * * *' # nightly end-to-end deploys
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Also deploy the samples (end to end)
+        type: boolean
+        default: false
+
+concurrency:
+  group: samples-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+
+jobs:
+  # Every push and PR: each sample builds, and Deployify can read it and generate artifacts.
+  generate:
+    name: ${{ matrix.sample }} · build + generate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sample: hello-aspire
+            solution: samples/hello-aspire/HelloAspire.slnx
+            apphost: samples/hello-aspire/HelloAspire.AppHost
+          - sample: aspire-deploy
+            solution: samples/aspire-deploy/AspireDeploy.slnx
+            apphost: samples/aspire-deploy/AspireDeploy.AppHost
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build Deployify
+        run: dotnet build src/Deployify/Deployify.csproj -c Release
+
+      - name: Build the sample
+        run: dotnet build ${{ matrix.solution }} -c Release
+
+      - name: deployify generate
+        run: dotnet src/Deployify/bin/Release/net10.0/deployify.dll generate --project-path ${{ matrix.apphost }}
+
+      - name: Upload generated artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: generated-${{ matrix.sample }}
+          path: ${{ matrix.apphost }}/deployify-output/
+          if-no-files-found: error
+
+  # Nightly (or on demand): really deploy to Docker Compose on the runner, call it, tear it down.
+  deploy-compose:
+    name: hello-aspire · deploy to Docker Compose
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.deploy)
+    needs: generate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: samples/hello-aspire/HelloAspire.AppHost
+    env:
+      DEPLOYIFY: dotnet ${{ github.workspace }}/src/Deployify/bin/Release/net10.0/deployify.dll
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build Deployify
+        working-directory: .
+        run: dotnet build src/Deployify/Deployify.csproj -c Release
+
+      - name: Plan
+        run: $DEPLOYIFY plan
+
+      - name: Publish images
+        run: $DEPLOYIFY publish
+
+      - name: Apply
+        run: $DEPLOYIFY apply --auto-approve --health-timeout 180
+
+      - name: Smoke test
+        run: |
+          for i in $(seq 1 30); do
+            if body=$(curl -fsS http://localhost:8080/); then
+              echo "$body"
+              echo "$body" | grep -q '"visits"' && exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::The api did not answer on http://localhost:8080/"
+          docker compose ls
+          docker ps -a
+          exit 1
+
+      - name: Plan shows no drift after the deploy
+        run: $DEPLOYIFY ci --skip-validate --skip-apply --fail-on-changes
+
+      - name: Status
+        if: always()
+        run: $DEPLOYIFY status
+
+      - name: Destroy
+        if: always()
+        run: $DEPLOYIFY destroy --auto-approve --volumes
+
+  deploy-aspire:
+    name: aspire-deploy · aspire deploy to Docker Compose
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.deploy)
+    needs: generate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: samples/aspire-deploy/AspireDeploy.AppHost
+    env:
+      DEPLOYIFY: dotnet ${{ github.workspace }}/src/Deployify/bin/Release/net10.0/deployify.dll
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      # Same version as Aspire.AppHost.Sdk in the sample and Aspire.Hosting in Directory.Packages.props.
+      - name: Install the Aspire CLI
+        run: dotnet tool install --global Aspire.Cli --version 13.6.5
+
+      - name: Build Deployify
+        working-directory: .
+        run: dotnet build src/Deployify/Deployify.csproj -c Release
+
+      - name: aspire deploy
+        run: aspire deploy --non-interactive
+        env:
+          Deployify__AutoApprove: 'true'
+          Deployify__HealthTimeoutSeconds: '180'
+
+      - name: Smoke test
+        run: |
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:8090/ && exit 0
+            sleep 2
+          done
+          echo "::error::The api did not answer on http://localhost:8090/"
+          docker ps -a
+          exit 1
+
+      - name: Destroy
+        if: always()
+        run: $DEPLOYIFY destroy --auto-approve

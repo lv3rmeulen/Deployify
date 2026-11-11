@@ -26,7 +26,7 @@ jobs:
       - name: Build
         run: dotnet build Deployify.slnx --configuration Release --no-restore
 
-      - name: Test & cover
+      - name: Test
         run: >
           dotnet tool run dotnet-coverage collect
           "dotnet test --solution Deployify.slnx --configuration Release --no-build --report-github"

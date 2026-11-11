@@ -138,6 +138,7 @@ public sealed class ConsulJobGenerator(ILogger<ConsulJobGenerator> logger)
                     "An argument of {Service} contains a secret parameter; it is written into the job file. " +
                     "Pass it as an environment variable instead to keep it in Nomad Variables.", name);
             }
+
             unresolved.UnionWith(resolver.Unresolved);
 
             if (resource.HasDaprSidecar)

@@ -1,0 +1,16 @@
+{
+  "ActiveEnvironment": "local",
+  "Environments": {
+    "local": {
+      "Target": "Compose",
+      "ImageTag": "local",
+      "OutputPath": "deployify-output",
+      "TargetConfig": {
+        "compose": {
+          "ProjectName": "aspire-deploy-sample",
+          "BasePort": 8090
+        }
+      }
+    }
+  }
+}

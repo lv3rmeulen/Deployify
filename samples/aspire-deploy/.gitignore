@@ -1,0 +1,8 @@
+# Written by deployify; deployify-parameters.json holds generated parameter values.
+deployify-output/
+deployify-parameters.json
+.deployify/
+
+# The repository ignores these for real apps; the sample's copies hold no secrets.
+!deployify-state.json
+!**/Properties/launchSettings.json

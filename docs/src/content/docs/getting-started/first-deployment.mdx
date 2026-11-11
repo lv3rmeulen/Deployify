@@ -1,0 +1,88 @@
+---
+title: Your first deployment
+description: Deploy the hello-aspire sample to Docker Compose on your own machine.
+---
+
+import { Code, Steps } from '@astrojs/starlight/components';
+import appHost from '../../../../../samples/hello-aspire/HelloAspire.AppHost/AppHost.cs?raw';
+import api from '../../../../../samples/hello-aspire/HelloAspire.Api/Program.cs?raw';
+import state from '../../../../../samples/hello-aspire/HelloAspire.AppHost/deployify-state.json?raw';
+
+This walkthrough deploys [`samples/hello-aspire`](https://github.com/lv3rmeulen/Deployify/tree/main/samples/hello-aspire)
+to Docker Compose. It needs nothing but Docker, so it's the quickest way to see the whole
+plan → publish → apply → destroy loop. The code on this page is read from the sample itself,
+which CI builds and deploys every night.
+
+## The app
+
+An API that counts visits in Redis. The AppHost declares both and the reference between them:
+
+<Code code={appHost} lang="csharp" title="HelloAspire.AppHost/AppHost.cs" />
+
+<Code code={api} lang="csharp" title="HelloAspire.Api/Program.cs" />
+
+## The environment
+
+`deployify init` writes `deployify-state.json`. The sample commits a minimal one: a single
+`local` environment that deploys to Docker Compose with image tag `local`.
+
+<Code code={state} lang="json" title="HelloAspire.AppHost/deployify-state.json" />
+
+## Deploy it
+
+You need the .NET 10 SDK, Docker (or Podman) and [the `deployify` tool](/Deployify/getting-started/installation/).
+
+<Steps>
+
+1. Clone the repository and go to the AppHost:
+
+   ```bash
+   git clone https://github.com/lv3rmeulen/Deployify.git
+   cd Deployify/samples/hello-aspire/HelloAspire.AppHost
+   ```
+
+2. Preview the deployment. Deployify runs the AppHost to get Aspire's manifest, writes the
+   Compose files to `deployify-output/` and compares them with what's running:
+
+   ```bash
+   deployify plan
+   ```
+
+   Expect `2 to create`: `cache` and `api`. The Redis password Aspire asks for is generated once
+   and saved in `deployify-parameters.json`, so every later deploy reuses it.
+
+3. Build the API image into your local Docker:
+
+   ```bash
+   deployify publish
+   ```
+
+4. Deploy. `cache` goes first because `api` depends on it, and each wave has to be healthy
+   before the next one starts:
+
+   ```bash
+   deployify apply --auto-approve
+   ```
+
+5. Call the API:
+
+   ```bash
+   curl http://localhost:8080/
+   # {"message":"Hello from Aspire, deployed by Deployify","visits":1}
+   ```
+
+6. Look around, then clean up:
+
+   ```bash
+   deployify status                         # the rollout you just ran
+   deployify destroy --auto-approve --volumes
+   ```
+
+</Steps>
+
+## Next steps
+
+- Point the same AppHost at a cluster: add an environment with `deployify env add` and pick a
+  [target](/Deployify/targets/kubernetes/).
+- Run the same thing from a pipeline: [CI/CD](/Deployify/guides/ci-cd/).
+- Prefer `aspire deploy`? See [Running from aspire deploy](/Deployify/guides/aspire-deploy/).

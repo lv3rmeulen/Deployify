@@ -1,0 +1,8 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <!-- Outside this repository, add here:
+         <PackageVersion Include="Deployify.Hosting" Version="..." />
+       with the version that pins the same Aspire version as Aspire.AppHost.Sdk in the AppHost. -->
+</Project>

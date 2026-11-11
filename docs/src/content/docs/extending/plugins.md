@@ -1,4 +1,7 @@
-# Target plugins
+---
+title: Writing target plugins
+description: Add any platform as an out-of-process plugin, written with the .NET SDK or in any language.
+---
 
 Deployify ships nine deployment targets. Any other platform can be added as a **plugin**: a
 separate executable that Deployify starts and talks to over stdin/stdout. Plugins don't run
@@ -6,11 +9,6 @@ inside Deployify's process, so they can't conflict with its dependencies (or wit
 `Aspire.Hosting` when Deployify runs inside `aspire deploy`). They can also be written in any
 language.
 
-- [Using a plugin](#using-a-plugin)
-- [Writing a plugin in .NET](#writing-a-plugin-in-net)
-- [Testing a plugin](#testing-a-plugin)
-- [The protocol](#the-protocol) (for plugins in other languages)
-- [Security](#security)
 
 ## Using a plugin
 
@@ -109,7 +107,7 @@ The SDK:
 - reads `TargetConfig` and the Aspire manifest into the same `EnvironmentConfig` and
   `AspireManifest` types the built-in targets use.
 
-[`samples/Deployify.Plugin.Sample.Compose`](../samples/Deployify.Plugin.Sample.Compose/Program.cs)
+[`samples/Deployify.Plugin.Sample.Compose`](https://github.com/lv3rmeulen/Deployify/blob/main/samples/Deployify.Plugin.Sample.Compose/Program.cs)
 is a complete plugin: it serves Deployify's own Compose target as `compose-plugin`.
 
 ### Parameters and secrets
@@ -166,7 +164,7 @@ The protocol is JSON-RPC 2.0 over the plugin's stdin and stdout. Each message is
 LSP-style headers (`Content-Length: <bytes>\r\n\r\n<json>`). Every request takes a single
 object parameter, and names are camelCase. stdout is for protocol messages only; stderr goes to
 Deployify's debug log, and its last lines are shown if the plugin dies. The message shapes are
-in [`Deployify.Plugin.Contracts`](../src/Deployify.Plugin.Contracts/Messages.cs).
+in [`Deployify.Plugin.Contracts`](https://github.com/lv3rmeulen/Deployify/blob/main/src/Deployify.Plugin.Contracts/Messages.cs).
 
 A session:
 

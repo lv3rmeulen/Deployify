@@ -1,0 +1,47 @@
+---
+title: Deployify
+description: Deploy .NET Aspire apps to Nomad, Kubernetes, Docker Compose, AWS ECS, Azure Container Apps and more.
+template: splash
+hero:
+  tagline: Take the Aspire AppHost you already have and deploy it to the platform you already run — with a plan before every change and a rollback when it goes wrong.
+  image:
+    file: ../../assets/deployify-icon.png
+  actions:
+    - text: Get started
+      link: /Deployify/getting-started/installation/
+      icon: right-arrow
+    - text: Try the sample
+      link: /Deployify/getting-started/first-deployment/
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+<CardGrid stagger>
+	<Card title="One AppHost, many targets" icon="rocket">
+		Docker Compose, Kubernetes (kubectl, Helm, Argo CD, Flux), Nomad, Nomad + Consul,
+		AWS ECS and Azure Container Apps — or your own platform as a plugin.
+	</Card>
+	<Card title="Plan, then apply" icon="list-format">
+		`deployify plan` shows what will change on the target before anything does.
+	</Card>
+	<Card title="Health-gated rollouts" icon="approve-check">
+		Services deploy in dependency order and roll back automatically when they don't come up healthy.
+	</Card>
+	<Card title="Inside aspire deploy" icon="puzzle">
+		Add `builder.AddDeployify()` and Deployify runs as a step of Aspire's own deployment pipeline.
+	</Card>
+</CardGrid>
+
+## Pick your target
+
+<CardGrid>
+	<LinkCard title="Docker Compose" href="/Deployify/targets/compose/" />
+	<LinkCard title="Kubernetes" href="/Deployify/targets/kubernetes/" />
+	<LinkCard title="Helm" href="/Deployify/targets/helm/" />
+	<LinkCard title="Argo CD and Flux" href="/Deployify/targets/gitops/" />
+	<LinkCard title="Nomad" href="/Deployify/targets/nomad/" />
+	<LinkCard title="Nomad + Consul Connect" href="/Deployify/targets/nomad-consul/" />
+	<LinkCard title="AWS ECS (Fargate)" href="/Deployify/targets/aws-ecs/" />
+	<LinkCard title="Azure Container Apps" href="/Deployify/targets/azure-container-apps/" />
+</CardGrid>

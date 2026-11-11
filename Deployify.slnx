@@ -31,6 +31,9 @@
     <Project Path="src/Deployify.Hosting/Deployify.Hosting.csproj" />
     <Project Path="src/Deployify/Deployify.csproj" />
   </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/Deployify.DocGen/Deployify.DocGen.csproj" />
+  </Folder>
   <Folder Name="/test/">
     <Project Path="test/Deployify.Core.Tests/Deployify.Core.Tests.csproj" />
     <Project Path="test/Deployify.Hosting.Tests/Deployify.Hosting.Tests.csproj" />
