@@ -78,6 +78,12 @@ public sealed class KubernetesDeploymentTarget(
     internal async Task<bool> SyncSecretsAsync(
         KubernetesServiceManifest svc, EnvironmentConfig config, IKubernetesSecretClient cluster, CancellationToken ct)
     {
+        // A new pull secret needs no restart: the kubelet reads it when it next pulls an image.
+        if (svc.RegistrySecret is { } registry)
+        {
+            await SyncRegistrySecretAsync(svc, registry, cluster, ct);
+        }
+
         if (!svc.HasSecret || svc.SecretBackend == SecretBackendType.Inline)
         {
             return false;
@@ -165,6 +171,36 @@ public sealed class KubernetesDeploymentTarget(
         }
 
         return changed;
+    }
+
+    /// <summary>
+    /// Puts the registry login in the service's namespace as a docker-registry Secret, creating
+    /// the namespace first if this is the service's first deploy.
+    /// </summary>
+    internal static async Task SyncRegistrySecretAsync(
+        KubernetesServiceManifest svc, RegistryPullSecret registry, IKubernetesSecretClient cluster, CancellationToken ct)
+    {
+        var username = Secrets.Resolve(registry.Username)
+                       ?? throw new InvalidOperationException(
+                           "kubernetes.registryCredentials.username is not set" + EnvHint(registry.Username) + ".");
+        var password = Secrets.Resolve(registry.Password)
+                       ?? throw new InvalidOperationException(
+                           "kubernetes.registryCredentials.password is not set" + EnvHint(registry.Password) +
+                           ". Use an \"env:NAME\" reference.");
+
+        await cluster.ServerSideApplyAsync(KubernetesSecretManifest.Namespace(svc.Namespace, new Dictionary<string, string>
+        {
+            ["app.kubernetes.io/managed-by"] = "deployify",
+            ["deployify/service"] = svc.ServiceName
+        }), ct);
+        await cluster.ServerSideApplyAsync(KubernetesSecretManifest.DockerRegistry(
+            svc.Namespace, registry.Name, registry.Server, username, new SensitiveValue(password),
+            new Dictionary<string, string> { ["deployify/role"] = "registry" }), ct);
+
+        static string EnvHint(string? configured)
+            => configured is not null && configured.StartsWith(Secrets.EnvPrefix, StringComparison.Ordinal)
+                ? $" (environment variable {configured[Secrets.EnvPrefix.Length..]} is empty)"
+                : string.Empty;
     }
 
     public DeploymentTargetType TargetType => DeploymentTargetType.Kubernetes;

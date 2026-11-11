@@ -110,6 +110,15 @@ public sealed class KubernetesServiceManifest
     public bool HasPvc { get; set; }
     public string? PvcStorageSize { get; set; }
 
+    /// <summary>Secrets the pod lists in <c>imagePullSecrets</c>.</summary>
+    public List<string> ImagePullSecrets { get; set; } = [];
+
+    /// <summary>
+    /// Registry login Deployify keeps as a Secret in this service's namespace, or null. The values
+    /// may still be <c>env:</c> references; they are resolved when the Secret is applied.
+    /// </summary>
+    public RegistryPullSecret? RegistrySecret { get; set; }
+
     /// <summary>Paths of all generated YAML files for this service.</summary>
     public List<string> GeneratedFiles { get; set; } = [];
 
@@ -126,6 +135,9 @@ public sealed class KubernetesServiceManifest
 
     public string HealthCheckPath { get; set; } = "/health";
 }
+
+/// <summary>A docker-registry Secret Deployify maintains: its name, the registry, and the configured login.</summary>
+public sealed record RegistryPullSecret(string Name, string Server, string? Username, string? Password);
 
 public sealed class KubernetesPort
 {

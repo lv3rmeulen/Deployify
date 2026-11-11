@@ -133,6 +133,19 @@ public sealed class EnvironmentConfig
     public Dictionary<string, object?> TargetConfig { get; set; } = [];
 
     /// <summary>
+    /// A copy of this environment with one target-config entry replaced, for a target that hands
+    /// an adjusted config to another target (OVHcloud passes the Kubernetes target the kubeconfig
+    /// it fetched). Everything else, <see cref="Secrets"/> included, is shared with this instance,
+    /// so what the other target records there (secret references) is not lost.
+    /// </summary>
+    public EnvironmentConfig WithTargetConfig(string key, object? value)
+    {
+        var copy = (EnvironmentConfig)MemberwiseClone();
+        copy.TargetConfig = new Dictionary<string, object?>(TargetConfig) { [key] = value };
+        return copy;
+    }
+
+    /// <summary>
     /// Where deployment state (inventory, generated parameters, rollout journals and the lock)
     /// is kept. Null keeps it in local files next to this one; set a remote backend so CI runners
     /// and colleagues share it.

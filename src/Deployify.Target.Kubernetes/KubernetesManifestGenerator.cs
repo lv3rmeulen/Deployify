@@ -67,6 +67,8 @@ public sealed class KubernetesManifestGenerator
                     : resource.Image
             };
 
+            ApplyImagePullSecrets(svc, config, kubernetesConfig);
+
             // Values that contain a secret parameter are kept apart and stored the target's own way.
             var env = await resolver.ResolveEnvironmentAsync(resource.Env, overrides?.Env, ct);
             svc.Env = env.Plain;
@@ -118,6 +120,60 @@ public sealed class KubernetesManifestGenerator
 
         Unresolved = [.. resolver.Unresolved];
         return results;
+    }
+
+    /// <summary>
+    /// The pod's <c>imagePullSecrets</c>: the configured ones, plus the registry Secret Deployify
+    /// maintains when registryCredentials is set.
+    /// </summary>
+    private static void ApplyImagePullSecrets(KubernetesServiceManifest svc, EnvironmentConfig config, KubernetesTargetConfig kubernetesConfig)
+    {
+        var names = new List<string>();
+        foreach (var name in kubernetesConfig.ImagePullSecrets)
+        {
+            if (!string.IsNullOrWhiteSpace(name) && !names.Contains(name.Trim(), StringComparer.Ordinal))
+            {
+                names.Add(name.Trim());
+            }
+        }
+
+        if (kubernetesConfig.RegistryCredentials is { } registry)
+        {
+            var server = string.IsNullOrWhiteSpace(registry.Server) ? RegistryHost(config.ContainerRegistry) : registry.Server.Trim();
+            if (server is null)
+            {
+                throw new InvalidOperationException(
+                    "kubernetes.registryCredentials needs a server: set registryCredentials.server, or containerRegistry.");
+            }
+
+            var secretName = string.IsNullOrWhiteSpace(registry.SecretName) ? "deployify-registry" : registry.SecretName.Trim();
+            svc.RegistrySecret = new RegistryPullSecret(secretName, server, registry.Username, registry.Password);
+            if (!names.Contains(secretName, StringComparer.Ordinal))
+            {
+                names.Add(secretName);
+            }
+        }
+
+        svc.ImagePullSecrets = names;
+    }
+
+    /// <summary>The host part of a registry reference such as <c>registry.example.com:5000/team/app</c>.</summary>
+    internal static string? RegistryHost(string? containerRegistry)
+    {
+        if (string.IsNullOrWhiteSpace(containerRegistry))
+        {
+            return null;
+        }
+
+        var value = containerRegistry.Trim();
+        var scheme = value.IndexOf("://", StringComparison.Ordinal);
+        if (scheme >= 0)
+        {
+            value = value[(scheme + 3)..];
+        }
+
+        var slash = value.IndexOf('/');
+        return slash >= 0 ? value[..slash] : value;
     }
 
     private static void ApplySecretSettings(
@@ -575,6 +631,15 @@ spec:
         if (svc.NeedsServiceAccount)
         {
             sb.AppendLine($"      serviceAccountName: {svc.ServiceName}");
+        }
+
+        if (svc.ImagePullSecrets.Count > 0)
+        {
+            sb.AppendLine("      imagePullSecrets:");
+            foreach (var name in svc.ImagePullSecrets)
+            {
+                sb.AppendLine($"        - name: {QuoteYaml(name)}");
+            }
         }
 
         sb.AppendLine($"""

@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace Deployify.Target.Kubernetes;
 
 /// <summary>
@@ -55,4 +57,34 @@ public sealed class KubernetesTargetConfig
 
     /// <summary>Base port for services whose Aspire bindings carry no port.</summary>
     public int BasePort { get; set; } = 8080;
+
+    /// <summary>
+    /// Existing image pull Secrets (type <c>kubernetes.io/dockerconfigjson</c>) that every pod lists
+    /// in <c>imagePullSecrets</c>. Each one must exist in every service namespace; to have
+    /// Deployify create it there, use <see cref="RegistryCredentials"/> instead.
+    /// </summary>
+    public List<string> ImagePullSecrets { get; set; } = [];
+
+    /// <summary>
+    /// Credentials for a private registry. Deployify keeps them as a docker-registry Secret in every
+    /// service namespace (applied from memory, never written to the output folder) and adds it to
+    /// the pods' <c>imagePullSecrets</c>.
+    /// </summary>
+    public RegistryCredentialsConfig? RegistryCredentials { get; set; }
+}
+
+/// <summary>A private registry's login, stored under targetConfig["kubernetes"].registryCredentials.</summary>
+public sealed class RegistryCredentialsConfig
+{
+    /// <summary>Registry host, e.g. <c>abc123.gra7.container-registry.ovh.net</c>. Default: the host of containerRegistry.</summary>
+    public string? Server { get; set; }
+
+    /// <summary>User name. May be an <c>"env:NAME"</c> reference.</summary>
+    public string? Username { get; set; }
+
+    /// <summary>Password or access token. Prefer <c>"env:NAME"</c> so it stays out of the state file.</summary>
+    public string? Password { get; set; }
+
+    /// <summary>Name of the Secret created in each service namespace.</summary>
+    public string SecretName { get; set; } = "deployify-registry";
 }

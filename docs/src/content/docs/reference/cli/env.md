@@ -70,7 +70,7 @@ deployify env add <name> [options]
 |---|---|---|
 | `--project-path`, `-p` | Path to the Aspire AppHost .csproj or its directory. | current directory |
 | `--non-interactive` | Disable interactive prompts; fail on missing required values. | `false` |
-| `--target` | **Required.** Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| compose \| awsecs \| azurecontainerapps \| nomadconsul, or the ID of a plugin target. |  |
+| `--target` | **Required.** Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| ovhcloud \| compose \| awsecs \| azurecontainerapps \| nomadconsul, or the ID of a plugin target. |  |
 | `--activate` | Set as active after adding. | `false` |
 | `--container-registry` | Container registry. |  |
 | `--image-tag` | Default image tag. |  |

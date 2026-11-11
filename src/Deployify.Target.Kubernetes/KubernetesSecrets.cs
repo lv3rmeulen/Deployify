@@ -30,7 +30,7 @@ public static class KubernetesSecretManifest
 {
     public static string Build(
         string namespaceName, string name, IReadOnlyDictionary<string, SensitiveValue> data,
-        IReadOnlyDictionary<string, string>? labels = null)
+        IReadOnlyDictionary<string, string>? labels = null, string type = "Opaque")
     {
         var labelNode = new JsonObject { ["app.kubernetes.io/managed-by"] = "deployify" };
         foreach (var (k, v) in labels ?? new Dictionary<string, string>())
@@ -49,9 +49,29 @@ public static class KubernetesSecretManifest
             ["apiVersion"] = "v1",
             ["kind"] = "Secret",
             ["metadata"] = new JsonObject { ["name"] = name, ["namespace"] = namespaceName, ["labels"] = labelNode },
-            ["type"] = "Opaque",
+            ["type"] = type,
             ["data"] = dataNode
         }.ToJsonString();
+    }
+
+    /// <summary>
+    /// A <c>kubernetes.io/dockerconfigjson</c> Secret holding one registry login, as
+    /// <c>kubectl create secret docker-registry</c> makes it.
+    /// </summary>
+    public static string DockerRegistry(
+        string namespaceName, string name, string server, string username, SensitiveValue password,
+        IReadOnlyDictionary<string, string>? labels = null)
+    {
+        var auth = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{username}:{password.Reveal()}"));
+        var config = new JsonObject
+        {
+            ["auths"] = new JsonObject
+            {
+                [server] = new JsonObject { ["username"] = username, ["password"] = password.Reveal(), ["auth"] = auth }
+            }
+        }.ToJsonString();
+        return Build(namespaceName, name, new Dictionary<string, SensitiveValue> { [".dockerconfigjson"] = new(config) },
+            labels, "kubernetes.io/dockerconfigjson");
     }
 
     /// <summary>

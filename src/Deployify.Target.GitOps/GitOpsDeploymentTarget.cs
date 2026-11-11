@@ -183,7 +183,7 @@ public abstract class GitOpsDeploymentTarget : IDeploymentTarget, ISecretStorePr
 
     private static bool NeedsKubectl(EnvironmentConfig config, IReadOnlyList<KubernetesServiceManifest> services)
         => GetGitOpsConfig(config).Register || GetGitOpsConfig(config).Wait ||
-           services.Any(s => s.UsesSecretRefs && !s.UsesKeyVaultCsi);
+           services.Any(s => (s.UsesSecretRefs && !s.UsesKeyVaultCsi) || s.RegistrySecret is not null);
 
     private Task<IReadOnlyList<KubernetesServiceManifest>> GenerateServicesAsync(
         AspireManifest manifest, EnvironmentConfig config, CancellationToken ct)

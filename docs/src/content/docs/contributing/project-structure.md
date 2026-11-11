@@ -49,6 +49,7 @@ src/
   Deployify.Target.Nomad/
   Deployify.Target.Kubernetes/            also writes Helm charts (HelmChartWriter)
   Deployify.Target.Helm/                  Kubernetes via helm upgrade --install
+  Deployify.Target.OvhCloud/              Kubernetes on OVHcloud, cluster reached via the OVHcloud API
   Deployify.Target.Compose/
   Deployify.Target.AwsEcs/
   Deployify.Target.AzureContainerApps/
@@ -58,6 +59,7 @@ test/
   Deployify.Target.Nomad.Tests/
   Deployify.Target.Kubernetes.Tests/
   Deployify.Target.Helm.Tests/
+  Deployify.Target.OvhCloud.Tests/
   Deployify.Target.Compose.Tests/
   Deployify.Target.AwsEcs.Tests/
   Deployify.Target.AzureContainerApps.Tests/

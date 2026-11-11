@@ -123,6 +123,7 @@ public sealed record DeploymentSession(
                 DeploymentTargetType.Names.AzureContainerApps => "aca",
                 DeploymentTargetType.Names.NomadConsul => "nomadconsul",
                 DeploymentTargetType.Names.ArgoCd or DeploymentTargetType.Names.Flux => "gitops",
+                DeploymentTargetType.Names.OvhCloud => "ovhcloud",
                 _ => Config.Target.ToString().ToLower()
             };
             if (!Config.TargetConfig.TryGetValue(key, out var raw) ||
@@ -147,6 +148,8 @@ public sealed record DeploymentSession(
                     el.TryGetProperty("nomadAddress", out var na) ? na.GetString() ?? "-" : "-",
                 DeploymentTargetType.Names.ArgoCd or DeploymentTargetType.Names.Flux =>
                     el.TryGetProperty("repoUrl", out var g) ? g.GetString() ?? "-" : "-",
+                DeploymentTargetType.Names.OvhCloud =>
+                    el.TryGetProperty("clusterId", out var k) || el.TryGetProperty("ClusterId", out k) ? k.GetString() ?? "-" : "-",
                 _ => "-"
             };
         }

@@ -13,6 +13,7 @@ using Deployify.Target.Compose;
 using Deployify.Target.GitOps;
 using Deployify.Target.Helm;
 using Deployify.Target.Kubernetes;
+using Deployify.Target.OvhCloud;
 using Deployify.Target.Nomad;
 using Deployify.Target.NomadConsul;
 using Microsoft.Extensions.DependencyInjection;
@@ -657,6 +658,17 @@ public static class EnvCommand
                     ? JsonSerializer.SerializeToElement(new ArgoCdTargetConfig(), TargetConfigJsonOptions.Default)
                     : JsonSerializer.SerializeToElement(new FluxTargetConfig(), TargetConfigJsonOptions.Default)
             },
+            // OVHcloud deploys the Kubernetes target's manifests; set ovhcloud.projectId and clusterId.
+            DeploymentTargetType.Names.OvhCloud => new Dictionary<string, object?>
+            {
+                ["kubernetes"] = JsonSerializer.SerializeToElement(new KubernetesTargetConfig
+                {
+                    NamespacePrefix = kubernetesPrefix ?? "deployify",
+                    IngressBaseDomain = string.IsNullOrWhiteSpace(kubernetesDomain) ? null : kubernetesDomain,
+                    GenerateIngress = !string.IsNullOrWhiteSpace(kubernetesDomain)
+                }, TargetConfigJsonOptions.Default),
+                ["ovhcloud"] = JsonSerializer.SerializeToElement(new OvhCloudTargetConfig { Endpoint = "ovh-eu" }, TargetConfigJsonOptions.Default)
+            },
             _ => []
         };
     }
@@ -675,6 +687,7 @@ public static class EnvCommand
             DeploymentTargetType.Names.AzureContainerApps => "aca",
             DeploymentTargetType.Names.NomadConsul => "nomadconsul",
             DeploymentTargetType.Names.ArgoCd or DeploymentTargetType.Names.Flux => "gitops",
+            DeploymentTargetType.Names.OvhCloud => "ovhcloud",
             _ => cfg.Target.ToString().ToLower()
         };
         if (!cfg.TargetConfig.TryGetValue(key, out var raw) || raw is not JsonElement el)
@@ -691,6 +704,7 @@ public static class EnvCommand
             DeploymentTargetType.Names.AzureContainerApps => el.TryGetProperty("location", out var l) ? l.GetString() ?? "-" : "-",
             DeploymentTargetType.Names.NomadConsul => el.TryGetProperty("nomadAddress", out var na) ? na.GetString() ?? "-" : "-",
             DeploymentTargetType.Names.ArgoCd or DeploymentTargetType.Names.Flux => el.TryGetProperty("repoUrl", out var g) ? g.GetString() ?? "-" : "-",
+            DeploymentTargetType.Names.OvhCloud => el.TryGetProperty("clusterId", out var k) || el.TryGetProperty("ClusterId", out k) ? k.GetString() ?? "-" : "-",
             _ => "-"
         };
     }

@@ -16,6 +16,7 @@ using Deployify.Target.Helm;
 using Deployify.Target.Kubernetes;
 using Deployify.Target.Nomad;
 using Deployify.Target.NomadConsul;
+using Deployify.Target.OvhCloud;
 using Microsoft.Extensions.DependencyInjection;
 using Spectre.Console;
 
@@ -210,6 +211,21 @@ public static class InitCommand
             Description = "Folder in the repository for this environment. Default: deployify/{env}."
         };
 
+        // OVHcloud-specific (Managed Kubernetes)
+        var ovhEndpointOpt = new Option<string>("--ovh-endpoint")
+        {
+            Description = "OVHcloud API endpoint: ovh-eu | ovh-ca | ovh-us.",
+            DefaultValueFactory = _ => "ovh-eu"
+        };
+        var ovhProjectOpt = new Option<string?>("--ovh-project")
+        {
+            Description = "OVHcloud Public Cloud project ID. Default: OVH_CLOUD_PROJECT_SERVICE at run time."
+        };
+        var ovhClusterOpt = new Option<string?>("--ovh-cluster")
+        {
+            Description = "OVHcloud Managed Kubernetes cluster ID."
+        };
+
         // Compose-specific
         var composeProjectOpt = new Option<string>("--compose-project")
         {
@@ -346,6 +362,9 @@ public static class InitCommand
         cmd.Options.Add(gitopsRepoOpt);
         cmd.Options.Add(gitopsBranchOpt);
         cmd.Options.Add(gitopsPathOpt);
+        cmd.Options.Add(ovhEndpointOpt);
+        cmd.Options.Add(ovhProjectOpt);
+        cmd.Options.Add(ovhClusterOpt);
         cmd.Options.Add(composeProjectOpt);
         cmd.Options.Add(composeRestartOpt);
         cmd.Options.Add(ecsRegionOpt);
@@ -449,7 +468,10 @@ public static class InitCommand
                         pr.GetValue(ncIngressOpt),
                         pr.GetValue(gitopsRepoOpt),
                         pr.GetValue(gitopsBranchOpt)!,
-                        pr.GetValue(gitopsPathOpt))
+                        pr.GetValue(gitopsPathOpt),
+                        pr.GetValue(ovhEndpointOpt)!,
+                        pr.GetValue(ovhProjectOpt),
+                        pr.GetValue(ovhClusterOpt))
                 };
                 // Add to (or replace) this one environment; keep any others already defined.
                 stateFile = stateManager.Exists(directory)
@@ -477,8 +499,8 @@ public static class InitCommand
                 $"  Environments: {string.Join(", ", stateFile.Environments.Keys.Select(k => $"[cyan]{Markup.Escape(k)}[/]"))}");
             AnsiConsole.WriteLine();
             AnsiConsole.MarkupLine("Next steps:");
-            AnsiConsole.MarkupLine("  [cyan]deployify plan --target <nomad|kubernetes|compose|awsecs|azurecontainerapps>[/]");
-            AnsiConsole.MarkupLine("  [cyan]deployify apply --target <nomad|kubernetes|compose|awsecs|azurecontainerapps>[/]");
+            AnsiConsole.MarkupLine("  [cyan]deployify plan --target <nomad|kubernetes|compose|awsecs|azurecontainerapps|ovhcloud>[/]");
+            AnsiConsole.MarkupLine("  [cyan]deployify apply --target <nomad|kubernetes|compose|awsecs|azurecontainerapps|ovhcloud>[/]");
         });
 
         return cmd;
@@ -543,7 +565,8 @@ public static class InitCommand
                     DeploymentTargetType.NomadConsul,
                     DeploymentTargetType.Helm,
                     DeploymentTargetType.ArgoCd,
-                    DeploymentTargetType.Flux)
+                    DeploymentTargetType.Flux,
+                    DeploymentTargetType.OvhCloud)
                 .HighlightStyle(new Style(foreground: Color.Cyan1)), ct);
 
         var registry = await ConsolePrompts.AskAsync("Container registry [dim](blank to skip)[/]:", string.Empty, ct);
@@ -604,6 +627,8 @@ public static class InitCommand
         bool ncIngress = false;
         string? gitopsRepo = null, gitopsPath = null;
         var gitopsBranch = "main";
+        var ovhEndpoint = "ovh-eu";
+        string? ovhProject = null, ovhCluster = null;
 
         switch (target.Value)
         {
@@ -651,6 +676,21 @@ public static class InitCommand
                     gitopsPath = await ConsolePrompts.AskAsync("Folder in the repository:", $"deployify/{envName}", ct);
                 }
 
+                break;
+
+            case DeploymentTargetType.Names.OvhCloud:
+                AnsiConsole.MarkupLine("[dim]OVHcloud Managed Kubernetes settings:[/]");
+                ovhEndpoint = await ConsolePrompts.PromptAsync(
+                    new SelectionPrompt<string>()
+                        .Title("API endpoint:")
+                        .AddChoices("ovh-eu", "ovh-ca", "ovh-us"), ct);
+                ovhProject = await ConsolePrompts.AskAsync(
+                    "Public Cloud project ID [dim](blank = OVH_CLOUD_PROJECT_SERVICE)[/]:", string.Empty, ct);
+                ovhCluster = await ConsolePrompts.AskAsync<string>("Managed Kubernetes cluster ID:", ct);
+                kubernetesPrefix = await ConsolePrompts.AskAsync("Namespace prefix:", envName, ct);
+                kubernetesDomain = await ConsolePrompts.AskAsync("Ingress base domain [dim](blank to skip)[/]:", string.Empty, ct);
+                AnsiConsole.MarkupLine("[dim]API credentials are read from OVH_APPLICATION_KEY, OVH_APPLICATION_SECRET and " +
+                                       "OVH_CONSUMER_KEY, or OVH_CLIENT_ID and OVH_CLIENT_SECRET.[/]");
                 break;
 
             case DeploymentTargetType.Names.Compose:
@@ -712,7 +752,8 @@ public static class InitCommand
                 acaSub, acaRg, acaLocation, acaEnv, acaAcr,
                 ncNomadAddr, ncNomadToken, ncNomadNs, ncNomadDc,
                 ncConsulAddr, ncConsulToken, ncIngress,
-                gitopsRepo, gitopsBranch, gitopsPath)
+                gitopsRepo, gitopsBranch, gitopsPath,
+                ovhEndpoint, ovhProject, ovhCluster)
         };
     }
 
@@ -731,7 +772,8 @@ public static class InitCommand
         string? acaSub, string acaRg, string acaLocation, string acaEnv, string? acaAcr,
         string ncNomadAddr, string? ncNomadToken, string ncNomadNs, string ncNomadDc,
         string ncConsulAddr, string? ncConsulToken, bool ncIngress,
-        string? gitopsRepo, string gitopsBranch, string? gitopsPath)
+        string? gitopsRepo, string gitopsBranch, string? gitopsPath,
+        string ovhEndpoint, string? ovhProject, string? ovhCluster)
         => target.Value switch
         {
             DeploymentTargetType.Names.Nomad => new Dictionary<string, object?>
@@ -842,6 +884,22 @@ public static class InitCommand
                 [target == DeploymentTargetType.ArgoCd ? "argocd" : "flux"] = target == DeploymentTargetType.ArgoCd
                     ? new ArgoCdTargetConfig()
                     : new FluxTargetConfig()
+            },
+            // OVHcloud deploys the Kubernetes target's manifests; the kubeconfig comes from the API.
+            DeploymentTargetType.Names.OvhCloud => new Dictionary<string, object?>
+            {
+                ["kubernetes"] = new KubernetesTargetConfig
+                {
+                    NamespacePrefix = kubernetesPrefix,
+                    IngressBaseDomain = string.IsNullOrWhiteSpace(kubernetesDomain) ? null : kubernetesDomain,
+                    GenerateIngress = !string.IsNullOrWhiteSpace(kubernetesDomain)
+                },
+                ["ovhcloud"] = new OvhCloudTargetConfig
+                {
+                    Endpoint = string.IsNullOrWhiteSpace(ovhEndpoint) ? "ovh-eu" : ovhEndpoint,
+                    ProjectId = string.IsNullOrWhiteSpace(ovhProject) ? null : ovhProject,
+                    ClusterId = string.IsNullOrWhiteSpace(ovhCluster) ? null : ovhCluster
+                }
             },
             _ => []
         };

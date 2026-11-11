@@ -31,9 +31,12 @@ public readonly partial struct DeploymentTargetType : IEquatable<DeploymentTarge
     /// <summary>Kubernetes through GitOps: manifests committed to a repository, applied by Flux.</summary>
     public static readonly DeploymentTargetType Flux = new(Names.Flux);
 
+    /// <summary>OVHcloud Managed Kubernetes: the Kubernetes target, with the cluster reached through the OVHcloud API.</summary>
+    public static readonly DeploymentTargetType OvhCloud = new(Names.OvhCloud);
+
     /// <summary>The targets that ship with Deployify, in the order they are offered.</summary>
     public static IReadOnlyList<DeploymentTargetType> BuiltIn { get; } =
-        [Nomad, Kubernetes, Compose, AwsEcs, AzureContainerApps, NomadConsul, Helm, ArgoCd, Flux];
+        [Nomad, Kubernetes, Compose, AwsEcs, AzureContainerApps, NomadConsul, Helm, ArgoCd, Flux, OvhCloud];
 
     /// <summary>
     /// The built-in IDs as constants, for <c>switch</c> over <see cref="Value"/> and for attributes.
@@ -49,6 +52,7 @@ public readonly partial struct DeploymentTargetType : IEquatable<DeploymentTarge
         public const string Helm = "Helm";
         public const string ArgoCd = "ArgoCd";
         public const string Flux = "Flux";
+        public const string OvhCloud = "OvhCloud";
     }
 
     private readonly string? _value;

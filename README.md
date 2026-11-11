@@ -1,6 +1,6 @@
 # Deployify
 
-Deploy .NET Aspire AppHost projects to any platform — Nomad, Kubernetes (with `kubectl`, Helm, or GitOps through Argo CD or Flux), Docker Compose, AWS ECS, Azure Container Apps, and Nomad + Consul Connect.
+Deploy .NET Aspire AppHost projects to any platform — Nomad, Kubernetes (with `kubectl`, Helm, or GitOps through Argo CD or Flux), OVHcloud Managed Kubernetes, Docker Compose, AWS ECS, Azure Container Apps, and Nomad + Consul Connect.
 
 ---
 
@@ -10,6 +10,7 @@ Deploy .NET Aspire AppHost projects to any platform — Nomad, Kubernetes (with 
 - A running deployment target (Nomad agent, Kubernetes cluster, Docker daemon, AWS CLI, etc.)
 - For the Helm target: `helm` 3 and `kubectl`; the helm-diff plugin for `plan` and `diff`
 - For the Argo CD and Flux targets: `git` with access to the config repository, `kubectl`, and the controller installed in the cluster
+- For the OVHcloud target: `kubectl`, and OVHcloud API credentials (an API application or a service account)
 
 ---
 
@@ -53,7 +54,7 @@ deployify ci --skip-validate
 | | |
 |---|---|
 | [Your first deployment](https://lv3rmeulen.github.io/Deployify/getting-started/first-deployment/) | Deploy the `hello-aspire` sample to Docker Compose in five minutes |
-| [Deployment targets](https://lv3rmeulen.github.io/Deployify/targets/compose/) | Compose, Kubernetes, Helm, Argo CD / Flux, Nomad, Nomad + Consul, AWS ECS, Azure Container Apps |
+| [Deployment targets](https://lv3rmeulen.github.io/Deployify/targets/compose/) | Compose, Kubernetes, Helm, Argo CD / Flux, OVHcloud, Nomad, Nomad + Consul, AWS ECS, Azure Container Apps |
 | [Health-gated rollouts](https://lv3rmeulen.github.io/Deployify/guides/rollouts/) | Wave-by-wave deploys with automatic rollback |
 | [Parameters and secrets](https://lv3rmeulen.github.io/Deployify/guides/parameters-and-secrets/) | Aspire parameters, secret backends (Vault, Key Vault, SSM) |
 | [Running from `aspire deploy`](https://lv3rmeulen.github.io/Deployify/guides/aspire-deploy/) | `builder.AddDeployify()` in your AppHost |

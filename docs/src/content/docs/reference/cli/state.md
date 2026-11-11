@@ -30,7 +30,7 @@ deployify state show [options]
 |---|---|---|
 | `--project-path`, `-p` | Path to the Aspire AppHost .csproj or its directory. | current directory |
 | `--env`, `-e` | Environment to use, overriding the active environment (e.g. local, prod). |  |
-| `--target`, `-t` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| compose \| awsecs \| azurecontainerapps \| nomadconsul, or the ID of a plugin target. |  |
+| `--target`, `-t` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| ovhcloud \| compose \| awsecs \| azurecontainerapps \| nomadconsul, or the ID of a plugin target. |  |
 
 ## `state unlock`
 
@@ -52,7 +52,7 @@ deployify state unlock <lock-id> [options]
 |---|---|---|
 | `--project-path`, `-p` | Path to the Aspire AppHost .csproj or its directory. | current directory |
 | `--env`, `-e` | Environment to use, overriding the active environment (e.g. local, prod). |  |
-| `--target`, `-t` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| compose \| awsecs \| azurecontainerapps \| nomadconsul, or the ID of a plugin target. |  |
+| `--target`, `-t` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| ovhcloud \| compose \| awsecs \| azurecontainerapps \| nomadconsul, or the ID of a plugin target. |  |
 
 ## `state adopt`
 
@@ -68,7 +68,7 @@ deployify state adopt [options]
 |---|---|---|
 | `--project-path`, `-p` | Path to the Aspire AppHost .csproj or its directory. | current directory |
 | `--env`, `-e` | Environment to use, overriding the active environment (e.g. local, prod). |  |
-| `--target`, `-t` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| compose \| awsecs \| azurecontainerapps \| nomadconsul, or the ID of a plugin target. |  |
+| `--target`, `-t` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| ovhcloud \| compose \| awsecs \| azurecontainerapps \| nomadconsul, or the ID of a plugin target. |  |
 | `--service`, `-s` | Only adopt these services (comma-separated or repeated). Default: all of them. |  |
 
 ## `state push`
@@ -85,6 +85,6 @@ deployify state push [options]
 |---|---|---|
 | `--project-path`, `-p` | Path to the Aspire AppHost .csproj or its directory. | current directory |
 | `--env`, `-e` | Environment to use, overriding the active environment (e.g. local, prod). |  |
-| `--target`, `-t` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| compose \| awsecs \| azurecontainerapps \| nomadconsul, or the ID of a plugin target. |  |
+| `--target`, `-t` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| ovhcloud \| compose \| awsecs \| azurecontainerapps \| nomadconsul, or the ID of a plugin target. |  |
 | `--force` | Replace remote state even when it belongs to another lineage or is newer. | `false` |
 

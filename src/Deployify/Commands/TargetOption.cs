@@ -10,7 +10,7 @@ namespace Deployify.Commands;
 internal static class TargetOption
 {
     public const string Description =
-        "Deployment target: nomad | kubernetes | helm | argocd | flux | compose | awsecs | azurecontainerapps | nomadconsul, " +
+        "Deployment target: nomad | kubernetes | helm | argocd | flux | ovhcloud | compose | awsecs | azurecontainerapps | nomadconsul, " +
         "or the ID of a plugin target.";
 
     public static DeploymentTargetType? ParseOptional(ArgumentResult result)

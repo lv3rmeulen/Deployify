@@ -10,6 +10,7 @@ using Deployify.Target.Helm;
 using Deployify.Target.Kubernetes;
 using Deployify.Target.Nomad;
 using Deployify.Target.NomadConsul;
+using Deployify.Target.OvhCloud;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -38,6 +39,7 @@ public static class DeployifyServiceCollectionExtensions
             .AddSingleton<IDeploymentTarget, HelmDeploymentTarget>()
             .AddSingleton<IDeploymentTarget, ArgoCdDeploymentTarget>()
             .AddSingleton<IDeploymentTarget, FluxDeploymentTarget>()
+            .AddSingleton<IDeploymentTarget, OvhCloudDeploymentTarget>()
             .AddSingleton(_ => new PluginCatalog())
             .AddSingleton(sp => new PluginTargetSource(
                 sp.GetRequiredService<PluginCatalog>(), sp.GetService<ILoggerFactory>()))

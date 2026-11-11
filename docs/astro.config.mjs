@@ -50,6 +50,7 @@ export default defineConfig({
 						'targets/kubernetes',
 						'targets/helm',
 						'targets/gitops',
+						'targets/ovhcloud',
 						'targets/nomad',
 						'targets/nomad-consul',
 						'targets/aws-ecs',

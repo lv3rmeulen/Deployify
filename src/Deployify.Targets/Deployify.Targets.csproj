@@ -24,6 +24,7 @@
     <ProjectReference Include="..\Deployify.Target.NomadConsul\Deployify.Target.NomadConsul.csproj" />
     <ProjectReference Include="..\Deployify.Target.Helm\Deployify.Target.Helm.csproj" />
     <ProjectReference Include="..\Deployify.Target.GitOps\Deployify.Target.GitOps.csproj" />
+    <ProjectReference Include="..\Deployify.Target.OvhCloud\Deployify.Target.OvhCloud.csproj" />
   </ItemGroup>
 
 </Project>

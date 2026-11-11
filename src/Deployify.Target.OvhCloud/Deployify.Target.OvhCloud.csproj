@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>Deployify.Target.OvhCloud</RootNamespace>
+    <Description>Deployify deployment target for OVHcloud Managed Kubernetes Service.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Deployify.Core\Deployify.Core.csproj" />
+    <ProjectReference Include="..\Deployify.Target.Kubernetes\Deployify.Target.Kubernetes.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Deployify.Target.OvhCloud.Tests" />
+  </ItemGroup>
+</Project>

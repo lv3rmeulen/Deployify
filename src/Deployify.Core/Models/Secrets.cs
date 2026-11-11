@@ -39,7 +39,7 @@ public static class Secrets
 /// <summary>Finds secrets stored as plain text in a state file.</summary>
 public static class StateFileSecrets
 {
-    private static readonly string[] s_secretWords = ["token", "password", "secret", "connectionstring", "apikey"];
+    private static readonly string[] s_secretWords = ["token", "password", "secret", "connectionstring", "apikey", "consumerkey"];
 
     /// <summary>
     /// Returns "environment.path" for every setting whose name looks secret and whose

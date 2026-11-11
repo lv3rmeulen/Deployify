@@ -41,7 +41,8 @@ For Flux, use `"target": "Flux"` and
 `--gitops-branch` and `--gitops-path`.
 
 Needs `git` (with access to the repository through your credential helper or SSH agent; git is never
-allowed to prompt) and, to register services, put secrets in the cluster or wait, `kubectl`.
+allowed to prompt) and, to register services, put secrets or a registry login
+(`kubernetes.registryCredentials`) in the cluster or wait, `kubectl`.
 Deployify works in its own clone (`gitops.checkoutDirectory`, by default under the temp folder) and
 resets it to the remote branch on every run.
 

@@ -43,6 +43,26 @@ public sealed class HelmChartWriterTests
     }
 
     [Fact]
+    public async Task TheChart_KeepsThePodsImagePullSecrets()
+    {
+        var config = Fixtures.Config();
+        config.TargetConfig["kubernetes"] = System.Text.Json.JsonSerializer.SerializeToElement(new
+        {
+            namespacePrefix = "test",
+            imagePullSecrets = new[] { "ghcr" },
+            registryCredentials = new { username = "robot", password = "env:REG_PW" }
+        });
+        using var dir = await GenerateAsync(config);
+
+        var template = File.ReadAllText(dir.File("helm", "api", "templates", "deployment.yaml"));
+
+        template.ShouldContain("imagePullSecrets:");
+        template.ShouldContain("- name: \"ghcr\"");
+        template.ShouldContain("- name: \"deployify-registry\"");
+        template.ShouldNotContain("robot");
+    }
+
+    [Fact]
     public async Task Generate_ContactsNothing()
     {
         var fake = new FakeProcessRunner();
