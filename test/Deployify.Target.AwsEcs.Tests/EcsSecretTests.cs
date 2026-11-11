@@ -55,7 +55,7 @@ public sealed class EcsSecretTests
         using var dir = new EcsFixtures.TempDir();
         var config = Config();
         var ecsCfg = new EcsTargetConfig { ClusterName = "prod" };
-        var api = _sut.Generate(Manifest(), config, ecsCfg).Single(s => s.Name == "api");
+        var api = (await _sut.GenerateAsync(Manifest(), config, ecsCfg, TestContext.Current.CancellationToken)).Single(s => s.Name == "api");
 
         var path = await _sut.WriteTaskDefinitionAsync(api, config, ecsCfg, dir.Path, TestContext.Current.CancellationToken);
 

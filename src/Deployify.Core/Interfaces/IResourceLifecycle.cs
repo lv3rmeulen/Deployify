@@ -34,7 +34,8 @@ public interface IResourceLifecycle
         => Task.FromResult<IReadOnlyList<string>>([]);
 
     /// <summary>What destroy deliberately leaves in place, shown in the destroy plan.</summary>
-    IReadOnlyList<string> DescribeKept(EnvironmentConfig config, DeleteOptions options) => [];
+    Task<IReadOnlyList<string>> DescribeKeptAsync(EnvironmentConfig config, DeleteOptions options, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<string>>([]);
 }
 
 /// <summary>

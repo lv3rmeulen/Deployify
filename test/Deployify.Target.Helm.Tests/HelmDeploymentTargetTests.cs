@@ -275,8 +275,8 @@ public sealed class HelmDeploymentTargetTests
     }
 
     [Fact]
-    public void TheHealthGate_RollsBackItself_RatherThanWaitingForHelm()
-        => Target(new FakeProcessRunner()).HasNativeRollback(Fixtures.Config()).ShouldBeFalse();
+    public async Task TheHealthGate_RollsBackItself_RatherThanWaitingForHelm()
+        => (await Target(new FakeProcessRunner()).HasNativeRollbackAsync(Fixtures.Config(), TestContext.Current.CancellationToken)).ShouldBeFalse();
 
     [Fact]
     public async Task Rollouts_AreUnavailable_WithoutKubectl()
@@ -335,9 +335,9 @@ public sealed class HelmDeploymentTargetTests
     // ── the rest ─────────────────────────────────────────────────────────────
 
     [Fact]
-    public void Explain_NamesTheReleaseAndChart()
+    public async Task Explain_NamesTheReleaseAndChart()
     {
-        var api = Target(new FakeProcessRunner()).Explain(Fixtures.Manifest(), Fixtures.Config()).Single(e => e.Name == "api");
+        var api = (await Target(new FakeProcessRunner()).ExplainAsync(Fixtures.Manifest(), Fixtures.Config(), TestContext.Current.CancellationToken)).Single(e => e.Name == "api");
 
         api.AdditionalInfo["release"].ShouldBe("test-api/api");
         api.AdditionalInfo["chart"].ShouldBe("helm/api");

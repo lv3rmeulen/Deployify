@@ -195,11 +195,11 @@ public sealed class HelmChartWriterTests
         => HelmChartWriter.ChartDirectory("out", "api").ShouldBe(Path.Combine("out", "helm", "api"));
 
     [Fact]
-    public void ExistingKubernetesTarget_StillWritesItsOwnManifests()
+    public async Task ExistingKubernetesTarget_StillWritesItsOwnManifests()
     {
         // The Helm chart and kubectl apply share the renderers; the namespace stays a kubectl file.
-        var svc = new KubernetesManifestGenerator()
-            .Generate(Fixtures.Manifest(), Fixtures.Config(), new KubernetesTargetConfig { NamespacePrefix = "test" })
+        var svc = (await new KubernetesManifestGenerator()
+            .GenerateAsync(Fixtures.Manifest(), Fixtures.Config(), new KubernetesTargetConfig { NamespacePrefix = "test" }, TestContext.Current.CancellationToken))
             .Single(s => s.ServiceName == "api");
 
         KubernetesManifestGenerator.Render(svc).Select(f => f.FileName).ShouldBe(["namespace.yaml", "configmap.yaml", "deployment.yaml", "service.yaml"]);

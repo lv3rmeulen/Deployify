@@ -27,8 +27,24 @@ public sealed record DeploymentSession(
     /// <summary>The environment's deployment state; holds the lock when the run asked for one.</summary>
     public required StateSession State { get; init; }
 
-    /// <summary>Releases the state lock.</summary>
-    public ValueTask DisposeAsync() => State.DisposeAsync();
+    /// <summary>
+    /// Releases the state lock, and stops the target's process when it runs in one (a plugin
+    /// target starts again on its next use).
+    /// </summary>
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await State.DisposeAsync();
+        }
+        finally
+        {
+            if (Target is IStartableTarget and IAsyncDisposable process)
+            {
+                await process.DisposeAsync();
+            }
+        }
+    }
 
     /// <summary>
     /// The Aspire AppHost project directory — used to resolve manifest resource paths.
@@ -98,15 +114,15 @@ public sealed record DeploymentSession(
     {
         get
         {
-            var key = Config.Target switch
+            var key = Config.Target.Value switch
             {
-                DeploymentTargetType.Nomad => "nomad",
-                DeploymentTargetType.Kubernetes or DeploymentTargetType.Helm => "kubernetes",
-                DeploymentTargetType.Compose => "compose",
-                DeploymentTargetType.AwsEcs => "ecs",
-                DeploymentTargetType.AzureContainerApps => "aca",
-                DeploymentTargetType.NomadConsul => "nomadconsul",
-                DeploymentTargetType.ArgoCd or DeploymentTargetType.Flux => "gitops",
+                DeploymentTargetType.Names.Nomad => "nomad",
+                DeploymentTargetType.Names.Kubernetes or DeploymentTargetType.Names.Helm => "kubernetes",
+                DeploymentTargetType.Names.Compose => "compose",
+                DeploymentTargetType.Names.AwsEcs => "ecs",
+                DeploymentTargetType.Names.AzureContainerApps => "aca",
+                DeploymentTargetType.Names.NomadConsul => "nomadconsul",
+                DeploymentTargetType.Names.ArgoCd or DeploymentTargetType.Names.Flux => "gitops",
                 _ => Config.Target.ToString().ToLower()
             };
             if (!Config.TargetConfig.TryGetValue(key, out var raw) ||
@@ -115,21 +131,21 @@ public sealed record DeploymentSession(
                 return "-";
             }
 
-            return Config.Target switch
+            return Config.Target.Value switch
             {
-                DeploymentTargetType.Nomad =>
+                DeploymentTargetType.Names.Nomad =>
                     el.TryGetProperty("address", out var a) ? a.GetString() ?? "-" : "-",
-                DeploymentTargetType.Kubernetes or DeploymentTargetType.Helm =>
+                DeploymentTargetType.Names.Kubernetes or DeploymentTargetType.Names.Helm =>
                     el.TryGetProperty("context", out var c) ? c.GetString() ?? "(current)" : "(current)",
-                DeploymentTargetType.Compose =>
+                DeploymentTargetType.Names.Compose =>
                     el.TryGetProperty("projectName", out var p) ? p.GetString() ?? "-" : "-",
-                DeploymentTargetType.AwsEcs =>
+                DeploymentTargetType.Names.AwsEcs =>
                     el.TryGetProperty("region", out var r) ? r.GetString() ?? "-" : "-",
-                DeploymentTargetType.AzureContainerApps =>
+                DeploymentTargetType.Names.AzureContainerApps =>
                     el.TryGetProperty("location", out var l) ? l.GetString() ?? "-" : "-",
-                DeploymentTargetType.NomadConsul =>
+                DeploymentTargetType.Names.NomadConsul =>
                     el.TryGetProperty("nomadAddress", out var na) ? na.GetString() ?? "-" : "-",
-                DeploymentTargetType.ArgoCd or DeploymentTargetType.Flux =>
+                DeploymentTargetType.Names.ArgoCd or DeploymentTargetType.Names.Flux =>
                     el.TryGetProperty("repoUrl", out var g) ? g.GetString() ?? "-" : "-",
                 _ => "-"
             };

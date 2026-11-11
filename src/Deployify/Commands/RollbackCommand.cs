@@ -54,7 +54,7 @@ public static class RollbackCommand
 
             await using var _ = resolved;
 
-            if (resolved.Target is not IRolloutTarget rollout)
+            if (resolved.Target.GetCapability<IRolloutTarget>() is not { } rollout)
             {
                 AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {resolved.Target.DisplayName} has no health-gated rollouts, so there is nothing to roll back.");
                 return 1;

@@ -64,7 +64,7 @@ public class DeployifyOptionsTests
 
     [Theory]
     [InlineData("Deployify:AutoApprove", "yes", "true or false")]
-    [InlineData("Deployify:Target", "heroku", "not a known target")]
+    [InlineData("Deployify:Target", "not a target!", "not a valid target ID")]
     [InlineData("Deployify:HealthTimeoutSeconds", "-5", "positive number")]
     public void Resolve_RejectsBadValues(string key, string value, string message)
     {

@@ -4,6 +4,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <RootNamespace>Deployify.Target.Helm</RootNamespace>
+    <Description>Deployify deployment target for Kubernetes, with each service installed as a Helm release.</Description>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Deployify.Core\Deployify.Core.csproj" />

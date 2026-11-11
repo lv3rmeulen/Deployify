@@ -1,3 +1,4 @@
+using System.Threading.Tasks;
 using Deployify.Core.Expressions;
 using Deployify.Core.Models;
 using Shouldly;
@@ -18,12 +19,12 @@ public sealed class PlaceholderResolverTests
     }
 
     [Fact]
-    public void ResolveAll_ResolvesBindingsAndKeepsLiterals()
+    public async Task ResolveAll_ResolvesBindingsAndKeepsLiterals()
     {
         var manifest = ExpressionFixtures.AppManifest();
         var resolver = Create();
 
-        var env = resolver.ResolveAll(manifest.Resources["api"].Env);
+        var env = await resolver.ResolveAllAsync(manifest.Resources["api"].Env, TestContext.Current.CancellationToken);
 
         env["JSON"].ShouldBe("{\"retries\":3}");
         env["GREETING"].ShouldBe("{greeting.inputs.value}");
@@ -32,18 +33,18 @@ public sealed class PlaceholderResolverTests
     }
 
     [Fact]
-    public void ResolveAll_Null_IsEmpty()
+    public async Task ResolveAll_Null_IsEmpty()
     {
-        Create().ResolveAll(null).ShouldBeEmpty();
+        (await Create().ResolveAllAsync(null, TestContext.Current.CancellationToken)).ShouldBeEmpty();
     }
 
     [Fact]
-    public void Unresolved_ListsParameterInputsWhenNoSourceIsGiven()
+    public async Task Unresolved_ListsParameterInputsWhenNoSourceIsGiven()
     {
         var manifest = ExpressionFixtures.AppManifest();
         var resolver = Create();
 
-        resolver.ResolveAll(manifest.Resources["api"].Env);
+        await resolver.ResolveAllAsync(manifest.Resources["api"].Env, TestContext.Current.CancellationToken);
 
         resolver.Unresolved.ShouldBe(new[] { "{pg-password.inputs.value}", "{greeting.inputs.value}", "{api-key.inputs.value}" },
             ignoreOrder: true);
@@ -57,18 +58,18 @@ public sealed class PlaceholderResolverTests
     }
 
     [Fact]
-    public void WithParameterSource_ResolvesParameters()
+    public async Task WithParameterSource_ResolvesParameters()
     {
         var resolver = Create(ExpressionFixtures.FixedParameters(("pg-password", "pw"), ("api-key", "k")));
 
-        resolver.Resolve("{appdb.connectionString}")
+        (await resolver.ResolveAsync("{appdb.connectionString}", TestContext.Current.CancellationToken))
             .ShouldBe("Host=pg;Port=5432;Username=postgres;Password=pw;Database=appdb");
-        resolver.Resolve("{api-key.value}").ShouldBe("k");
+        (await resolver.ResolveAsync("{api-key.value}", TestContext.Current.CancellationToken)).ShouldBe("k");
         resolver.Unresolved.ShouldBeEmpty();
     }
 
     [Fact]
-    public void ProjectHttpsAsHttp_CanBeTurnedOff()
+    public async Task ProjectHttpsAsHttp_CanBeTurnedOff()
     {
         var manifest = ExpressionFixtures.AppManifest();
         var resolver = new PlaceholderResolver(manifest, ServicePorts.Assign(manifest), new EndpointStrategy())
@@ -76,15 +77,15 @@ public sealed class PlaceholderResolverTests
             ProjectHttpsAsHttp = false
         };
 
-        resolver.Resolve("{api.bindings.https.url}").ShouldBe("https://api:8443");
+        (await resolver.ResolveAsync("{api.bindings.https.url}", TestContext.Current.CancellationToken)).ShouldBe("https://api:8443");
         resolver.Expressions.ProjectHttpsAsHttp.ShouldBeFalse();
     }
 
     [Fact]
-    public void Strategy_IsApplied()
+    public async Task Strategy_IsApplied()
     {
         var resolver = Create(strategy: new EndpointStrategy { Host = _ => "localhost" });
 
-        resolver.Resolve("{api.bindings.http.url}").ShouldBe("http://localhost:8080");
+        (await resolver.ResolveAsync("{api.bindings.http.url}", TestContext.Current.CancellationToken)).ShouldBe("http://localhost:8080");
     }
 }

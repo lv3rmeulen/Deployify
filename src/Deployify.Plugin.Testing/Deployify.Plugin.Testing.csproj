@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>Deployify.Plugin.Testing</RootNamespace>
+    <Description>Conformance checks for Deployify target plugins: run them from a plugin's own tests to check it keeps the contracts Deployify's rollouts, prune and destroy rely on.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Deployify.Plugins\Deployify.Plugins.csproj" />
+    <ProjectReference Include="..\Deployify.Plugin.Sdk\Deployify.Plugin.Sdk.csproj" />
+  </ItemGroup>
+
+</Project>

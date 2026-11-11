@@ -1,5 +1,6 @@
 using Deployify.Core.Interfaces;
 using Deployify.Core.SecretBackends;
+using Deployify.Plugins;
 using Deployify.Core.Services;
 using Deployify.Target.AwsEcs;
 using Deployify.Target.AzureContainerApps;
@@ -10,14 +11,16 @@ using Deployify.Target.Kubernetes;
 using Deployify.Target.Nomad;
 using Deployify.Target.NomadConsul;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Deployify.Targets;
 
 public static class DeployifyServiceCollectionExtensions
 {
     /// <summary>
-    /// Core services and every built-in target. Logging is up to the host: the CLI adds a
-    /// console logger, the Aspire integration hands in the AppHost's logger factory.
+    /// Core services, every built-in target, and plugin targets found on demand (see
+    /// <see cref="PluginCatalog"/>). Logging is up to the host: the CLI adds a console logger,
+    /// the Aspire integration hands in the AppHost's logger factory.
     /// </summary>
     public static IServiceCollection AddDeployify(this IServiceCollection services)
         => services
@@ -35,6 +38,10 @@ public static class DeployifyServiceCollectionExtensions
             .AddSingleton<IDeploymentTarget, HelmDeploymentTarget>()
             .AddSingleton<IDeploymentTarget, ArgoCdDeploymentTarget>()
             .AddSingleton<IDeploymentTarget, FluxDeploymentTarget>()
+            .AddSingleton(_ => new PluginCatalog())
+            .AddSingleton(sp => new PluginTargetSource(
+                sp.GetRequiredService<PluginCatalog>(), sp.GetService<ILoggerFactory>()))
+            .AddSingleton<IDeploymentTargetSource>(sp => sp.GetRequiredService<PluginTargetSource>())
             .AddSingleton<IDeploymentTargetFactory>(sp =>
-                new DeploymentTargetFactory(sp.GetServices<IDeploymentTarget>()));
+                new DeploymentTargetFactory(sp.GetServices<IDeploymentTarget>(), sp.GetServices<IDeploymentTargetSource>()));
 }

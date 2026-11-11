@@ -1,3 +1,4 @@
+using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Linq;
 using Deployify.Core.Models;
@@ -14,12 +15,12 @@ public sealed class ConsulJobGeneratorModelTests
     // ── Filtering ─────────────────────────────────────────────────────────────
 
     [Fact]
-    public void Generate_SkipsParameterAndValueTypes()
+    public async Task Generate_SkipsParameterAndValueTypes()
     {
-        var jobs = _sut.Generate(
+        var jobs = await _sut.GenerateAsync(
             Fixtures.ManifestWithIgnoredTypes(),
             Fixtures.EnvConfig(),
-            Fixtures.DefaultConsulCfg());
+            Fixtures.DefaultConsulCfg(), TestContext.Current.CancellationToken);
 
         jobs.ShouldHaveSingleItem().Name.ShouldBe("api");
     }
@@ -27,135 +28,135 @@ public sealed class ConsulJobGeneratorModelTests
     // ── Image resolution ──────────────────────────────────────────────────────
 
     [Fact]
-    public void Generate_SetsImage_FromRegistry_ForProjects()
+    public async Task Generate_SetsImage_FromRegistry_ForProjects()
     {
         var config = Fixtures.EnvConfig(registry: "reg.io/myapp");
-        var jobs = _sut.Generate(Fixtures.SingleService("api"), config, Fixtures.DefaultConsulCfg());
+        var jobs = await _sut.GenerateAsync(Fixtures.SingleService("api"), config, Fixtures.DefaultConsulCfg(), TestContext.Current.CancellationToken);
         jobs[0].Image.ShouldBe("reg.io/myapp/api");
     }
 
     [Fact]
-    public void Generate_SetsImage_Directly_ForContainers()
+    public async Task Generate_SetsImage_Directly_ForContainers()
     {
-        var jobs = _sut.Generate(
+        var jobs = await _sut.GenerateAsync(
             Fixtures.SingleService("redis", "container.v0"),
             Fixtures.EnvConfig(),
-            Fixtures.DefaultConsulCfg());
+            Fixtures.DefaultConsulCfg(), TestContext.Current.CancellationToken);
         jobs[0].Image.ShouldBe("nginx:latest");
     }
 
     [Fact]
-    public void Generate_UsesServiceName_WhenNoRegistry()
+    public async Task Generate_UsesServiceName_WhenNoRegistry()
     {
         var config = Fixtures.EnvConfig(registry: "");
         config.ContainerRegistry = null;
-        var jobs = _sut.Generate(Fixtures.SingleService("api"), config, Fixtures.DefaultConsulCfg());
+        var jobs = await _sut.GenerateAsync(Fixtures.SingleService("api"), config, Fixtures.DefaultConsulCfg(), TestContext.Current.CancellationToken);
         jobs[0].Image.ShouldBe("api");
     }
 
     // ── ImageTag ──────────────────────────────────────────────────────────────
 
     [Fact]
-    public void Generate_SetsImageTag_FromConfig()
+    public async Task Generate_SetsImageTag_FromConfig()
     {
         var config = Fixtures.EnvConfig(tag: "sha-abc123");
-        var jobs = _sut.Generate(Fixtures.SingleService(), config, Fixtures.DefaultConsulCfg());
+        var jobs = await _sut.GenerateAsync(Fixtures.SingleService(), config, Fixtures.DefaultConsulCfg(), TestContext.Current.CancellationToken);
         jobs[0].ImageTag.ShouldBe("sha-abc123");
     }
 
     [Fact]
-    public void Generate_RespectsServiceOverride_ImageTag()
+    public async Task Generate_RespectsServiceOverride_ImageTag()
     {
         var config = Fixtures.EnvConfig();
         config.ServiceOverrides["myapp"] = new ServiceOverride { ImageTag = "canary" };
-        var jobs = _sut.Generate(Fixtures.SingleService("myapp"), config, Fixtures.DefaultConsulCfg());
+        var jobs = await _sut.GenerateAsync(Fixtures.SingleService("myapp"), config, Fixtures.DefaultConsulCfg(), TestContext.Current.CancellationToken);
         jobs[0].ImageTag.ShouldBe("canary");
     }
 
     // ── Count ─────────────────────────────────────────────────────────────────
 
     [Fact]
-    public void Generate_DefaultCount_IsOne()
+    public async Task Generate_DefaultCount_IsOne()
     {
-        var jobs = _sut.Generate(Fixtures.SingleService(), Fixtures.EnvConfig(), Fixtures.DefaultConsulCfg());
+        var jobs = await _sut.GenerateAsync(Fixtures.SingleService(), Fixtures.EnvConfig(), Fixtures.DefaultConsulCfg(), TestContext.Current.CancellationToken);
         jobs[0].Count.ShouldBe(1);
     }
 
     [Fact]
-    public void Generate_RespectsServiceOverride_Count()
+    public async Task Generate_RespectsServiceOverride_Count()
     {
         var config = Fixtures.EnvConfig();
         config.ServiceOverrides["myapp"] = new ServiceOverride { Count = 4 };
-        var jobs = _sut.Generate(Fixtures.SingleService("myapp"), config, Fixtures.DefaultConsulCfg());
+        var jobs = await _sut.GenerateAsync(Fixtures.SingleService("myapp"), config, Fixtures.DefaultConsulCfg(), TestContext.Current.CancellationToken);
         jobs[0].Count.ShouldBe(4);
     }
 
     // ── Env vars ──────────────────────────────────────────────────────────────
 
     [Fact]
-    public void Generate_MergesEnvVars_FromManifest()
+    public async Task Generate_MergesEnvVars_FromManifest()
     {
-        var jobs = _sut.Generate(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), Fixtures.DefaultConsulCfg());
+        var jobs = await _sut.GenerateAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), Fixtures.DefaultConsulCfg(), TestContext.Current.CancellationToken);
         jobs.Single(j => j.Name == "api").Env.ShouldContainKey("ASPNETCORE_ENVIRONMENT");
     }
 
     [Fact]
-    public void Generate_MergesEnvVars_FromServiceOverride()
+    public async Task Generate_MergesEnvVars_FromServiceOverride()
     {
         var config = Fixtures.EnvConfig();
         config.ServiceOverrides["api"] = new ServiceOverride { Env = { ["MY_VAR"] = "hello" } };
-        var jobs = _sut.Generate(Fixtures.SimpleManifest(), config, Fixtures.DefaultConsulCfg());
+        var jobs = await _sut.GenerateAsync(Fixtures.SimpleManifest(), config, Fixtures.DefaultConsulCfg(), TestContext.Current.CancellationToken);
         jobs.Single(j => j.Name == "api").Env.ShouldContainKey("MY_VAR");
     }
 
     // ── Ports ─────────────────────────────────────────────────────────────────
 
     [Fact]
-    public void Generate_PopulatsPorts_FromBindings()
+    public async Task Generate_PopulatsPorts_FromBindings()
     {
-        var jobs = _sut.Generate(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), Fixtures.DefaultConsulCfg());
+        var jobs = await _sut.GenerateAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), Fixtures.DefaultConsulCfg(), TestContext.Current.CancellationToken);
         jobs.Single(j => j.Name == "api").Ports.ShouldContain(p => p.ContainerPort == 8080);
     }
 
     [Fact]
-    public void Generate_SetsPortProtocol()
+    public async Task Generate_SetsPortProtocol()
     {
-        var jobs = _sut.Generate(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), Fixtures.DefaultConsulCfg());
+        var jobs = await _sut.GenerateAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), Fixtures.DefaultConsulCfg(), TestContext.Current.CancellationToken);
         jobs.Single(j => j.Name == "api").Ports[0].Protocol.ShouldBe("http");
     }
 
     // ── Dependencies & upstreams ───────────────────────────────────────────────
 
     [Fact]
-    public void Generate_PopulatesDependencies_FromReferences()
+    public async Task Generate_PopulatesDependencies_FromReferences()
     {
-        var jobs = _sut.Generate(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), Fixtures.DefaultConsulCfg());
+        var jobs = await _sut.GenerateAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), Fixtures.DefaultConsulCfg(), TestContext.Current.CancellationToken);
         jobs.Single(j => j.Name == "worker").Dependencies.ShouldContain("api");
         // single item implied;
     }
 
     [Fact]
-    public void Generate_ResolvesUpstreams_ForEachDependency()
+    public async Task Generate_ResolvesUpstreams_ForEachDependency()
     {
-        var jobs = _sut.Generate(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), Fixtures.DefaultConsulCfg());
+        var jobs = await _sut.GenerateAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), Fixtures.DefaultConsulCfg(), TestContext.Current.CancellationToken);
         var worker = jobs.Single(j => j.Name == "worker");
         worker.Upstreams.ShouldContain(u => u.DestinationName == "api");
     }
 
     [Fact]
-    public void Generate_AssignsUpstreamBasePort_ToFirstDependency()
+    public async Task Generate_AssignsUpstreamBasePort_ToFirstDependency()
     {
         var cfg = Fixtures.DefaultConsulCfg(upstreamBase: 20000);
-        var jobs = _sut.Generate(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), cfg);
+        var jobs = await _sut.GenerateAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), cfg, TestContext.Current.CancellationToken);
         var worker = jobs.Single(j => j.Name == "worker");
         worker.Upstreams[0].LocalBindPort.ShouldBe(20000);
     }
 
     [Fact]
-    public void Generate_AssignsIncrementingPorts_ForMultipleDependencies()
+    public async Task Generate_AssignsIncrementingPorts_ForMultipleDependencies()
     {
         var cfg = Fixtures.DefaultConsulCfg(upstreamBase: 20000);
-        var jobs = _sut.Generate(Fixtures.ManifestWithDependencyChain(), Fixtures.EnvConfig(), cfg);
+        var jobs = await _sut.GenerateAsync(Fixtures.ManifestWithDependencyChain(), Fixtures.EnvConfig(), cfg, TestContext.Current.CancellationToken);
         var api = jobs.Single(j => j.Name == "api");
         var ports = api.Upstreams.Select(u => u.LocalBindPort).ToList();
         ports.ShouldBe([20000, 20001], ignoreOrder: true);
@@ -163,25 +164,25 @@ public sealed class ConsulJobGeneratorModelTests
     }
 
     [Fact]
-    public void Generate_InjectsUpstreamEnvVar_ForEachDependency()
+    public async Task Generate_InjectsUpstreamEnvVar_ForEachDependency()
     {
-        var jobs = _sut.Generate(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), Fixtures.DefaultConsulCfg());
+        var jobs = await _sut.GenerateAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), Fixtures.DefaultConsulCfg(), TestContext.Current.CancellationToken);
         var worker = jobs.Single(j => j.Name == "worker");
         worker.Env.ShouldContainKey("NOMAD_UPSTREAM_ADDR_API");
         worker.Env["NOMAD_UPSTREAM_ADDR_API"].ShouldStartWith("localhost:");
     }
 
     [Fact]
-    public void Generate_UpstreamEnvVar_ContainsCorrectPort()
+    public async Task Generate_UpstreamEnvVar_ContainsCorrectPort()
     {
         var cfg = Fixtures.DefaultConsulCfg(upstreamBase: 21000);
-        var jobs = _sut.Generate(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), cfg);
+        var jobs = await _sut.GenerateAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), cfg, TestContext.Current.CancellationToken);
         var worker = jobs.Single(j => j.Name == "worker");
         worker.Env["NOMAD_UPSTREAM_ADDR_API"].ShouldBe("localhost:21000");
     }
 
     [Fact]
-    public void Generate_UpstreamEnvVar_NormalizesHyphens()
+    public async Task Generate_UpstreamEnvVar_NormalizesHyphens()
     {
         var manifest = new AspireManifest
         {
@@ -199,83 +200,83 @@ public sealed class ConsulJobGeneratorModelTests
                 }
             }
         };
-        var jobs = _sut.Generate(manifest, Fixtures.EnvConfig(), Fixtures.DefaultConsulCfg());
+        var jobs = await _sut.GenerateAsync(manifest, Fixtures.EnvConfig(), Fixtures.DefaultConsulCfg(), TestContext.Current.CancellationToken);
         var caller = jobs.Single(j => j.Name == "caller");
         caller.Env.ShouldContainKey("NOMAD_UPSTREAM_ADDR_MY_SERVICE");
     }
 
     [Fact]
-    public void Generate_NoUpstreams_WhenNoDependencies()
+    public async Task Generate_NoUpstreams_WhenNoDependencies()
     {
-        var jobs = _sut.Generate(Fixtures.SingleService("api"), Fixtures.EnvConfig(), Fixtures.DefaultConsulCfg());
+        var jobs = await _sut.GenerateAsync(Fixtures.SingleService("api"), Fixtures.EnvConfig(), Fixtures.DefaultConsulCfg(), TestContext.Current.CancellationToken);
         jobs[0].Upstreams.ShouldBeEmpty();
     }
 
     // ── IsProjectService ──────────────────────────────────────────────────────
 
     [Fact]
-    public void Generate_SetsIsProjectService_True_ForProjects()
+    public async Task Generate_SetsIsProjectService_True_ForProjects()
     {
-        var jobs = _sut.Generate(Fixtures.SingleService("api", "project.v0"), Fixtures.EnvConfig(), Fixtures.DefaultConsulCfg());
+        var jobs = await _sut.GenerateAsync(Fixtures.SingleService("api", "project.v0"), Fixtures.EnvConfig(), Fixtures.DefaultConsulCfg(), TestContext.Current.CancellationToken);
         jobs[0].IsProjectService.ShouldBeTrue();
     }
 
     [Fact]
-    public void Generate_SetsIsProjectService_False_ForContainers()
+    public async Task Generate_SetsIsProjectService_False_ForContainers()
     {
-        var jobs = _sut.Generate(Fixtures.SingleService("redis", "container.v0"), Fixtures.EnvConfig(), Fixtures.DefaultConsulCfg());
+        var jobs = await _sut.GenerateAsync(Fixtures.SingleService("redis", "container.v0"), Fixtures.EnvConfig(), Fixtures.DefaultConsulCfg(), TestContext.Current.CancellationToken);
         jobs[0].IsProjectService.ShouldBeFalse();
     }
 
     // ── Ingress Gateway ───────────────────────────────────────────────────────
 
     [Fact]
-    public void Generate_ExposeViaIngressGateway_False_WhenDisabled()
+    public async Task Generate_ExposeViaIngressGateway_False_WhenDisabled()
     {
         var cfg = Fixtures.DefaultConsulCfg(ingress: false);
-        var jobs = _sut.Generate(Fixtures.SingleService("api", "project.v0"), Fixtures.EnvConfig(), cfg);
+        var jobs = await _sut.GenerateAsync(Fixtures.SingleService("api", "project.v0"), Fixtures.EnvConfig(), cfg, TestContext.Current.CancellationToken);
         jobs[0].ExposeViaIngressGateway.ShouldBeFalse();
     }
 
     [Fact]
-    public void Generate_ExposeViaIngressGateway_True_WhenEnabled_AndHasExternalHttpBinding()
+    public async Task Generate_ExposeViaIngressGateway_True_WhenEnabled_AndHasExternalHttpBinding()
     {
         var cfg = Fixtures.DefaultConsulCfg(ingress: true);
-        var jobs = _sut.Generate(
+        var jobs = await _sut.GenerateAsync(
             Fixtures.SingleService("api", "project.v0", 8080, "http", external: true),
             Fixtures.EnvConfig(),
-            cfg);
+            cfg, TestContext.Current.CancellationToken);
         jobs[0].ExposeViaIngressGateway.ShouldBeTrue();
     }
 
     [Fact]
-    public void Generate_ExposeViaIngressGateway_False_ForInternalHttpBinding()
+    public async Task Generate_ExposeViaIngressGateway_False_ForInternalHttpBinding()
     {
         var cfg = Fixtures.DefaultConsulCfg(ingress: true);
-        var jobs = _sut.Generate(Fixtures.SingleService("api", "project.v0", 8080, "http"), Fixtures.EnvConfig(), cfg);
+        var jobs = await _sut.GenerateAsync(Fixtures.SingleService("api", "project.v0", 8080, "http"), Fixtures.EnvConfig(), cfg, TestContext.Current.CancellationToken);
         jobs.ShouldHaveSingleItem().ExposeViaIngressGateway.ShouldBeFalse();
     }
 
     [Fact]
-    public void Generate_AddsSingleIngressGatewayJob_NamedFromConfig()
+    public async Task Generate_AddsSingleIngressGatewayJob_NamedFromConfig()
     {
         var cfg = Fixtures.DefaultConsulCfg(ingress: true);
         cfg.IngressGatewayName = "my-igw";
-        var jobs = _sut.Generate(
-            Fixtures.SingleService("api", "project.v0", 8080, "http", external: true), Fixtures.EnvConfig(), cfg);
+        var jobs = await _sut.GenerateAsync(
+            Fixtures.SingleService("api", "project.v0", 8080, "http", external: true), Fixtures.EnvConfig(), cfg, TestContext.Current.CancellationToken);
         var gw = jobs.Single(j => j.IsIngressGateway);
         gw.Name.ShouldBe("my-igw");
         gw.IngressListeners.ShouldHaveSingleItem().ServiceName.ShouldBe("api");
     }
 
     [Fact]
-    public void Generate_ExposeViaIngressGateway_False_ForContainerWithTcp_EvenWhenEnabled()
+    public async Task Generate_ExposeViaIngressGateway_False_ForContainerWithTcp_EvenWhenEnabled()
     {
         var cfg = Fixtures.DefaultConsulCfg(ingress: true);
-        var jobs = _sut.Generate(
+        var jobs = await _sut.GenerateAsync(
             Fixtures.SingleService("redis", "container.v0", 6379, "tcp"),
             Fixtures.EnvConfig(),
-            cfg);
+            cfg, TestContext.Current.CancellationToken);
         jobs[0].ExposeViaIngressGateway.ShouldBeFalse();
     }
 }

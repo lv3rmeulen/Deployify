@@ -41,7 +41,7 @@ public static class GraphCommand
                 return 1;
             }
 
-            var deps = target.GetDependencies(manifest, config);
+            var deps = await target.GetDependenciesAsync(manifest, config, ct);
 
             var allNames = manifest.Resources.Where(r => r.Value.IsDeployable).Select(r => r.Key).ToList();
             var dependants = allNames.ToDictionary(n => n, _ => new List<string>());

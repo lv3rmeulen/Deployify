@@ -54,7 +54,7 @@ public sealed class AcaSecretTests
     {
         var config = Config();
         var acaCfg = new AcaTargetConfig { SubscriptionId = "sub", ResourceGroup = "rg", EnvironmentName = "env" };
-        var app = _sut.Generate(Manifest(), config, acaCfg).Single(a => a.Name == service);
+        var app = (await _sut.GenerateAsync(Manifest(), config, acaCfg, TestContext.Current.CancellationToken)).Single(a => a.Name == service);
         var path = await _sut.WriteAppSpecAsync(app, config, acaCfg, dir.Path, TestContext.Current.CancellationToken);
         var json = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
         return JsonDocument.Parse(json).RootElement.Clone();
@@ -85,7 +85,7 @@ public sealed class AcaSecretTests
         using var dir = new AcaFixtures.TempDir();
         var config = AcaFixtures.AcaConfig();
         var acaCfg = new AcaTargetConfig();
-        var app = _sut.Generate(AcaFixtures.SingleService("api"), config, acaCfg)[0];
+        var app = (await _sut.GenerateAsync(AcaFixtures.SingleService("api"), config, acaCfg, TestContext.Current.CancellationToken))[0];
         var path = await _sut.WriteAppSpecAsync(app, config, acaCfg, dir.Path, TestContext.Current.CancellationToken);
 
         var spec = JsonDocument.Parse(await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken)).RootElement;

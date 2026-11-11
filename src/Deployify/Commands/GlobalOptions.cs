@@ -21,7 +21,8 @@ public static class GlobalOptions
     /// </summary>
     public static readonly Option<DeploymentTargetType?> Target = new("--target", "-t")
     {
-        Description = "Deployment target: nomad | kubernetes | helm | argocd | flux | compose | awsecs | azurecontainerapps | nomadconsul."
+        Description = TargetOption.Description,
+        CustomParser = TargetOption.ParseOptional
     };
 
     public static readonly Option<string?> Environment = new("--env", "-e")

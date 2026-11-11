@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>Deployify.Plugin.Sdk</RootNamespace>
+    <Description>Write a Deployify deployment target as an out-of-process plugin: implement IDeploymentTarget (and optionally IRolloutTarget and IResourceLifecycle) and call DeployifyPlugin.RunAsync.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="StreamJsonRpc" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Logging" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Deployify.Core\Deployify.Core.csproj" />
+    <ProjectReference Include="..\Deployify.Plugin.Contracts\Deployify.Plugin.Contracts.csproj" />
+    <ProjectReference Include="..\Deployify.Plugins\Deployify.Plugins.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Deployify.Plugins.Tests" />
+  </ItemGroup>
+
+</Project>

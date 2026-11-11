@@ -212,15 +212,17 @@ public sealed class InitCommandTests
     // ── TargetType is set ─────────────────────────────────────────────────────
 
     [Theory]
-    [InlineData("Nomad", DeploymentTargetType.Nomad)]
-    [InlineData("Kubernetes", DeploymentTargetType.Kubernetes)]
-    [InlineData("Compose", DeploymentTargetType.Compose)]
-    public async Task Init_SetsTargetType(string targetStr, DeploymentTargetType expected)
+    [InlineData("Nomad", DeploymentTargetType.Names.Nomad)]
+    [InlineData("Kubernetes", DeploymentTargetType.Names.Kubernetes)]
+    [InlineData("Compose", DeploymentTargetType.Names.Compose)]
+    [InlineData("argocd", DeploymentTargetType.Names.ArgoCd)]
+    [InlineData("example", "example")]
+    public async Task Init_SetsTargetType(string targetStr, string expected)
     {
         using var dir = new TempDir();
         await Root().InvokeAsync(
             $"init --non-interactive --project-path {dir.Path} --target {targetStr}", TestContext.Current.CancellationToken);
         var sf = await new StateManager().LoadFileAsync(dir.Path, TestContext.Current.CancellationToken);
-        sf.Environments["local"].Target.ShouldBe(expected);
+        sf.Environments["local"].Target.ShouldBe(DeploymentTargetType.Parse(expected));
     }
 }

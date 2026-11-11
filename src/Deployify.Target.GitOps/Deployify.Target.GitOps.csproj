@@ -4,6 +4,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <RootNamespace>Deployify.Target.GitOps</RootNamespace>
+    <Description>Deployify deployment targets for Kubernetes through GitOps: Argo CD and Flux.</Description>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Deployify.Core\Deployify.Core.csproj" />

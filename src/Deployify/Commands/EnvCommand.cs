@@ -109,8 +109,9 @@ public static class EnvCommand
         };
         var targetOpt = new Option<DeploymentTargetType>("--target")
         {
-            Description = "Deployment target.",
-            Required = true
+            Description = TargetOption.Description,
+            Required = true,
+            CustomParser = TargetOption.Parse
         };
         var activateOpt = new Option<bool>("--activate")
         {
@@ -602,23 +603,23 @@ public static class EnvCommand
         string? kubernetesContext, string? kubernetesPrefix, string? kubernetesDomain,
         string? composeProject, string? composeRestart)
     {
-        return target switch
+        return target.Value switch
         {
-            DeploymentTargetType.Nomad => Serialize("nomad", new NomadTargetConfig
+            DeploymentTargetType.Names.Nomad => Serialize("nomad", new NomadTargetConfig
             {
                 Address = nomadAddr ?? "http://localhost:4646",
                 Token = string.IsNullOrWhiteSpace(nomadToken) ? null : nomadToken,
                 Namespace = nomadNs ?? "default",
                 Datacenters = [nomadDc ?? "dc1"]
             }),
-            DeploymentTargetType.Kubernetes => Serialize("kubernetes", new KubernetesTargetConfig
+            DeploymentTargetType.Names.Kubernetes => Serialize("kubernetes", new KubernetesTargetConfig
             {
                 Context = string.IsNullOrWhiteSpace(kubernetesContext) ? null : kubernetesContext,
                 NamespacePrefix = kubernetesPrefix ?? "deployify",
                 IngressBaseDomain = string.IsNullOrWhiteSpace(kubernetesDomain) ? null : kubernetesDomain,
                 GenerateIngress = !string.IsNullOrWhiteSpace(kubernetesDomain)
             }),
-            DeploymentTargetType.Compose => Serialize("compose", new ComposeTargetConfig
+            DeploymentTargetType.Names.Compose => Serialize("compose", new ComposeTargetConfig
             {
                 ProjectName = composeProject ?? "deployify",
                 RestartPolicy = composeRestart ?? "unless-stopped",
@@ -626,11 +627,11 @@ public static class EnvCommand
                 GenerateEnvFile = true,
                 GenerateMergedFile = true
             }),
-            DeploymentTargetType.AwsEcs => Serialize("ecs", new EcsTargetConfig()),
-            DeploymentTargetType.AzureContainerApps => Serialize("aca", new AcaTargetConfig()),
-            DeploymentTargetType.NomadConsul => Serialize("nomadconsul", new NomadConsulTargetConfig()),
+            DeploymentTargetType.Names.AwsEcs => Serialize("ecs", new EcsTargetConfig()),
+            DeploymentTargetType.Names.AzureContainerApps => Serialize("aca", new AcaTargetConfig()),
+            DeploymentTargetType.Names.NomadConsul => Serialize("nomadconsul", new NomadConsulTargetConfig()),
             // Helm deploys the Kubernetes target's manifests, so it reads the same settings.
-            DeploymentTargetType.Helm => new Dictionary<string, object?>
+            DeploymentTargetType.Names.Helm => new Dictionary<string, object?>
             {
                 ["kubernetes"] = JsonSerializer.SerializeToElement(new KubernetesTargetConfig
                 {
@@ -642,7 +643,7 @@ public static class EnvCommand
                 ["helm"] = JsonSerializer.SerializeToElement(new HelmTargetConfig(), TargetConfigJsonOptions.Default)
             },
             // The GitOps targets render the Kubernetes target's manifests; set gitops.repoUrl before applying.
-            DeploymentTargetType.ArgoCd or DeploymentTargetType.Flux => new Dictionary<string, object?>
+            DeploymentTargetType.Names.ArgoCd or DeploymentTargetType.Names.Flux => new Dictionary<string, object?>
             {
                 ["kubernetes"] = JsonSerializer.SerializeToElement(new KubernetesTargetConfig
                 {
@@ -665,15 +666,15 @@ public static class EnvCommand
 
     private static string GetDisplayAddress(EnvironmentConfig cfg)
     {
-        var key = cfg.Target switch
+        var key = cfg.Target.Value switch
         {
-            DeploymentTargetType.Nomad => "nomad",
-            DeploymentTargetType.Kubernetes or DeploymentTargetType.Helm => "kubernetes",
-            DeploymentTargetType.Compose => "compose",
-            DeploymentTargetType.AwsEcs => "ecs",
-            DeploymentTargetType.AzureContainerApps => "aca",
-            DeploymentTargetType.NomadConsul => "nomadconsul",
-            DeploymentTargetType.ArgoCd or DeploymentTargetType.Flux => "gitops",
+            DeploymentTargetType.Names.Nomad => "nomad",
+            DeploymentTargetType.Names.Kubernetes or DeploymentTargetType.Names.Helm => "kubernetes",
+            DeploymentTargetType.Names.Compose => "compose",
+            DeploymentTargetType.Names.AwsEcs => "ecs",
+            DeploymentTargetType.Names.AzureContainerApps => "aca",
+            DeploymentTargetType.Names.NomadConsul => "nomadconsul",
+            DeploymentTargetType.Names.ArgoCd or DeploymentTargetType.Names.Flux => "gitops",
             _ => cfg.Target.ToString().ToLower()
         };
         if (!cfg.TargetConfig.TryGetValue(key, out var raw) || raw is not JsonElement el)
@@ -681,15 +682,15 @@ public static class EnvCommand
             return "[dim]-[/]";
         }
 
-        return cfg.Target switch
+        return cfg.Target.Value switch
         {
-            DeploymentTargetType.Nomad => el.TryGetProperty("address", out var a) ? a.GetString() ?? "-" : "-",
-            DeploymentTargetType.Kubernetes or DeploymentTargetType.Helm => el.TryGetProperty("context", out var c) ? c.GetString() ?? "(current)" : "(current)",
-            DeploymentTargetType.Compose => el.TryGetProperty("projectName", out var p) ? p.GetString() ?? "-" : "-",
-            DeploymentTargetType.AwsEcs => el.TryGetProperty("region", out var r) ? r.GetString() ?? "-" : "-",
-            DeploymentTargetType.AzureContainerApps => el.TryGetProperty("location", out var l) ? l.GetString() ?? "-" : "-",
-            DeploymentTargetType.NomadConsul => el.TryGetProperty("nomadAddress", out var na) ? na.GetString() ?? "-" : "-",
-            DeploymentTargetType.ArgoCd or DeploymentTargetType.Flux => el.TryGetProperty("repoUrl", out var g) ? g.GetString() ?? "-" : "-",
+            DeploymentTargetType.Names.Nomad => el.TryGetProperty("address", out var a) ? a.GetString() ?? "-" : "-",
+            DeploymentTargetType.Names.Kubernetes or DeploymentTargetType.Names.Helm => el.TryGetProperty("context", out var c) ? c.GetString() ?? "(current)" : "(current)",
+            DeploymentTargetType.Names.Compose => el.TryGetProperty("projectName", out var p) ? p.GetString() ?? "-" : "-",
+            DeploymentTargetType.Names.AwsEcs => el.TryGetProperty("region", out var r) ? r.GetString() ?? "-" : "-",
+            DeploymentTargetType.Names.AzureContainerApps => el.TryGetProperty("location", out var l) ? l.GetString() ?? "-" : "-",
+            DeploymentTargetType.Names.NomadConsul => el.TryGetProperty("nomadAddress", out var na) ? na.GetString() ?? "-" : "-",
+            DeploymentTargetType.Names.ArgoCd or DeploymentTargetType.Names.Flux => el.TryGetProperty("repoUrl", out var g) ? g.GetString() ?? "-" : "-",
             _ => "-"
         };
     }

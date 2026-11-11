@@ -7,6 +7,7 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>deployify</AssemblyName>
     <RootNamespace>Deployify</RootNamespace>
+    <Description>Deploy .NET Aspire AppHost projects to Nomad, Kubernetes, Helm, GitOps, Docker Compose, AWS ECS or Azure Container Apps.</Description>
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>deployify</ToolCommandName>
     <PackageId>deployify</PackageId>
@@ -25,6 +26,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Deployify.Core\Deployify.Core.csproj" />
     <ProjectReference Include="..\Deployify.Targets\Deployify.Targets.csproj" />
+    <ProjectReference Include="..\Deployify.Plugins\Deployify.Plugins.csproj" />
   </ItemGroup>
 
   <ItemGroup>

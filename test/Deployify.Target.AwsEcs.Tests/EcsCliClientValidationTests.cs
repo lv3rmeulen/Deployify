@@ -25,7 +25,7 @@ public sealed class EcsCliClientValidationTests
         var generator = new EcsTaskDefinitionGenerator();
         var config = EcsFixtures.EcsConfig();
         var ecsCfg = new EcsTargetConfig();
-        var services = generator.Generate(EcsFixtures.SingleService("api"), config, ecsCfg);
+        var services = await generator.GenerateAsync(EcsFixtures.SingleService("api"), config, ecsCfg, TestContext.Current.CancellationToken);
         var path = await generator.WriteTaskDefinitionAsync(services[0], config, ecsCfg, dir.Path, TestContext.Current.CancellationToken);
 
         var errors = await Client().ValidateTaskDefinitionAsync(path, TestContext.Current.CancellationToken);

@@ -177,7 +177,7 @@ public sealed class DeploymentRunner(DeploymentSession session)
             return null;
         }
 
-        if (session.Target is not IRolloutTarget rollout)
+        if (session.Target.GetCapability<IRolloutTarget>() is not { } rollout)
         {
             Reporter.Info($"{session.Target.DisplayName} has no health-gated rollout yet: deploying without health checks or automatic rollback.");
             return null;

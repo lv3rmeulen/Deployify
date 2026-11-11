@@ -90,13 +90,13 @@ public sealed class KeyVaultSecretBackendTests
         return config;
     }
 
-    private static AcaApp Api(EnvironmentConfig config, AcaTargetConfig cfg)
-        => new AcaManifestGenerator().Generate(Manifest(), config, cfg).Single(a => a.Name == "api");
+    private static async Task<AcaApp> ApiAsync(EnvironmentConfig config, AcaTargetConfig cfg)
+        => (await new AcaManifestGenerator().GenerateAsync(Manifest(), config, cfg, TestContext.Current.CancellationToken)).Single(a => a.Name == "api");
 
     private static async Task<(JsonElement Spec, string Text)> SpecAsync(EnvironmentConfig config, AcaTargetConfig cfg)
     {
         using var dir = new AcaFixtures.TempDir();
-        var path = await new AcaManifestGenerator().WriteAppSpecAsync(Api(config, cfg), config, cfg, dir.Path, TestContext.Current.CancellationToken);
+        var path = await new AcaManifestGenerator().WriteAppSpecAsync(await ApiAsync(config, cfg), config, cfg, dir.Path, TestContext.Current.CancellationToken);
         var text = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
         return (JsonDocument.Parse(text).RootElement.Clone(), text);
     }
@@ -211,7 +211,7 @@ public sealed class KeyVaultSecretBackendTests
         var config = Config();
         var kv = new FakeKeyVault();
 
-        var changed = await AcaDeploymentTarget.SyncSecretsAsync(Api(config, Cfg()), config, Cfg(), kv, TestContext.Current.CancellationToken);
+        var changed = await AcaDeploymentTarget.SyncSecretsAsync(await ApiAsync(config, Cfg()), config, Cfg(), kv, TestContext.Current.CancellationToken);
 
         changed.ShouldBeFalse("a new secret needs no restart");
         var stored = kv.Secrets["deployify-prod-env-api-connectionstrings-db"];
@@ -229,13 +229,13 @@ public sealed class KeyVaultSecretBackendTests
     {
         var kv = new FakeKeyVault();
         var config = Config();
-        await AcaDeploymentTarget.SyncSecretsAsync(Api(config, Cfg()), config, Cfg(), kv, TestContext.Current.CancellationToken);
-        (await AcaDeploymentTarget.SyncSecretsAsync(Api(config, Cfg()), config, Cfg(), kv, TestContext.Current.CancellationToken))
+        await AcaDeploymentTarget.SyncSecretsAsync(await ApiAsync(config, Cfg()), config, Cfg(), kv, TestContext.Current.CancellationToken);
+        (await AcaDeploymentTarget.SyncSecretsAsync(await ApiAsync(config, Cfg()), config, Cfg(), kv, TestContext.Current.CancellationToken))
             .ShouldBeFalse();
         kv.Sets.Count.ShouldBe(1);
 
         var rotated = Config(secret: "R0tated-pw");
-        (await AcaDeploymentTarget.SyncSecretsAsync(Api(rotated, Cfg()), rotated, Cfg(), kv, TestContext.Current.CancellationToken))
+        (await AcaDeploymentTarget.SyncSecretsAsync(await ApiAsync(rotated, Cfg()), rotated, Cfg(), kv, TestContext.Current.CancellationToken))
             .ShouldBeTrue("a changed secret needs the running revision restarted");
         kv.Sets.Count.ShouldBe(2);
     }
@@ -247,7 +247,7 @@ public sealed class KeyVaultSecretBackendTests
         config.Secrets.Backend = SecretBackendType.Inline;
         var kv = new FakeKeyVault();
 
-        await AcaDeploymentTarget.SyncSecretsAsync(Api(config, Cfg()), config, Cfg(), kv, TestContext.Current.CancellationToken);
+        await AcaDeploymentTarget.SyncSecretsAsync(await ApiAsync(config, Cfg()), config, Cfg(), kv, TestContext.Current.CancellationToken);
 
         kv.Sets.ShouldBeEmpty();
     }

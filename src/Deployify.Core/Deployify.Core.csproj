@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <RootNamespace>Deployify.Core</RootNamespace>
+    <Description>Deployify's core: the Aspire manifest model, expression and parameter resolution, deployment state, rollouts and the deployment target interfaces.</Description>
   </PropertyGroup>
 
   <ItemGroup>

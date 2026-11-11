@@ -16,17 +16,17 @@ public static class InventoryRecorder
     /// apply touches anything. Recording first means a run that dies part-way still leaves the
     /// services it may have created on record, so a later destroy finds them.
     /// </summary>
-    public static Task<EnvironmentInventory> RecordDesiredAsync(
+    public static async Task<EnvironmentInventory> RecordDesiredAsync(
         StateSession state, IDeploymentTarget target, AspireManifest manifest, EnvironmentConfig config,
         TimeProvider? time = null, CancellationToken ct = default)
     {
         var now = (time ?? TimeProvider.System).GetUtcNow();
-        var services = target.Explain(manifest, config).Select(e => e.Name).ToList();
-        var deps = target.GetDependencies(manifest, config)
+        var services = (await target.ExplainAsync(manifest, config, ct)).Select(e => e.Name).ToList();
+        var deps = (await target.GetDependenciesAsync(manifest, config, ct))
             .GroupBy(d => d.To)
             .ToDictionary(g => g.Key, g => g.Select(d => d.From).ToList());
 
-        return state.Inventory.UpdateAsync(inv =>
+        return await state.Inventory.UpdateAsync(inv =>
         {
             inv.Target = target.DisplayName;
             foreach (var s in services)

@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Deployify.Core.Models;
 
 namespace Deployify.Core.Expressions;
@@ -17,7 +19,9 @@ namespace Deployify.Core.Expressions;
 ///
 /// A reference that can't be resolved is kept as its placeholder and reported in
 /// <see cref="Diagnostics"/>, unless <see cref="Strict"/> is set, in which case it throws.
-/// One resolver is meant to be used for one generation run against one target.
+/// One resolver is meant to be used for one generation run against one target. Resolution is
+/// async because a parameter value may have to be asked for; await each call before starting
+/// the next, since the resolver tracks the chain of references it is following.
 /// </summary>
 public sealed class ExpressionResolver
 {
@@ -78,39 +82,45 @@ public sealed class ExpressionResolver
     public IReadOnlyCollection<string> Unresolved => _unresolved;
 
     /// <summary>Resolves every reference in <paramref name="template"/>.</summary>
-    public ResolvedValue Resolve(string? template)
+    public ValueTask<ResolvedValue> ResolveAsync(string? template, CancellationToken ct = default)
     {
         if (string.IsNullOrEmpty(template))
         {
-            return ResolvedValue.Empty;
+            return ValueTask.FromResult(ResolvedValue.Empty);
         }
 
-        return Resolve(ExpressionTemplate.Parse(template));
+        return ResolveAsync(ExpressionTemplate.Parse(template), ct);
     }
 
-    public ResolvedValue Resolve(ExpressionTemplate template)
+    public async ValueTask<ResolvedValue> ResolveAsync(ExpressionTemplate template, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(template);
-        return ResolvedValue.Concat(template.Segments.Select(segment => segment switch
+        var parts = new List<ResolvedValue>(template.Segments.Count);
+        foreach (var segment in template.Segments)
         {
-            LiteralSegment l => ResolvedValue.Text(l.Text),
-            ReferenceSegment r => ResolveReference(r),
-            _ => throw new InvalidOperationException($"Unknown segment {segment.GetType().Name}.")
-        }));
+            parts.Add(segment switch
+            {
+                LiteralSegment l => ResolvedValue.Text(l.Text),
+                ReferenceSegment r => await ResolveReferenceAsync(r, ct),
+                _ => throw new InvalidOperationException($"Unknown segment {segment.GetType().Name}.")
+            });
+        }
+
+        return ResolvedValue.Concat(parts);
     }
 
-    /// <summary>Resolves a single reference, e.g. <c>ResolveReference("db", "connectionString")</c>.</summary>
-    public ResolvedValue ResolveReference(string resource, params string[] path)
+    /// <summary>Resolves a single reference, e.g. <c>ResolveReferenceAsync("db", "connectionString")</c>.</summary>
+    public ValueTask<ResolvedValue> ResolveReferenceAsync(string resource, params string[] path)
     {
         if (path.Length == 0)
         {
             throw new ArgumentException("A reference needs at least one path element.", nameof(path));
         }
 
-        return ResolveReference(new ReferenceSegment(resource, path));
+        return ResolveReferenceAsync(new ReferenceSegment(resource, path));
     }
 
-    public ResolvedValue ResolveReference(ReferenceSegment reference)
+    public async ValueTask<ResolvedValue> ResolveReferenceAsync(ReferenceSegment reference, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(reference);
 
@@ -148,7 +158,7 @@ public sealed class ExpressionResolver
         _stack.Add(reference);
         try
         {
-            value = handler.Resolve(new ReferenceContext(this, reference, resource));
+            value = await handler.ResolveAsync(new ReferenceContext(this, reference, resource, ct));
         }
         catch (ExpressionException ex) when (ex.Diagnostic is null)
         {
@@ -171,7 +181,8 @@ public sealed class ExpressionResolver
     }
 
     /// <summary>Resolves every value of an env dictionary.</summary>
-    public IReadOnlyDictionary<string, ResolvedValue> ResolveAll(IReadOnlyDictionary<string, string>? values)
+    public async ValueTask<IReadOnlyDictionary<string, ResolvedValue>> ResolveAllAsync(
+        IReadOnlyDictionary<string, string>? values, CancellationToken ct = default)
     {
         var result = new Dictionary<string, ResolvedValue>(StringComparer.Ordinal);
         if (values is null)
@@ -181,7 +192,7 @@ public sealed class ExpressionResolver
 
         foreach (var (key, value) in values)
         {
-            result[key] = Resolve(value);
+            result[key] = await ResolveAsync(value, ct);
         }
 
         return result;
@@ -191,15 +202,15 @@ public sealed class ExpressionResolver
     /// Resolves every expression a deployable resource uses (env, args and connection string)
     /// and returns the diagnostics. Useful as a dry run before generating anything.
     /// </summary>
-    public IReadOnlyList<ExpressionDiagnostic> Validate()
+    public async ValueTask<IReadOnlyList<ExpressionDiagnostic>> ValidateAsync(CancellationToken ct = default)
     {
         foreach (var (_, resource) in Manifest.Resources.Where(r => r.Value.IsDeployable))
         {
-            ResolveAll(resource.Env);
-            Resolve(resource.ConnectionString);
+            await ResolveAllAsync(resource.Env, ct);
+            await ResolveAsync(resource.ConnectionString, ct);
             foreach (var arg in ReadArgs(resource))
             {
-                Resolve(arg);
+                await ResolveAsync(arg, ct);
             }
         }
 

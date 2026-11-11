@@ -175,9 +175,9 @@ public sealed class AspireDeployPipelineTests : IDisposable
         var target = Substitute.For<IDeploymentTarget>();
         target.TargetType.Returns(DeploymentTargetType.Compose);
         target.DisplayName.Returns("Fake Compose");
-        target.Explain(Arg.Any<AspireManifest>(), Arg.Any<EnvironmentConfig>())
+        target.ExplainAsync(Arg.Any<AspireManifest>(), Arg.Any<EnvironmentConfig>(), Arg.Any<CancellationToken>())
             .Returns(ci => ci.Arg<AspireManifest>().Resources.Keys.Select(k => new ServiceExplanation { Name = k }).ToList());
-        target.GetDependencies(Arg.Any<AspireManifest>(), Arg.Any<EnvironmentConfig>()).Returns([]);
+        target.GetDependenciesAsync(Arg.Any<AspireManifest>(), Arg.Any<EnvironmentConfig>(), Arg.Any<CancellationToken>()).Returns([]);
         target.PlanAsync(Arg.Any<AspireManifest>(), Arg.Any<EnvironmentConfig>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new PlanResult { ToCreate = ["api"] });
         target.ApplyAsync(Arg.Any<AspireManifest>(), Arg.Any<EnvironmentConfig>(), Arg.Any<string>(), Arg.Any<CancellationToken>())

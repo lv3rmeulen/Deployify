@@ -23,7 +23,7 @@ public sealed class ArtifactStoreTests
         {
             ArtifactUrl = "https://artifacts.example.com/api-v1.0.0.zip"
         };
-        var jobs = _sut.Generate(Fixtures.SingleService(), config);
+        var jobs = await _sut.GenerateAsync(Fixtures.SingleService(), config, TestContext.Current.CancellationToken);
         var hcl = await File.ReadAllTextAsync(
             await _sut.WriteHclAsync(jobs[0], config, dir.Path, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
 
@@ -39,7 +39,7 @@ public sealed class ArtifactStoreTests
     {
         using var dir = new TempDir();
         var config = Fixtures.NomadConfigWithMode(NomadDeploymentMode.RawExec);
-        var jobs = _sut.Generate(Fixtures.SingleService(), config);
+        var jobs = await _sut.GenerateAsync(Fixtures.SingleService(), config, TestContext.Current.CancellationToken);
         var hcl = await File.ReadAllTextAsync(
             await _sut.WriteHclAsync(jobs[0], config, dir.Path, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
 
@@ -55,7 +55,7 @@ public sealed class ArtifactStoreTests
         {
             ArtifactUrl = "https://artifacts.example.com/api-v1.0.0.zip"
         };
-        var jobs = _sut.Generate(Fixtures.SingleService(), config);
+        var jobs = await _sut.GenerateAsync(Fixtures.SingleService(), config, TestContext.Current.CancellationToken);
         var hcl = await File.ReadAllTextAsync(
             await _sut.WriteHclAsync(jobs[0], config, dir.Path, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
 
@@ -71,7 +71,7 @@ public sealed class ArtifactStoreTests
         {
             ArtifactUrl = "https://artifacts.example.com/api-v1.0.0.zip"
         };
-        var jobs = _sut.Generate(Fixtures.SingleService(), config);
+        var jobs = await _sut.GenerateAsync(Fixtures.SingleService(), config, TestContext.Current.CancellationToken);
         var hcl = await File.ReadAllTextAsync(
             await _sut.WriteHclAsync(jobs[0], config, dir.Path, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
 
@@ -81,7 +81,7 @@ public sealed class ArtifactStoreTests
     }
 
     [Fact]
-    public void Hcl_ArtifactUrl_ReadFromServiceOverrides()
+    public async Task Hcl_ArtifactUrl_ReadFromServiceOverrides()
     {
         using var dir = new TempDir();
         var config = Fixtures.NomadConfigWithMode(NomadDeploymentMode.RawExec);
@@ -89,7 +89,7 @@ public sealed class ArtifactStoreTests
         {
             ArtifactUrl = "s3::https://s3.us-east-1.amazonaws.com/mybucket/api-v2.0.0.zip"
         };
-        var jobs = _sut.Generate(Fixtures.SingleService(), config);
+        var jobs = await _sut.GenerateAsync(Fixtures.SingleService(), config, TestContext.Current.CancellationToken);
 
         jobs[0].ArtifactUrl.ShouldBe(
             "s3::https://s3.us-east-1.amazonaws.com/mybucket/api-v2.0.0.zip");

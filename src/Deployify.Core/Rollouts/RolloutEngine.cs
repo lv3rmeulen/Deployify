@@ -41,8 +41,9 @@ public sealed class RolloutEngine
         var (target, rollout, manifest, config, options) =
             (request.Target, request.Rollout, request.Manifest, request.Config, request.Options);
 
-        var explanations = target.Explain(manifest, config);
-        var waves = RolloutPlanner.Waves(explanations.Select(e => e.Name), target.GetDependencies(manifest, config));
+        var explanations = await target.ExplainAsync(manifest, config, ct);
+        var waves = RolloutPlanner.Waves(
+            explanations.Select(e => e.Name), await target.GetDependenciesAsync(manifest, config, ct));
 
         var warnings = new List<string>();
         var mutable = ImageTagCheck.MutableImages(explanations);

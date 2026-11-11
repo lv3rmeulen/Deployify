@@ -96,6 +96,6 @@ public sealed class AcaLifecycleTests
         var args = fake.Single("containerapp", "delete").Args.ToList();
         args[args.IndexOf("--name") + 1].ShouldBe("api");
         args.ShouldContain("--yes");
-        Target(fake).DescribeKept(Prod(), new DeleteOptions()).ShouldContain(k => k.Contains("test-env"));
+        (await Target(fake).DescribeKeptAsync(Prod(), new DeleteOptions(), Ct)).ShouldContain(k => k.Contains("test-env"));
     }
 }

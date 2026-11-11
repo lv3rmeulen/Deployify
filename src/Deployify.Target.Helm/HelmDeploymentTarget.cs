@@ -102,11 +102,13 @@ public sealed class HelmDeploymentTarget : IDeploymentTarget, ISecretStoreProvid
         }
     }
 
-    private IReadOnlyList<KubernetesServiceManifest> Generate(AspireManifest manifest, EnvironmentConfig config)
-        => _generator.Generate(manifest, config, KubernetesDeploymentTarget.GetConfig(config));
+    private Task<IReadOnlyList<KubernetesServiceManifest>> GenerateServicesAsync(
+        AspireManifest manifest, EnvironmentConfig config, CancellationToken ct)
+        => _generator.GenerateAsync(manifest, config, KubernetesDeploymentTarget.GetConfig(config), ct);
 
-    private KubernetesServiceManifest FindService(AspireManifest manifest, EnvironmentConfig config, string service)
-        => Generate(manifest, config).FirstOrDefault(s => s.ServiceName == service)
+    private async Task<KubernetesServiceManifest> FindServiceAsync(
+        AspireManifest manifest, EnvironmentConfig config, string service, CancellationToken ct)
+        => (await GenerateServicesAsync(manifest, config, ct)).FirstOrDefault(s => s.ServiceName == service)
            ?? throw new InvalidOperationException($"'{service}' is not a Kubernetes service in this manifest.");
 
     private async Task<List<string>> WriteChartsAsync(
@@ -144,13 +146,13 @@ public sealed class HelmDeploymentTarget : IDeploymentTarget, ISecretStoreProvid
     /// <summary>Writes one chart per service to <c>{output}/helm/{service}</c>. Contacts nothing.</summary>
     public async Task<IReadOnlyList<string>> GenerateAsync(
         AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
-        => await WriteChartsAsync(Generate(manifest, config), config, outputDirectory, ct);
+        => await WriteChartsAsync(await GenerateServicesAsync(manifest, config, ct), config, outputDirectory, ct);
 
     /// <summary>Runs <c>helm lint</c> on every chart; without helm, only writes them.</summary>
     public async Task<IReadOnlyList<ValidationResult>> ValidateAsync(
         AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
     {
-        var services = Generate(manifest, config);
+        var services = await GenerateServicesAsync(manifest, config, ct);
         await WriteChartsAsync(services, config, outputDirectory, ct);
 
         var lint = await HelmAvailableAsync(ct);
@@ -181,7 +183,7 @@ public sealed class HelmDeploymentTarget : IDeploymentTarget, ISecretStoreProvid
     public async Task<IReadOnlyList<DiffEntry>> DiffAsync(
         AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
     {
-        var services = Generate(manifest, config);
+        var services = await GenerateServicesAsync(manifest, config, ct);
         await WriteChartsAsync(services, config, outputDirectory, ct);
         return await CompareWithClusterAsync(services, config, outputDirectory, ct);
     }
@@ -255,7 +257,7 @@ public sealed class HelmDeploymentTarget : IDeploymentTarget, ISecretStoreProvid
     public async Task<IReadOnlyList<DeploymentResult>> ApplyAsync(
         AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
     {
-        var services = Generate(manifest, config);
+        var services = await GenerateServicesAsync(manifest, config, ct);
         if (await MissingToolsAsync(ct) is { } reason)
         {
             return [.. services.Select(s => new DeploymentResult { ServiceName = s.ServiceName, Success = false, Error = reason })];
@@ -321,9 +323,10 @@ public sealed class HelmDeploymentTarget : IDeploymentTarget, ISecretStoreProvid
     public Task PublishAsync(AspireManifest manifest, EnvironmentConfig config, string appHostDirectory, CancellationToken ct = default)
         => _publisher.PublishAsync(manifest, config, appHostDirectory, ct);
 
-    public IReadOnlyList<ServiceExplanation> Explain(AspireManifest manifest, EnvironmentConfig config)
+    public async Task<IReadOnlyList<ServiceExplanation>> ExplainAsync(
+        AspireManifest manifest, EnvironmentConfig config, CancellationToken ct = default)
     {
-        var explanations = Kubernetes.Explain(manifest, config);
+        var explanations = await Kubernetes.ExplainAsync(manifest, config, ct);
         foreach (var e in explanations)
         {
             e.AdditionalInfo["release"] = $"{e.AdditionalInfo.GetValueOrDefault("namespace", "?")}/{e.Name}";
@@ -333,8 +336,9 @@ public sealed class HelmDeploymentTarget : IDeploymentTarget, ISecretStoreProvid
         return explanations;
     }
 
-    public IReadOnlyList<ServiceDependency> GetDependencies(AspireManifest manifest, EnvironmentConfig config)
-        => Kubernetes.GetDependencies(manifest, config);
+    public Task<IReadOnlyList<ServiceDependency>> GetDependenciesAsync(
+        AspireManifest manifest, EnvironmentConfig config, CancellationToken ct = default)
+        => Kubernetes.GetDependenciesAsync(manifest, config, ct);
 
     // ── Rollout (health-gated apply) ──────────────────────────────────────────
     //
@@ -347,7 +351,8 @@ public sealed class HelmDeploymentTarget : IDeploymentTarget, ISecretStoreProvid
     public async Task<string?> GetUnavailableReasonAsync(EnvironmentConfig config, CancellationToken ct = default)
         => await MissingToolsAsync(ct);
 
-    public bool HasNativeRollback(EnvironmentConfig config) => false;
+    public Task<bool> HasNativeRollbackAsync(EnvironmentConfig config, CancellationToken ct = default)
+        => Task.FromResult(false);
 
     /// <summary>
     /// Records the release's current revision (in the journal) and, for services whose Secret
@@ -356,7 +361,7 @@ public sealed class HelmDeploymentTarget : IDeploymentTarget, ISecretStoreProvid
     public async Task<ServiceSnapshot> CaptureAsync(
         AspireManifest manifest, EnvironmentConfig config, string service, CancellationToken ct = default)
     {
-        var svc = FindService(manifest, config, service);
+        var svc = await FindServiceAsync(manifest, config, service, ct);
         await RequireToolsAsync(ct);
 
         if (svc.UsesSecretRefs && !svc.UsesKeyVaultCsi)
@@ -395,7 +400,7 @@ public sealed class HelmDeploymentTarget : IDeploymentTarget, ISecretStoreProvid
     public async Task<AppliedRevision> ApplyServiceAsync(
         AspireManifest manifest, EnvironmentConfig config, string outputDirectory, string service, CancellationToken ct = default)
     {
-        var svc = FindService(manifest, config, service);
+        var svc = await FindServiceAsync(manifest, config, service, ct);
         await RequireToolsAsync(ct);
 
         if (await InstallAsync(svc, config, outputDirectory, ct) is { } error)
@@ -494,6 +499,6 @@ public sealed class HelmDeploymentTarget : IDeploymentTarget, ISecretStoreProvid
         await Kubernetes.DeleteServiceAsync(config, service, options, ct);
     }
 
-    public IReadOnlyList<string> DescribeKept(EnvironmentConfig config, DeleteOptions options)
-        => Kubernetes.DescribeKept(config, options);
+    public Task<IReadOnlyList<string>> DescribeKeptAsync(EnvironmentConfig config, DeleteOptions options, CancellationToken ct = default)
+        => Kubernetes.DescribeKeptAsync(config, options, ct);
 }

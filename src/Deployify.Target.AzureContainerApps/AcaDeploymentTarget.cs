@@ -111,7 +111,7 @@ public sealed class AcaDeploymentTarget(
         CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        var apps = _generator.Generate(manifest, config, cfg);
+        var apps = await _generator.GenerateAsync(manifest, config, cfg, ct);
         var paths = new List<string>();
         foreach (var app in apps)
         {
@@ -130,7 +130,7 @@ public sealed class AcaDeploymentTarget(
         CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        var apps = _generator.Generate(manifest, config, cfg);
+        var apps = await _generator.GenerateAsync(manifest, config, cfg, ct);
         var results = new List<ValidationResult>();
         var client = Client(cfg);
 
@@ -159,7 +159,7 @@ public sealed class AcaDeploymentTarget(
             cfg.SubscriptionId = await new AcaCliClient(cfg, logger).GetCurrentSubscriptionAsync(ct) ?? string.Empty;
         }
 
-        var apps = _generator.Generate(manifest, config, cfg);
+        var apps = await _generator.GenerateAsync(manifest, config, cfg, ct);
 
         // Write specs to disk — apply reads these
         foreach (var app in apps)
@@ -197,7 +197,7 @@ public sealed class AcaDeploymentTarget(
         CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        var apps = _generator.Generate(manifest, config, cfg);
+        var apps = await _generator.GenerateAsync(manifest, config, cfg, ct);
         var client = Client(cfg);
         var results = new List<DeploymentResult>();
 
@@ -303,7 +303,7 @@ public sealed class AcaDeploymentTarget(
             return null;
         }
 
-        var app = _generator.Generate(manifest, config, cfg).FirstOrDefault(a => a.Name == service);
+        var app = (await _generator.GenerateAsync(manifest, config, cfg, ct)).FirstOrDefault(a => a.Name == service);
         if (app is null || app.SecretEnv.Count == 0)
         {
             return null;
@@ -381,7 +381,7 @@ public sealed class AcaDeploymentTarget(
         CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        var app = _generator.Generate(manifest, config, cfg).FirstOrDefault(a => a.Name == service);
+        var app = (await _generator.GenerateAsync(manifest, config, cfg, ct)).FirstOrDefault(a => a.Name == service);
         if (app is null)
         {
             return new AppliedRevision { ServiceName = service, Success = false, Error = "not a Container App in this manifest" };
@@ -459,7 +459,8 @@ public sealed class AcaDeploymentTarget(
         return restored;
     }
 
-    public bool HasNativeRollback(EnvironmentConfig config) => false;
+    public Task<bool> HasNativeRollbackAsync(EnvironmentConfig config, CancellationToken ct = default)
+        => Task.FromResult(false);
 
     // ── Publish ───────────────────────────────────────────────────────────────
 
@@ -472,14 +473,13 @@ public sealed class AcaDeploymentTarget(
 
     // ── Explain ───────────────────────────────────────────────────────────────
 
-    public IReadOnlyList<ServiceExplanation> Explain(
-        AspireManifest manifest, EnvironmentConfig config)
+    public async Task<IReadOnlyList<ServiceExplanation>> ExplainAsync(
+        AspireManifest manifest, EnvironmentConfig config, CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        var apps = _generator.Generate(manifest, config, cfg);
+        var apps = await _generator.GenerateAsync(manifest, config, cfg, ct);
 
-        return
-        [
+        return [
             .. apps.Select(app => new ServiceExplanation
             {
                 Name = app.Name,
@@ -507,13 +507,13 @@ public sealed class AcaDeploymentTarget(
 
     // ── Graph ─────────────────────────────────────────────────────────────────
 
-    public IReadOnlyList<ServiceDependency> GetDependencies(
-        AspireManifest manifest, EnvironmentConfig config)
+    public async Task<IReadOnlyList<ServiceDependency>> GetDependenciesAsync(
+        AspireManifest manifest, EnvironmentConfig config, CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        return
+        return 
         [
-            .. _generator.Generate(manifest, config, cfg)
+            .. (await _generator.GenerateAsync(manifest, config, cfg, ct))
                 .SelectMany(app => app.Dependencies.Select(dep =>
                     new ServiceDependency { From = dep, To = app.Name }))
         ];
@@ -528,7 +528,7 @@ public sealed class AcaDeploymentTarget(
         CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        var apps = _generator.Generate(manifest, config, cfg);
+        var apps = await _generator.GenerateAsync(manifest, config, cfg, ct);
         var client = Client(cfg);
         var entries = new List<DiffEntry>();
 
@@ -609,15 +609,15 @@ public sealed class AcaDeploymentTarget(
         logger.LogInformation("Deleted Container App {Name}.", service);
     }
 
-    public IReadOnlyList<string> DescribeKept(EnvironmentConfig config, DeleteOptions options)
+    public Task<IReadOnlyList<string>> DescribeKeptAsync(EnvironmentConfig config, DeleteOptions options, CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        return
+        return Task.FromResult<IReadOnlyList<string>>(
         [
             $"the resource group '{cfg.ResourceGroup}', the Container Apps environment '{cfg.EnvironmentName}' and its Log Analytics workspace",
             "Key Vault secrets (Deployify only references them)",
             "images in the registry"
-        ];
+        ]);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

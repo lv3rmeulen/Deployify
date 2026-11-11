@@ -54,6 +54,6 @@ public sealed class NomadConsulRolloutTests
             }
         }
 
-        Target().HasNativeRollback(env).ShouldBeFalse();
+        (await Target().HasNativeRollbackAsync(env, TestContext.Current.CancellationToken)).ShouldBeFalse();
     }
 }

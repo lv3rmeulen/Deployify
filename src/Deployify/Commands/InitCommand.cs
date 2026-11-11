@@ -37,7 +37,8 @@ public static class InitCommand
         };
         var targetOpt = new Option<DeploymentTargetType?>("--target")
         {
-            Description = "Deployment target."
+            Description = TargetOption.Description,
+            CustomParser = TargetOption.ParseOptional
         };
         var registryOpt = new Option<string?>("--container-registry")
         {
@@ -604,9 +605,9 @@ public static class InitCommand
         string? gitopsRepo = null, gitopsPath = null;
         var gitopsBranch = "main";
 
-        switch (target)
+        switch (target.Value)
         {
-            case DeploymentTargetType.Nomad:
+            case DeploymentTargetType.Names.Nomad:
                 AnsiConsole.MarkupLine("[dim]Nomad settings:[/]");
                 nomadAddr = await ConsolePrompts.AskAsync("Nomad address:", "http://localhost:4646", ct);
                 nomadNs = await ConsolePrompts.AskAsync("Namespace:", "default", ct);
@@ -634,15 +635,15 @@ public static class InitCommand
 
                 break;
 
-            case DeploymentTargetType.Kubernetes:
-            case DeploymentTargetType.Helm:
-            case DeploymentTargetType.ArgoCd:
-            case DeploymentTargetType.Flux:
+            case DeploymentTargetType.Names.Kubernetes:
+            case DeploymentTargetType.Names.Helm:
+            case DeploymentTargetType.Names.ArgoCd:
+            case DeploymentTargetType.Names.Flux:
                 AnsiConsole.MarkupLine("[dim]Kubernetes settings:[/]");
                 kubernetesContext = await ConsolePrompts.AskAsync("kubectl context [dim](blank = current)[/]:", string.Empty, ct);
                 kubernetesPrefix = await ConsolePrompts.AskAsync("Namespace prefix:", envName, ct);
                 kubernetesDomain = await ConsolePrompts.AskAsync("Ingress base domain [dim](blank to skip)[/]:", string.Empty, ct);
-                if (target is DeploymentTargetType.ArgoCd or DeploymentTargetType.Flux)
+                if (target == DeploymentTargetType.ArgoCd || target == DeploymentTargetType.Flux)
                 {
                     AnsiConsole.MarkupLine("[dim]GitOps settings:[/]");
                     gitopsRepo = await ConsolePrompts.AskAsync("Config repository URL:", string.Empty, ct);
@@ -652,13 +653,13 @@ public static class InitCommand
 
                 break;
 
-            case DeploymentTargetType.Compose:
+            case DeploymentTargetType.Names.Compose:
                 AnsiConsole.MarkupLine("[dim]Docker Compose settings:[/]");
                 composeProject = await ConsolePrompts.AskAsync("Project name:", envName, ct);
                 composeRestart = await ConsolePrompts.AskAsync("Restart policy:", "unless-stopped", ct);
                 break;
 
-            case DeploymentTargetType.AwsEcs:
+            case DeploymentTargetType.Names.AwsEcs:
                 AnsiConsole.MarkupLine("[dim]AWS ECS settings:[/]");
                 ecsRegion = await ConsolePrompts.AskAsync("AWS region:", "us-east-1", ct);
                 ecsCluster = await ConsolePrompts.AskAsync("ECS cluster name:", "deployify", ct);
@@ -668,7 +669,7 @@ public static class InitCommand
                 ecsExecRole = await ConsolePrompts.AskAsync("Execution role ARN [dim](blank = auto-detect)[/]:", string.Empty, ct);
                 break;
 
-            case DeploymentTargetType.AzureContainerApps:
+            case DeploymentTargetType.Names.AzureContainerApps:
                 AnsiConsole.MarkupLine("[dim]Azure Container Apps settings:[/]");
                 acaSub = await ConsolePrompts.AskAsync("Subscription ID:", string.Empty, ct);
                 acaRg = await ConsolePrompts.AskAsync("Resource group:", "deployify-rg", ct);
@@ -677,7 +678,7 @@ public static class InitCommand
                 acaAcr = await ConsolePrompts.AskAsync("ACR login server [dim](blank to skip)[/]:", string.Empty, ct);
                 break;
 
-            case DeploymentTargetType.NomadConsul:
+            case DeploymentTargetType.Names.NomadConsul:
                 AnsiConsole.MarkupLine("[dim]Nomad + Consul Connect settings:[/]");
                 ncNomadAddr = await ConsolePrompts.AskAsync("Nomad address:", "http://localhost:4646", ct);
                 ncNomadNs = await ConsolePrompts.AskAsync("Nomad namespace:", "default", ct);
@@ -731,9 +732,9 @@ public static class InitCommand
         string ncNomadAddr, string? ncNomadToken, string ncNomadNs, string ncNomadDc,
         string ncConsulAddr, string? ncConsulToken, bool ncIngress,
         string? gitopsRepo, string gitopsBranch, string? gitopsPath)
-        => target switch
+        => target.Value switch
         {
-            DeploymentTargetType.Nomad => new Dictionary<string, object?>
+            DeploymentTargetType.Names.Nomad => new Dictionary<string, object?>
             {
                 ["nomad"] = new NomadTargetConfig
                 {
@@ -749,7 +750,7 @@ public static class InitCommand
                     HealthCheckPath = nomadHealthPath
                 }
             },
-            DeploymentTargetType.Kubernetes => new Dictionary<string, object?>
+            DeploymentTargetType.Names.Kubernetes => new Dictionary<string, object?>
             {
                 ["kubernetes"] = new KubernetesTargetConfig
                 {
@@ -759,7 +760,7 @@ public static class InitCommand
                     GenerateIngress = !string.IsNullOrWhiteSpace(kubernetesDomain)
                 }
             },
-            DeploymentTargetType.Compose => new Dictionary<string, object?>
+            DeploymentTargetType.Names.Compose => new Dictionary<string, object?>
             {
                 ["compose"] = new ComposeTargetConfig
                 {
@@ -770,7 +771,7 @@ public static class InitCommand
                     GenerateMergedFile = true
                 }
             },
-            DeploymentTargetType.AwsEcs => new Dictionary<string, object?>
+            DeploymentTargetType.Names.AwsEcs => new Dictionary<string, object?>
             {
                 ["ecs"] = new EcsTargetConfig
                 {
@@ -786,7 +787,7 @@ public static class InitCommand
                     ExecutionRoleArn = string.IsNullOrWhiteSpace(ecsExecRole) ? null : ecsExecRole
                 }
             },
-            DeploymentTargetType.AzureContainerApps => new Dictionary<string, object?>
+            DeploymentTargetType.Names.AzureContainerApps => new Dictionary<string, object?>
             {
                 ["aca"] = new AcaTargetConfig
                 {
@@ -797,7 +798,7 @@ public static class InitCommand
                     AcrLoginServer = string.IsNullOrWhiteSpace(acaAcr) ? null : acaAcr
                 }
             },
-            DeploymentTargetType.NomadConsul => new Dictionary<string, object?>
+            DeploymentTargetType.Names.NomadConsul => new Dictionary<string, object?>
             {
                 ["nomadconsul"] = new NomadConsulTargetConfig
                 {
@@ -811,7 +812,7 @@ public static class InitCommand
                 }
             },
             // Helm deploys the Kubernetes target's manifests, so it reads the same settings.
-            DeploymentTargetType.Helm => new Dictionary<string, object?>
+            DeploymentTargetType.Names.Helm => new Dictionary<string, object?>
             {
                 ["kubernetes"] = new KubernetesTargetConfig
                 {
@@ -823,7 +824,7 @@ public static class InitCommand
                 ["helm"] = new HelmTargetConfig()
             },
             // The GitOps targets render the Kubernetes target's manifests and commit them.
-            DeploymentTargetType.ArgoCd or DeploymentTargetType.Flux => new Dictionary<string, object?>
+            DeploymentTargetType.Names.ArgoCd or DeploymentTargetType.Names.Flux => new Dictionary<string, object?>
             {
                 ["kubernetes"] = new KubernetesTargetConfig
                 {

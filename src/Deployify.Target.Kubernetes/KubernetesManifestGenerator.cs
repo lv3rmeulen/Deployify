@@ -22,10 +22,10 @@ public sealed class KubernetesManifestGenerator
     /// <summary>Env var pointing at the file the Vault agent renders.</summary>
     public const string SecretsFileVariable = "DEPLOYIFY_SECRETS_FILE";
 
-    public IReadOnlyList<KubernetesServiceManifest> Generate(
+    public async Task<IReadOnlyList<KubernetesServiceManifest>> GenerateAsync(
         AspireManifest manifest,
         EnvironmentConfig config,
-        KubernetesTargetConfig kubernetesConfig)
+        KubernetesTargetConfig kubernetesConfig, CancellationToken ct = default)
     {
         var results = new List<KubernetesServiceManifest>();
         var ports = ServicePorts.Assign(manifest, kubernetesConfig.BasePort);
@@ -68,7 +68,7 @@ public sealed class KubernetesManifestGenerator
             };
 
             // Values that contain a secret parameter are kept apart and stored the target's own way.
-            var env = resolver.ResolveEnvironment(resource.Env, overrides?.Env);
+            var env = await resolver.ResolveEnvironmentAsync(resource.Env, overrides?.Env, ct);
             svc.Env = env.Plain;
             svc.SecretEnv = env.Secrets;
             ApplySecretSettings(svc, config, kubernetesConfig, resource);

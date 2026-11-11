@@ -2,6 +2,8 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Deployify.Core.Expressions;
 
 namespace Deployify.Core.SecretBackends;
@@ -30,9 +32,9 @@ public sealed class SecretRegistry
 /// <summary>Passes lookups through to another source and records the secret values it returns.</summary>
 public sealed class RecordingParameterSource(IParameterSource inner, SecretRegistry registry) : IParameterSource
 {
-    public string? GetValue(string parameter, ParameterInput input)
+    public async ValueTask<string?> GetValueAsync(string parameter, ParameterInput input, CancellationToken ct = default)
     {
-        var value = inner.GetValue(parameter, input);
+        var value = await inner.GetValueAsync(parameter, input, ct);
         if (value is not null && input.Secret)
         {
             registry.Record(input.Name == "value" ? parameter : $"{parameter}.{input.Name}", value);

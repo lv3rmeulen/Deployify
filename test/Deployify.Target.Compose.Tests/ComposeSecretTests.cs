@@ -50,9 +50,9 @@ public sealed class ComposeSecretTests
     }
 
     [Fact]
-    public void Generate_SplitsSecretAndPlainEnv()
+    public async Task Generate_SplitsSecretAndPlainEnv()
     {
-        var services = _sut.Generate(Manifest(), Config(), new ComposeTargetConfig());
+        var services = await _sut.GenerateAsync(Manifest(), Config(), new ComposeTargetConfig(), TestContext.Current.CancellationToken);
 
         var api = services.Single(s => s.Name == "api");
         api.Env.Keys.ShouldBe(new[] { "PLAIN" });
@@ -67,7 +67,7 @@ public sealed class ComposeSecretTests
     {
         using var dir = new TempDir();
         var cfg = new ComposeTargetConfig { GenerateEnvFile = true };
-        var api = _sut.Generate(Manifest(), Config(), cfg).Single(s => s.Name == "api");
+        var api = (await _sut.GenerateAsync(Manifest(), Config(), cfg, TestContext.Current.CancellationToken)).Single(s => s.Name == "api");
 
         var composePath = await _sut.WriteServiceFileAsync(api, dir.Path, cfg, TestContext.Current.CancellationToken);
 
@@ -84,7 +84,7 @@ public sealed class ComposeSecretTests
     {
         using var dir = new TempDir();
         var cfg = new ComposeTargetConfig { GenerateEnvFile = false };
-        var services = _sut.Generate(Manifest(), Config(), cfg);
+        var services = await _sut.GenerateAsync(Manifest(), Config(), cfg, TestContext.Current.CancellationToken);
 
         var mergedPath = await _sut.WriteMergedFileAsync(services, dir.Path, cfg, TestContext.Current.CancellationToken);
 
@@ -104,7 +104,7 @@ public sealed class ComposeSecretTests
     {
         using var dir = new TempDir();
         var cfg = new ComposeTargetConfig { GenerateEnvFile = false };
-        var pg = _sut.Generate(Manifest(), Config(), cfg).Single(s => s.Name == "pg");
+        var pg = (await _sut.GenerateAsync(Manifest(), Config(), cfg, TestContext.Current.CancellationToken)).Single(s => s.Name == "pg");
 
         await _sut.WriteServiceFileAsync(pg, dir.Path, cfg, TestContext.Current.CancellationToken);
 
@@ -117,7 +117,7 @@ public sealed class ComposeSecretTests
     {
         using var dir = new TempDir();
         var cfg = new ComposeTargetConfig { GenerateEnvFile = false };
-        var services = _sut.Generate(Fixtures.SingleService("api", "container.v0"), Fixtures.ComposeConfig(), cfg);
+        var services = await _sut.GenerateAsync(Fixtures.SingleService("api", "container.v0"), Fixtures.ComposeConfig(), cfg, TestContext.Current.CancellationToken);
 
         await _sut.WriteMergedFileAsync(services, dir.Path, cfg, TestContext.Current.CancellationToken);
 
@@ -125,9 +125,9 @@ public sealed class ComposeSecretTests
     }
 
     [Fact]
-    public void InterpolationVariables_CollectsEveryParameterOnce()
+    public async Task InterpolationVariables_CollectsEveryParameterOnce()
     {
-        var services = _sut.Generate(Manifest(), Config(), new ComposeTargetConfig());
+        var services = await _sut.GenerateAsync(Manifest(), Config(), new ComposeTargetConfig(), TestContext.Current.CancellationToken);
 
         var variables = ComposeFileGenerator.InterpolationVariables(services);
 
@@ -136,7 +136,7 @@ public sealed class ComposeSecretTests
     }
 
     [Fact]
-    public void Generate_GeneratedPassword_IsStableAcrossCallsWithSameConfig()
+    public async Task Generate_GeneratedPassword_IsStableAcrossCallsWithSameConfig()
     {
         var manifest = Manifest();
         manifest.Resources["pg-password"] = JsonSerializer.Deserialize<AspireResource>("""
@@ -145,8 +145,8 @@ public sealed class ComposeSecretTests
             """)!;
         var config = Fixtures.ComposeConfig();
 
-        var first = _sut.Generate(manifest, config, new ComposeTargetConfig()).Single(s => s.Name == "pg");
-        var second = _sut.Generate(manifest, config, new ComposeTargetConfig()).Single(s => s.Name == "pg");
+        var first = (await _sut.GenerateAsync(manifest, config, new ComposeTargetConfig(), TestContext.Current.CancellationToken)).Single(s => s.Name == "pg");
+        var second = (await _sut.GenerateAsync(manifest, config, new ComposeTargetConfig(), TestContext.Current.CancellationToken)).Single(s => s.Name == "pg");
 
         var password = first.SecretEnv["POSTGRES_PASSWORD"].ToString();
         password.Length.ShouldBe(16);
@@ -154,21 +154,21 @@ public sealed class ComposeSecretTests
     }
 
     [Fact]
-    public void Generate_OverrideReplacesSecret()
+    public async Task Generate_OverrideReplacesSecret()
     {
         var config = Config();
         config.ServiceOverrides["api"] = new ServiceOverride { Env = { ["ConnectionStrings__db"] = "override" } };
 
-        var api = _sut.Generate(Manifest(), config, new ComposeTargetConfig()).Single(s => s.Name == "api");
+        var api = (await _sut.GenerateAsync(Manifest(), config, new ComposeTargetConfig(), TestContext.Current.CancellationToken)).Single(s => s.Name == "api");
 
         api.SecretEnv.ShouldBeEmpty();
         api.Env["ConnectionStrings__db"].ShouldBe("override");
     }
 
     [Fact]
-    public void Generate_MissingSecretParameter_StaysUnresolved()
+    public async Task Generate_MissingSecretParameter_StaysUnresolved()
     {
-        var api = _sut.Generate(Manifest(), Fixtures.ComposeConfig(), new ComposeTargetConfig()).Single(s => s.Name == "api");
+        var api = (await _sut.GenerateAsync(Manifest(), Fixtures.ComposeConfig(), new ComposeTargetConfig(), TestContext.Current.CancellationToken)).Single(s => s.Name == "api");
 
         // No value anywhere: the placeholder is kept (as plain text) and reported.
         api.Env["ConnectionStrings__db"].ShouldBe("Host=pg;Password={pg-password.inputs.value};Opt=a$b");

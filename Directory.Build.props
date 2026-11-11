@@ -7,6 +7,14 @@
     <MinVerDefaultPreReleaseIdentifiers>alpha</MinVerDefaultPreReleaseIdentifiers>
     <MinVerAutoIncrement>minor</MinVerAutoIncrement>
 
+    <!-- Package metadata, shared by every package the release workflow publishes -->
+    <Authors>lv3rmeulen</Authors>
+    <Copyright>Copyright (c) 2026 by Luk Vermeulen, All Rights Reserved.</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/lv3rmeulen/Deployify</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/lv3rmeulen/Deployify</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+
     <!-- Reproducible builds -->
     <DebugType>portable</DebugType>
     <IncludeSymbols>true</IncludeSymbols>

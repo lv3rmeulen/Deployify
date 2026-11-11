@@ -71,7 +71,7 @@ public sealed class ComposeDeploymentTarget(
         CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        var services = _generator.Generate(manifest, config, cfg);
+        var services = await _generator.GenerateAsync(manifest, config, cfg, ct);
         var paths = new List<string>();
 
         foreach (var svc in services)
@@ -96,7 +96,7 @@ public sealed class ComposeDeploymentTarget(
         CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        var services = _generator.Generate(manifest, config, cfg);
+        var services = await _generator.GenerateAsync(manifest, config, cfg, ct);
         var results = new List<ValidationResult>();
 
         var cliAvailable = await CliAvailableAsync(ct);
@@ -155,7 +155,7 @@ public sealed class ComposeDeploymentTarget(
         CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        var services = _generator.Generate(manifest, config, cfg);
+        var services = await _generator.GenerateAsync(manifest, config, cfg, ct);
         return PlanResult.FromDiff(await CompareWithRunningAsync(services, cfg, outputDirectory, ct));
     }
 
@@ -252,7 +252,7 @@ public sealed class ComposeDeploymentTarget(
         CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        var services = _generator.Generate(manifest, config, cfg);
+        var services = await _generator.GenerateAsync(manifest, config, cfg, ct);
         var mergedPath = Path.Combine(outputDirectory, "compose.yml");
 
         if (!File.Exists(mergedPath))
@@ -481,7 +481,8 @@ public sealed class ComposeDeploymentTarget(
         return previous; // image IDs are immutable: wait for this very one
     }
 
-    public bool HasNativeRollback(EnvironmentConfig config) => false;
+    public Task<bool> HasNativeRollbackAsync(EnvironmentConfig config, CancellationToken ct = default)
+        => Task.FromResult(false);
 
     /// <summary>
     /// The rollout brings services up one at a time with --no-deps, so finish with the same
@@ -545,7 +546,7 @@ public sealed class ComposeDeploymentTarget(
         return Runner(cfg).RemoveProjectResourcesAsync(cfg.Volumes.Keys, options.RemoveVolumes, ct);
     }
 
-    public IReadOnlyList<string> DescribeKept(EnvironmentConfig config, DeleteOptions options)
+    public Task<IReadOnlyList<string>> DescribeKeptAsync(EnvironmentConfig config, DeleteOptions options, CancellationToken ct = default)
     {
         var kept = new List<string> { "images in the local image store" };
         if (!options.RemoveVolumes)
@@ -553,7 +554,7 @@ public sealed class ComposeDeploymentTarget(
             kept.Add("volumes (pass --volumes to remove them)");
         }
 
-        return kept;
+        return Task.FromResult<IReadOnlyList<string>>(kept);
     }
 
     public async Task PublishAsync(
@@ -565,13 +566,12 @@ public sealed class ComposeDeploymentTarget(
 
     // ── Explain ───────────────────────────────────────────────────────────────
 
-    public IReadOnlyList<ServiceExplanation> Explain(AspireManifest manifest, EnvironmentConfig config)
+    public async Task<IReadOnlyList<ServiceExplanation>> ExplainAsync(AspireManifest manifest, EnvironmentConfig config, CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        var services = _generator.Generate(manifest, config, cfg);
+        var services = await _generator.GenerateAsync(manifest, config, cfg, ct);
 
-        return
-        [
+        return [
             .. services.Select(svc => new ServiceExplanation
             {
                 Name = svc.Name,
@@ -597,14 +597,13 @@ public sealed class ComposeDeploymentTarget(
 
     // ── Graph ─────────────────────────────────────────────────────────────────
 
-    public IReadOnlyList<ServiceDependency> GetDependencies(
-        AspireManifest manifest, EnvironmentConfig config)
+    public async Task<IReadOnlyList<ServiceDependency>> GetDependenciesAsync(
+        AspireManifest manifest, EnvironmentConfig config, CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        var services = _generator.Generate(manifest, config, cfg);
+        var services = await _generator.GenerateAsync(manifest, config, cfg, ct);
 
-        return
-        [
+        return [
             .. services
                 .SelectMany(svc => svc.DependsOn.Select(dep =>
                     new ServiceDependency { From = dep, To = svc.Name }))
@@ -620,7 +619,7 @@ public sealed class ComposeDeploymentTarget(
         CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        var services = _generator.Generate(manifest, config, cfg);
+        var services = await _generator.GenerateAsync(manifest, config, cfg, ct);
         return await CompareWithRunningAsync(services, cfg, outputDirectory, ct);
     }
 

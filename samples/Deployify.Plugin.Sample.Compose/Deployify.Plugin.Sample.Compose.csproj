@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A reference plugin: Deployify's own Docker Compose target, served out of process through the
+    plugin SDK under the ID "compose-plugin". It shows what a plugin looks like and is what the
+    end-to-end tests start as a real child process.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>deployify-target-compose-plugin</AssemblyName>
+    <RootNamespace>Deployify.Plugin.Sample.Compose</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Deployify.Plugin.Sdk\Deployify.Plugin.Sdk.csproj" />
+    <ProjectReference Include="..\..\src\Deployify.Target.Compose\Deployify.Target.Compose.csproj" />
+  </ItemGroup>
+
+</Project>

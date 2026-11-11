@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Deployify.Core.Expressions;
 
 namespace Deployify.Core.Models;
@@ -168,22 +170,24 @@ public sealed class PlaceholderResolver(
     /// <summary>Why each unresolved placeholder could not be resolved.</summary>
     public IReadOnlyList<ExpressionDiagnostic> Diagnostics => Expressions.Diagnostics;
 
-    public string Resolve(string value) => Expressions.Resolve(value).ToString();
+    public async ValueTask<string> ResolveAsync(string value, CancellationToken ct = default)
+        => (await Expressions.ResolveAsync(value, ct)).ToString();
 
     /// <summary>
     /// Resolves a resource's env and splits it into plain and secret values. Override values
     /// (from serviceOverrides) are taken literally and win over the manifest.
     /// </summary>
-    public ResolvedEnvironment ResolveEnvironment(
+    public async ValueTask<ResolvedEnvironment> ResolveEnvironmentAsync(
         IReadOnlyDictionary<string, string>? env,
-        IReadOnlyDictionary<string, string>? overrides = null)
+        IReadOnlyDictionary<string, string>? overrides = null,
+        CancellationToken ct = default)
     {
         var result = new ResolvedEnvironment();
         if (env is not null)
         {
             foreach (var (k, v) in env)
             {
-                result.Set(k, Expressions.Resolve(v));
+                result.Set(k, await Expressions.ResolveAsync(v, ct));
             }
         }
 
@@ -199,7 +203,8 @@ public sealed class PlaceholderResolver(
     }
 
     /// <summary>Resolves every value of an env dictionary into a new dictionary.</summary>
-    public Dictionary<string, string> ResolveAll(IReadOnlyDictionary<string, string>? env)
+    public async ValueTask<Dictionary<string, string>> ResolveAllAsync(
+        IReadOnlyDictionary<string, string>? env, CancellationToken ct = default)
     {
         var result = new Dictionary<string, string>();
         if (env is null)
@@ -209,7 +214,7 @@ public sealed class PlaceholderResolver(
 
         foreach (var (k, v) in env)
         {
-            result[k] = Resolve(v);
+            result[k] = await ResolveAsync(v, ct);
         }
 
         return result;

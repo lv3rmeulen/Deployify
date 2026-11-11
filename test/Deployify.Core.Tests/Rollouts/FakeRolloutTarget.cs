@@ -89,7 +89,8 @@ internal sealed class FakeRolloutTarget : IRolloutTarget
             RestoredRevisions.TryGetValue(snapshot.ServiceName, out var r) ? r : snapshot.Revision);
     }
 
-    public bool HasNativeRollback(EnvironmentConfig config) => NativeRollback;
+    public Task<bool> HasNativeRollbackAsync(EnvironmentConfig config, CancellationToken ct = default)
+        => Task.FromResult(NativeRollback);
 
     /// <summary>
     /// A deployment target with the given services; <paramref name="dependsOn"/> maps a service
@@ -105,8 +106,8 @@ internal sealed class FakeRolloutTarget : IRolloutTarget
 
         var target = Substitute.For<IDeploymentTarget>();
         target.DisplayName.Returns("Fake");
-        target.Explain(Arg.Any<AspireManifest>(), Arg.Any<EnvironmentConfig>()).Returns(explanations);
-        target.GetDependencies(Arg.Any<AspireManifest>(), Arg.Any<EnvironmentConfig>()).Returns(edges);
+        target.ExplainAsync(Arg.Any<AspireManifest>(), Arg.Any<EnvironmentConfig>(), Arg.Any<CancellationToken>()).Returns(explanations);
+        target.GetDependenciesAsync(Arg.Any<AspireManifest>(), Arg.Any<EnvironmentConfig>(), Arg.Any<CancellationToken>()).Returns(edges);
         return target;
     }
 }

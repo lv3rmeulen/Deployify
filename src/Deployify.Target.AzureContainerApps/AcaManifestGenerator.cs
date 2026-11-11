@@ -27,10 +27,10 @@ namespace Deployify.Target.AzureContainerApps;
 /// </summary>
 public sealed class AcaManifestGenerator
 {
-    public IReadOnlyList<AcaApp> Generate(
+    public async Task<IReadOnlyList<AcaApp>> GenerateAsync(
         AspireManifest manifest,
         EnvironmentConfig config,
-        AcaTargetConfig acaConfig)
+        AcaTargetConfig acaConfig, CancellationToken ct = default)
     {
         var apps = new List<AcaApp>();
         var ports = ServicePorts.Assign(manifest, acaConfig.BasePort);
@@ -73,7 +73,7 @@ public sealed class AcaManifestGenerator
                 : resource.Image;
 
             // Values that contain a secret parameter are kept apart and stored the target's own way.
-            var env = resolver.ResolveEnvironment(resource.Env, overrides?.Env);
+            var env = await resolver.ResolveEnvironmentAsync(resource.Env, overrides?.Env, ct);
             app.Env = env.Plain;
             app.SecretEnv = env.Secrets;
 

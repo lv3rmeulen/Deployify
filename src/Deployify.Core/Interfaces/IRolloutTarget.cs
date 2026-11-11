@@ -52,7 +52,7 @@ public interface IRolloutTarget
     /// breaker, Nomad <c>auto_revert</c>). The engine then waits for the platform instead of
     /// restoring a second time.
     /// </summary>
-    bool HasNativeRollback(EnvironmentConfig config);
+    Task<bool> HasNativeRollbackAsync(EnvironmentConfig config, CancellationToken ct = default);
 
     /// <summary>
     /// Why a health-gated rollout can't run in this environment right now (for example a CLI it

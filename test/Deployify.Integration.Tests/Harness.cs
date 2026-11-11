@@ -346,14 +346,14 @@ internal static class Harness
                 Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns([]);
 
-        mock.Explain(Arg.Any<AspireManifest>(), Arg.Any<EnvironmentConfig>())
+        mock.ExplainAsync(Arg.Any<AspireManifest>(), Arg.Any<EnvironmentConfig>(), Arg.Any<CancellationToken>())
             .Returns([
                 new ServiceExplanation { Name = "api", Image = "reg.example.com/app/api", ImageTag = "v1.0.0", Count = 1, Ports = ["8080:http"] },
                 new ServiceExplanation { Name = "worker", Image = "reg.example.com/app/worker", ImageTag = "v1.0.0", Count = 1 },
                 new ServiceExplanation { Name = "redis", Image = "redis:7", ImageTag = "latest", Count = 1 }
             ]);
 
-        mock.GetDependencies(Arg.Any<AspireManifest>(), Arg.Any<EnvironmentConfig>())
+        mock.GetDependenciesAsync(Arg.Any<AspireManifest>(), Arg.Any<EnvironmentConfig>(), Arg.Any<CancellationToken>())
             .Returns([
                 new ServiceDependency { From = "worker", To = "api" }
             ]);

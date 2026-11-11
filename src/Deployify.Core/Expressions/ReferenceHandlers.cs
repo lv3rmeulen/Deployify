@@ -2,12 +2,15 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Deployify.Core.Models;
 
 namespace Deployify.Core.Expressions;
 
 /// <summary>What a handler gets to work with when resolving one reference.</summary>
-public sealed class ReferenceContext(ExpressionResolver resolver, ReferenceSegment reference, AspireResource resource)
+public sealed class ReferenceContext(
+    ExpressionResolver resolver, ReferenceSegment reference, AspireResource resource, CancellationToken cancellationToken = default)
 {
     public ExpressionResolver Resolver { get; } = resolver;
 
@@ -20,8 +23,11 @@ public sealed class ReferenceContext(ExpressionResolver resolver, ReferenceSegme
     /// <summary>The path after the property name: <c>["tcp", "host"]</c> for <c>{pg.bindings.tcp.host}</c>.</summary>
     public IReadOnlyList<string> Arguments => [.. Reference.Path.Skip(1)];
 
+    /// <summary>Cancels the resolution this reference is part of.</summary>
+    public CancellationToken CancellationToken { get; } = cancellationToken;
+
     /// <summary>Resolves a nested template (with cycle detection and caching).</summary>
-    public ResolvedValue Resolve(string template) => Resolver.Resolve(template);
+    public ValueTask<ResolvedValue> ResolveAsync(string template) => Resolver.ResolveAsync(template, CancellationToken);
 
     /// <summary>Throws unless the reference has exactly <paramref name="count"/> arguments.</summary>
     public void RequireArguments(int count, string usage)
@@ -43,7 +49,7 @@ public interface IReferenceHandler
     /// <summary>
     /// Resolves the reference, or throws <see cref="ExpressionException"/> to report why it can't.
     /// </summary>
-    ResolvedValue Resolve(ReferenceContext context);
+    ValueTask<ResolvedValue> ResolveAsync(ReferenceContext context);
 }
 
 public static class ReferenceHandlers
@@ -62,11 +68,11 @@ public sealed class ConnectionStringHandler : IReferenceHandler
 {
     public string Property => "connectionString";
 
-    public ResolvedValue Resolve(ReferenceContext context)
+    public ValueTask<ResolvedValue> ResolveAsync(ReferenceContext context)
     {
         context.RequireArguments(0, Property);
         return context.Resource.ConnectionString is { } cs
-            ? context.Resolve(cs)
+            ? context.ResolveAsync(cs)
             : throw new ExpressionException(ExpressionDiagnosticKind.MissingValue,
                 $"'{context.ResourceName}' has no connectionString.");
     }
@@ -77,20 +83,21 @@ public sealed class ValueHandler : IReferenceHandler
 {
     public string Property => "value";
 
-    public ResolvedValue Resolve(ReferenceContext context)
+    public ValueTask<ResolvedValue> ResolveAsync(ReferenceContext context)
     {
         context.RequireArguments(0, Property);
         if (context.Resource.ExtensionData is not null &&
             context.Resource.ExtensionData.TryGetValue("value", out var v) &&
             v.ValueKind == JsonValueKind.String)
         {
-            return context.Resolve(v.GetString()!);
+            return context.ResolveAsync(v.GetString()!);
         }
 
         // A parameter without an explicit value expression still has a "value" input.
         if (ParameterInput.ReadAll(context.Resource).ContainsKey("value"))
         {
-            return context.Resolver.ResolveReference(context.ResourceName, "inputs", "value");
+            return context.Resolver.ResolveReferenceAsync(
+                new ReferenceSegment(context.ResourceName, ["inputs", "value"]), context.CancellationToken);
         }
 
         throw new ExpressionException(ExpressionDiagnosticKind.MissingValue,
@@ -103,7 +110,7 @@ public sealed class InputsHandler : IReferenceHandler
 {
     public string Property => "inputs";
 
-    public ResolvedValue Resolve(ReferenceContext context)
+    public async ValueTask<ResolvedValue> ResolveAsync(ReferenceContext context)
     {
         context.RequireArguments(1, "inputs.<input>");
         var inputName = context.Arguments[0];
@@ -114,7 +121,9 @@ public sealed class InputsHandler : IReferenceHandler
                 $"'{context.ResourceName}' declares no input named '{inputName}'.");
         }
 
-        var value = context.Resolver.Parameters?.GetValue(context.ResourceName, input);
+        var value = context.Resolver.Parameters is { } parameters
+            ? await parameters.GetValueAsync(context.ResourceName, input, context.CancellationToken)
+            : null;
         if (value is null)
         {
             var variable = EnvironmentParameterSource.VariableNames(context.ResourceName, inputName).First();
@@ -134,7 +143,10 @@ public sealed class BindingsHandler : IReferenceHandler
 {
     public string Property => "bindings";
 
-    public ResolvedValue Resolve(ReferenceContext context)
+    public ValueTask<ResolvedValue> ResolveAsync(ReferenceContext context)
+        => ValueTask.FromResult(Resolve(context));
+
+    private static ResolvedValue Resolve(ReferenceContext context)
     {
         context.RequireArguments(2, "bindings.<binding>.<url|host|port|targetPort|scheme>");
         var resolver = context.Resolver;

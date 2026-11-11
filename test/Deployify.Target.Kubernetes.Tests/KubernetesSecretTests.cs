@@ -51,9 +51,9 @@ public sealed class KubernetesSecretTests
     }
 
     [Fact]
-    public void Generate_SplitsSecretAndPlainEnv()
+    public async Task Generate_SplitsSecretAndPlainEnv()
     {
-        var api = _sut.Generate(Manifest(), Config(), _cfg).Single(s => s.ServiceName == "api");
+        var api = (await _sut.GenerateAsync(Manifest(), Config(), _cfg, TestContext.Current.CancellationToken)).Single(s => s.ServiceName == "api");
 
         api.Env.Keys.ShouldBe(new[] { "PLAIN" });
         api.HasSecret.ShouldBeTrue();
@@ -64,7 +64,7 @@ public sealed class KubernetesSecretTests
     public async Task Write_SecretYamlHoldsSecretsAndConfigMapDoesNot()
     {
         using var dir = new TempDir();
-        var api = _sut.Generate(Manifest(), Config(), _cfg).Single(s => s.ServiceName == "api");
+        var api = (await _sut.GenerateAsync(Manifest(), Config(), _cfg, TestContext.Current.CancellationToken)).Single(s => s.ServiceName == "api");
 
         var files = await _sut.WriteYamlAsync(api, dir.Path, TestContext.Current.CancellationToken);
 
@@ -90,7 +90,7 @@ public sealed class KubernetesSecretTests
     public async Task Write_OnlySecrets_HasNoConfigMap()
     {
         using var dir = new TempDir();
-        var pg = _sut.Generate(Manifest(), Config(), _cfg).Single(s => s.ServiceName == "pg");
+        var pg = (await _sut.GenerateAsync(Manifest(), Config(), _cfg, TestContext.Current.CancellationToken)).Single(s => s.ServiceName == "pg");
 
         var files = await _sut.WriteYamlAsync(pg, dir.Path, TestContext.Current.CancellationToken);
 
@@ -106,13 +106,13 @@ public sealed class KubernetesSecretTests
     {
         using var dir = new TempDir();
         var config = Config();
-        var api = _sut.Generate(Manifest(), config, _cfg).Single(s => s.ServiceName == "api");
+        var api = (await _sut.GenerateAsync(Manifest(), config, _cfg, TestContext.Current.CancellationToken)).Single(s => s.ServiceName == "api");
         await _sut.WriteYamlAsync(api, dir.Path, TestContext.Current.CancellationToken);
         var secretPath = Path.Combine(dir.Path, "api", "secret.yaml");
         File.Exists(secretPath).ShouldBeTrue();
 
         config.ServiceOverrides["api"] = new ServiceOverride { Env = { ["ConnectionStrings__db"] = "plain" } };
-        api = _sut.Generate(Manifest(), config, _cfg).Single(s => s.ServiceName == "api");
+        api = (await _sut.GenerateAsync(Manifest(), config, _cfg, TestContext.Current.CancellationToken)).Single(s => s.ServiceName == "api");
         var files = await _sut.WriteYamlAsync(api, dir.Path, TestContext.Current.CancellationToken);
 
         File.Exists(secretPath).ShouldBeFalse();

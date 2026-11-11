@@ -24,10 +24,10 @@ public sealed class ComposeFileGenerator
 {
     private static readonly UTF8Encoding s_utf8NoBom = new(false);
 
-    public IReadOnlyList<ComposeService> Generate(
+    public async Task<IReadOnlyList<ComposeService>> GenerateAsync(
         AspireManifest manifest,
         EnvironmentConfig config,
-        ComposeTargetConfig composeConfig)
+        ComposeTargetConfig composeConfig, CancellationToken ct = default)
     {
         var services = new List<ComposeService>();
         var ports = ServicePorts.Assign(manifest, composeConfig.BasePort);
@@ -60,7 +60,7 @@ public sealed class ComposeFileGenerator
                 : resource.Image;
 
             // Values that contain a secret parameter are kept apart and stored the target's own way.
-            var env = resolver.ResolveEnvironment(resource.Env, overrides?.Env);
+            var env = await resolver.ResolveEnvironmentAsync(resource.Env, overrides?.Env, ct);
             svc.Env = env.Plain;
             svc.SecretEnv = env.Secrets;
 

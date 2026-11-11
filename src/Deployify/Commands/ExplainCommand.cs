@@ -47,7 +47,7 @@ public static class ExplainCommand
                 return 1;
             }
 
-            var explanations = target.Explain(manifest, config);
+            var explanations = await target.ExplainAsync(manifest, config, ct);
 
             if (serviceFilter is not null)
             {

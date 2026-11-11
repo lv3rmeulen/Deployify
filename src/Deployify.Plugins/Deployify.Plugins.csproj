@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>Deployify.Plugins</RootNamespace>
+    <Description>Runs Deployify target plugins out of process: finds them, starts them, and presents each plugin target as an IDeploymentTarget.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="StreamJsonRpc" />
+    <PackageReference Include="MessagePack" />
+    <PackageReference Include="JsonSchema.Net" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Deployify.Core\Deployify.Core.csproj" />
+    <ProjectReference Include="..\Deployify.Plugin.Contracts\Deployify.Plugin.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Deployify.Plugin.Sdk" />
+    <InternalsVisibleTo Include="Deployify.Plugins.Tests" />
+  </ItemGroup>
+
+</Project>

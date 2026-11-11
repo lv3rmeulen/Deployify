@@ -55,10 +55,13 @@ jobs:
           --configuration Release
           --no-restore
 
+      # Every packable project: the CLI tool, Deployify.Hosting and the libraries it depends on
+      # (Core, Targets, each target, Plugins), and the plugin SDK, contracts and testing kit.
+      # Tests and samples set IsPackable to false.
       - name: Pack
         run: >
           dotnet pack
-          ./src/Deployify/Deployify.csproj
+          Deployify.slnx
           --configuration Release
           --no-build
           --output ./artifacts/packages

@@ -24,10 +24,10 @@ namespace Deployify.Target.AwsEcs;
 /// </summary>
 public sealed class EcsTaskDefinitionGenerator
 {
-    public IReadOnlyList<EcsService> Generate(
+    public async Task<IReadOnlyList<EcsService>> GenerateAsync(
         AspireManifest manifest,
         EnvironmentConfig config,
-        EcsTargetConfig ecsConfig)
+        EcsTargetConfig ecsConfig, CancellationToken ct = default)
     {
         var services = new List<EcsService>();
         var ports = ServicePorts.Assign(manifest, ecsConfig.BasePort);
@@ -61,7 +61,7 @@ public sealed class EcsTaskDefinitionGenerator
                 : resource.Image;
 
             // Values that contain a secret parameter are kept apart and stored the target's own way.
-            var env = resolver.ResolveEnvironment(resource.Env, overrides?.Env);
+            var env = await resolver.ResolveEnvironmentAsync(resource.Env, overrides?.Env, ct);
             svc.Env = env.Plain;
             svc.SecretEnv = env.Secrets;
 

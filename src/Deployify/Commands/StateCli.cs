@@ -89,7 +89,7 @@ internal static class StateCli
         ResolvedContext resolved, AspireManifest manifest, PlanResult? plan, bool force, CancellationToken ct)
     {
         AnsiConsole.MarkupLine("\n[bold]Prune[/]");
-        if (resolved.Target is not IResourceLifecycle lifecycle)
+        if (resolved.Target.GetCapability<IResourceLifecycle>() is not { } lifecycle)
         {
             Warn($"{resolved.Target.DisplayName} can't prune yet; nothing was removed.");
             return PruneFailedExitCode;
@@ -104,7 +104,7 @@ internal static class StateCli
         RemovalPlan removal;
         try
         {
-            var desired = resolved.Target.Explain(manifest, resolved.Config).Select(e => e.Name).ToHashSet(StringComparer.Ordinal);
+            var desired = (await resolved.Target.ExplainAsync(manifest, resolved.Config, ct)).Select(e => e.Name).ToHashSet(StringComparer.Ordinal);
             var inventory = await resolved.State.Inventory.LoadAsync(ct);
             var managed = await lifecycle.ListManagedAsync(resolved.Config, ct);
             var candidates = inventory.Services.Select(s => s.Name).Concat(managed.Select(m => m.Name))

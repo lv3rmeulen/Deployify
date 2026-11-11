@@ -113,7 +113,7 @@ public sealed class EcsDeploymentTarget(
         CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        var services = _generator.Generate(manifest, config, cfg);
+        var services = await _generator.GenerateAsync(manifest, config, cfg, ct);
         var paths = new List<string>();
         foreach (var svc in services)
         {
@@ -132,7 +132,7 @@ public sealed class EcsDeploymentTarget(
         CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        var services = _generator.Generate(manifest, config, cfg);
+        var services = await _generator.GenerateAsync(manifest, config, cfg, ct);
         var results = new List<ValidationResult>();
         var client = ClientFor(cfg);
 
@@ -155,7 +155,7 @@ public sealed class EcsDeploymentTarget(
         CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        var services = _generator.Generate(manifest, config, cfg);
+        var services = await _generator.GenerateAsync(manifest, config, cfg, ct);
 
         // Write task definitions to disk — apply reads these
         foreach (var svc in services)
@@ -193,7 +193,7 @@ public sealed class EcsDeploymentTarget(
         CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        var services = _generator.Generate(manifest, config, cfg);
+        var services = await _generator.GenerateAsync(manifest, config, cfg, ct);
         var client = ClientFor(cfg, services);
         var results = new List<DeploymentResult>();
 
@@ -293,7 +293,7 @@ public sealed class EcsDeploymentTarget(
         CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        var services = _generator.Generate(manifest, config, cfg);
+        var services = await _generator.GenerateAsync(manifest, config, cfg, ct);
         var svc = services.FirstOrDefault(s => s.Name == service);
         if (svc is null)
         {
@@ -349,7 +349,8 @@ public sealed class EcsDeploymentTarget(
         return null;
     }
 
-    public bool HasNativeRollback(EnvironmentConfig config) => GetConfig(config).DeploymentCircuitBreaker;
+    public Task<bool> HasNativeRollbackAsync(EnvironmentConfig config, CancellationToken ct = default)
+        => Task.FromResult(GetConfig(config).DeploymentCircuitBreaker);
 
     private const string DesiredCountKey = "desiredCount";
     private const string SsmVersionsKey = "ssmVersions";
@@ -415,14 +416,13 @@ public sealed class EcsDeploymentTarget(
 
     // ── Explain ───────────────────────────────────────────────────────────────
 
-    public IReadOnlyList<ServiceExplanation> Explain(
-        AspireManifest manifest, EnvironmentConfig config)
+    public async Task<IReadOnlyList<ServiceExplanation>> ExplainAsync(
+        AspireManifest manifest, EnvironmentConfig config, CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        var services = _generator.Generate(manifest, config, cfg);
+        var services = await _generator.GenerateAsync(manifest, config, cfg, ct);
 
-        return
-        [
+        return [
             .. services.Select(svc => new ServiceExplanation
             {
                 Name = svc.Name,
@@ -447,13 +447,13 @@ public sealed class EcsDeploymentTarget(
 
     // ── Graph ─────────────────────────────────────────────────────────────────
 
-    public IReadOnlyList<ServiceDependency> GetDependencies(
-        AspireManifest manifest, EnvironmentConfig config)
+    public async Task<IReadOnlyList<ServiceDependency>> GetDependenciesAsync(
+        AspireManifest manifest, EnvironmentConfig config, CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        return
+        return 
         [
-            .. _generator.Generate(manifest, config, cfg)
+            .. (await _generator.GenerateAsync(manifest, config, cfg, ct))
                 .SelectMany(svc => svc.Dependencies.Select(dep =>
                     new ServiceDependency { From = dep, To = svc.Name }))
         ];
@@ -468,7 +468,7 @@ public sealed class EcsDeploymentTarget(
         CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        var services = _generator.Generate(manifest, config, cfg);
+        var services = await _generator.GenerateAsync(manifest, config, cfg, ct);
         var client = ClientFor(cfg);
         var entries = new List<DiffEntry>();
 
@@ -567,7 +567,7 @@ public sealed class EcsDeploymentTarget(
         }
     }
 
-    public IReadOnlyList<string> DescribeKept(EnvironmentConfig config, DeleteOptions options)
+    public Task<IReadOnlyList<string>> DescribeKeptAsync(EnvironmentConfig config, DeleteOptions options, CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
         var kept = new List<string>
@@ -581,7 +581,7 @@ public sealed class EcsDeploymentTarget(
             kept.Add($"the services' SSM parameters under {EcsTaskDefinitionGenerator.SecretsPrefix(cfg)} (--keep-secrets)");
         }
 
-        return kept;
+        return Task.FromResult<IReadOnlyList<string>>(kept);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

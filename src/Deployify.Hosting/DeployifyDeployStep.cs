@@ -128,10 +128,11 @@ internal static class DeployifyDeployStep
             Environment = Text(section["Environment"]) ?? code.Environment,
             ProjectPath = Text(section["ProjectPath"]) ?? code.ProjectPath,
             Target = Text(section["Target"]) is { } target
-                ? Enum.TryParse<DeploymentTargetType>(target, ignoreCase: true, out var t)
+                ? DeploymentTargetType.TryParse(target, out var t)
                     ? t
                     : throw new InvalidOperationException(
-                        $"Deployify:Target '{target}' is not a known target. Known: {string.Join(", ", Enum.GetNames<DeploymentTargetType>())}.")
+                        $"Deployify:Target '{target}' is not a valid target ID. Built in: " +
+                        $"{string.Join(", ", DeploymentTargetType.BuiltIn)}; plugin targets use the ID their plugin declares.")
                 : code.Target,
             Publish = Bool(section, "Publish") ?? code.Publish,
             ImageTag = Text(section["ImageTag"]) ?? code.ImageTag,

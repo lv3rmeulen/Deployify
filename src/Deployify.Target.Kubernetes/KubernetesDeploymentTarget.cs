@@ -188,7 +188,7 @@ public sealed class KubernetesDeploymentTarget(
         AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
     {
         var kubernetesConfig = GetConfig(config);
-        var services = _generator.Generate(manifest, config, kubernetesConfig);
+        var services = await _generator.GenerateAsync(manifest, config, kubernetesConfig, ct);
         var paths = new List<string>();
         foreach (var svc in services)
         {
@@ -202,7 +202,7 @@ public sealed class KubernetesDeploymentTarget(
         AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
     {
         var kubernetesConfig = GetConfig(config);
-        var services = _generator.Generate(manifest, config, kubernetesConfig);
+        var services = await _generator.GenerateAsync(manifest, config, kubernetesConfig, ct);
         var results = new List<ValidationResult>();
 
         if (await KubectlAvailableAsync(ct))
@@ -235,7 +235,7 @@ public sealed class KubernetesDeploymentTarget(
         AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
     {
         var kubernetesConfig = GetConfig(config);
-        var services = _generator.Generate(manifest, config, kubernetesConfig);
+        var services = await _generator.GenerateAsync(manifest, config, kubernetesConfig, ct);
 
         // Generate YAML artifacts to disk — apply will use these
         foreach (var svc in services)
@@ -250,7 +250,7 @@ public sealed class KubernetesDeploymentTarget(
         AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
     {
         var kubernetesConfig = GetConfig(config);
-        var services = _generator.Generate(manifest, config, kubernetesConfig);
+        var services = await _generator.GenerateAsync(manifest, config, kubernetesConfig, ct);
         var results = new List<DeploymentResult>();
         var useKubectl = await KubectlAvailableAsync(ct);
         var kubectl = useKubectl ? Kubectl(kubernetesConfig) : null;
@@ -306,12 +306,12 @@ public sealed class KubernetesDeploymentTarget(
     public async Task PublishAsync(AspireManifest manifest, EnvironmentConfig config, string appHostDirectory, CancellationToken ct = default)
         => await publisher.PublishAsync(manifest, config, appHostDirectory, ct);
 
-    public IReadOnlyList<ServiceExplanation> Explain(AspireManifest manifest, EnvironmentConfig config)
+    public async Task<IReadOnlyList<ServiceExplanation>> ExplainAsync(AspireManifest manifest, EnvironmentConfig config, CancellationToken ct = default)
     {
         var kubernetesConfig = GetConfig(config);
-        return
+        return 
         [
-            .. _generator.Generate(manifest, config, kubernetesConfig).Select(svc => new ServiceExplanation
+            .. (await _generator.GenerateAsync(manifest, config, kubernetesConfig, ct)).Select(svc => new ServiceExplanation
             {
                 Name = svc.ServiceName,
                 Image = svc.Image,
@@ -338,12 +338,12 @@ public sealed class KubernetesDeploymentTarget(
         ];
     }
 
-    public IReadOnlyList<ServiceDependency> GetDependencies(AspireManifest manifest, EnvironmentConfig config)
+    public async Task<IReadOnlyList<ServiceDependency>> GetDependenciesAsync(AspireManifest manifest, EnvironmentConfig config, CancellationToken ct = default)
     {
         var kubernetesConfig = GetConfig(config);
-        return
+        return 
         [
-            .. _generator.Generate(manifest, config, kubernetesConfig)
+            .. (await _generator.GenerateAsync(manifest, config, kubernetesConfig, ct))
                 .SelectMany(svc => svc.Dependencies.Select(dep => new ServiceDependency { From = dep, To = svc.ServiceName }))
         ];
     }
@@ -352,7 +352,7 @@ public sealed class KubernetesDeploymentTarget(
         AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
     {
         var kubernetesConfig = GetConfig(config);
-        var services = _generator.Generate(manifest, config, kubernetesConfig);
+        var services = await _generator.GenerateAsync(manifest, config, kubernetesConfig, ct);
         foreach (var svc in services)
         {
             await _generator.WriteYamlAsync(svc, outputDirectory, ct);
@@ -481,7 +481,7 @@ public sealed class KubernetesDeploymentTarget(
         logger.LogInformation("Deleted namespace {Namespace}.", ns);
     }
 
-    public IReadOnlyList<string> DescribeKept(EnvironmentConfig config, DeleteOptions options)
+    public Task<IReadOnlyList<string>> DescribeKeptAsync(EnvironmentConfig config, DeleteOptions options, CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
         var kept = new List<string>
@@ -493,7 +493,7 @@ public sealed class KubernetesDeploymentTarget(
             kept.Add("not the services' own Kubernetes Secrets: they live in the service namespaces, so --keep-secrets can't keep them");
         }
 
-        return kept;
+        return Task.FromResult<IReadOnlyList<string>>(kept);
     }
 
     private async Task<KubectlRunner> RequireKubectlForLifecycleAsync(KubernetesTargetConfig cfg, CancellationToken ct)
@@ -513,8 +513,9 @@ public sealed class KubernetesDeploymentTarget(
             : throw new InvalidOperationException(
                 "Health-gated rollouts on Kubernetes need kubectl on PATH. Install it, or deploy with --no-health-gate.");
 
-    private KubernetesServiceManifest FindService(AspireManifest manifest, EnvironmentConfig config, KubernetesTargetConfig cfg, string service)
-        => _generator.Generate(manifest, config, cfg).FirstOrDefault(s => s.ServiceName == service)
+    private async Task<KubernetesServiceManifest> FindServiceAsync(
+        AspireManifest manifest, EnvironmentConfig config, KubernetesTargetConfig cfg, string service, CancellationToken ct)
+        => (await _generator.GenerateAsync(manifest, config, cfg, ct)).FirstOrDefault(s => s.ServiceName == service)
            ?? throw new InvalidOperationException($"'{service}' is not a Kubernetes service in this manifest.");
 
     /// <summary>
@@ -525,7 +526,7 @@ public sealed class KubernetesDeploymentTarget(
         AspireManifest manifest, EnvironmentConfig config, string service, CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        var svc = FindService(manifest, config, cfg, service);
+        var svc = await FindServiceAsync(manifest, config, cfg, service, ct);
         var kubectl = await RequireKubectlAsync(cfg, ct);
 
         var json = await kubectl.GetDeploymentJsonAsync(service, svc.Namespace, ct);
@@ -584,7 +585,7 @@ public sealed class KubernetesDeploymentTarget(
         CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        var svc = FindService(manifest, config, cfg, service);
+        var svc = await FindServiceAsync(manifest, config, cfg, service, ct);
         var kubectl = await RequireKubectlAsync(cfg, ct);
 
         var svcDir = Path.Combine(outputDirectory, service);
@@ -812,7 +813,8 @@ public sealed class KubernetesDeploymentTarget(
     private static bool SameSecret(IReadOnlyDictionary<string, SensitiveValue> a, IReadOnlyDictionary<string, SensitiveValue> b)
         => a.Count == b.Count && a.All(kv => b.TryGetValue(kv.Key, out var v) && v.Reveal() == kv.Value.Reveal());
 
-    public bool HasNativeRollback(EnvironmentConfig config) => false;
+    public Task<bool> HasNativeRollbackAsync(EnvironmentConfig config, CancellationToken ct = default)
+        => Task.FromResult(false);
 
     public async Task<string?> GetUnavailableReasonAsync(EnvironmentConfig config, CancellationToken ct = default)
         => await KubectlAvailableAsync(ct) ? null : "kubectl is not installed (the API fallback can't watch rollouts)";

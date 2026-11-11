@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading.Tasks;
 using Deployify.Core.Expressions;
 using Deployify.Core.Models;
 using Deployify.Core.Services;
@@ -90,13 +91,13 @@ public sealed class ParameterWiringTests
     // ── PlaceholderResolver.ResolveEnvironment ────────────────────────────────
 
     [Fact]
-    public void ResolveEnvironment_SplitsAndAppliesOverrides()
+    public async Task ResolveEnvironment_SplitsAndAppliesOverrides()
     {
         var manifest = ExpressionFixtures.AppManifest();
         var resolver = new PlaceholderResolver(manifest, ServicePorts.Assign(manifest), new EndpointStrategy(),
             ExpressionFixtures.FixedParameters(("pg-password", "pw"), ("api-key", "k")));
 
-        var env = resolver.ResolveEnvironment(manifest.Resources["api"].Env, new Dictionary<string, string> { ["API_KEY"] = "from-override" });
+        var env = await resolver.ResolveEnvironmentAsync(manifest.Resources["api"].Env, new Dictionary<string, string> { ["API_KEY"] = "from-override" }, TestContext.Current.CancellationToken);
 
         env.Secrets.Keys.ShouldBe(new[] { "ConnectionStrings__appdb" });
         env.Plain["GREETING"].ShouldBe("hello");
@@ -157,11 +158,11 @@ public sealed class ParameterWiringTests
     }
 
     [Fact]
-    public void For_ExplicitValueIsUsed()
+    public async Task For_ExplicitValueIsUsed()
     {
         var config = new EnvironmentConfig { Parameters = { ["pg-password"] = "from-config" } };
 
-        ParameterResolution.For(config).GetValue("pg-password", new ParameterInput()).ShouldBe("from-config");
+        (await ParameterResolution.For(config).GetValueAsync("pg-password", new ParameterInput(), TestContext.Current.CancellationToken)).ShouldBe("from-config");
     }
 
     [Fact]
@@ -180,12 +181,12 @@ public sealed class ParameterWiringTests
     private static readonly ParameterInput s_generated = new() { Secret = true, Generate = new GenerateOptions { MinLength = 20 } };
 
     [Fact]
-    public void Store_SavesGeneratedValueImmediately()
+    public async Task Store_SavesGeneratedValueImmediately()
     {
         using var dir = new TempDir();
         var store = ParameterStore.Load(dir.Path, "prod");
 
-        var value = store.CreateSource(new EnvironmentConfig()).GetValue("pg-password", s_generated);
+        var value = await store.CreateSource(new EnvironmentConfig()).GetValueAsync("pg-password", s_generated, TestContext.Current.CancellationToken);
 
         value.ShouldNotBeNull().Length.ShouldBe(20);
         var json = File.ReadAllText(Path.Combine(dir.Path, ParameterStore.FileName));
@@ -194,23 +195,23 @@ public sealed class ParameterWiringTests
     }
 
     [Fact]
-    public void Store_ReusesValueOnNextRun()
+    public async Task Store_ReusesValueOnNextRun()
     {
         using var dir = new TempDir();
-        var first = ParameterStore.Load(dir.Path, "prod").CreateSource(new EnvironmentConfig()).GetValue("pg-password", s_generated);
+        var first = await ParameterStore.Load(dir.Path, "prod").CreateSource(new EnvironmentConfig()).GetValueAsync("pg-password", s_generated, TestContext.Current.CancellationToken);
 
-        var second = ParameterStore.Load(dir.Path, "prod").CreateSource(new EnvironmentConfig()).GetValue("pg-password", s_generated);
+        var second = await ParameterStore.Load(dir.Path, "prod").CreateSource(new EnvironmentConfig()).GetValueAsync("pg-password", s_generated, TestContext.Current.CancellationToken);
 
         second.ShouldBe(first);
     }
 
     [Fact]
-    public void Store_KeepsEnvironmentsApart()
+    public async Task Store_KeepsEnvironmentsApart()
     {
         using var dir = new TempDir();
-        var prod = ParameterStore.Load(dir.Path, "prod").CreateSource(new EnvironmentConfig()).GetValue("pg-password", s_generated);
+        var prod = await ParameterStore.Load(dir.Path, "prod").CreateSource(new EnvironmentConfig()).GetValueAsync("pg-password", s_generated, TestContext.Current.CancellationToken);
 
-        var dev = ParameterStore.Load(dir.Path, "dev").CreateSource(new EnvironmentConfig()).GetValue("pg-password", s_generated);
+        var dev = await ParameterStore.Load(dir.Path, "dev").CreateSource(new EnvironmentConfig()).GetValueAsync("pg-password", s_generated, TestContext.Current.CancellationToken);
 
         dev.ShouldNotBe(prod);
         ParameterStore.Load(dir.Path, "prod").Values["pg-password.value"].ShouldBe(prod);
@@ -218,18 +219,18 @@ public sealed class ParameterWiringTests
     }
 
     [Fact]
-    public void Store_ExplicitValueWinsAndIsNotStored()
+    public async Task Store_ExplicitValueWinsAndIsNotStored()
     {
         using var dir = new TempDir();
         var config = new EnvironmentConfig { Parameters = { ["pg-password"] = "explicit" } };
 
-        ParameterStore.Load(dir.Path, "prod").CreateSource(config).GetValue("pg-password", s_generated).ShouldBe("explicit");
+        (await ParameterStore.Load(dir.Path, "prod").CreateSource(config).GetValueAsync("pg-password", s_generated, TestContext.Current.CancellationToken)).ShouldBe("explicit");
 
         File.Exists(Path.Combine(dir.Path, ParameterStore.FileName)).ShouldBeFalse();
     }
 
     [Fact]
-    public void Store_FileIsOwnerOnlyOnUnix()
+    public async Task Store_FileIsOwnerOnlyOnUnix()
     {
         if (OperatingSystem.IsWindows())
         {
@@ -237,7 +238,7 @@ public sealed class ParameterWiringTests
         }
 
         using var dir = new TempDir();
-        ParameterStore.Load(dir.Path, "prod").CreateSource(new EnvironmentConfig()).GetValue("pg-password", s_generated);
+        await ParameterStore.Load(dir.Path, "prod").CreateSource(new EnvironmentConfig()).GetValueAsync("pg-password", s_generated, TestContext.Current.CancellationToken);
 
         File.GetUnixFileMode(Path.Combine(dir.Path, ParameterStore.FileName))
             .ShouldBe(UnixFileMode.UserRead | UnixFileMode.UserWrite);

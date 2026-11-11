@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Deployify.Core\Deployify.Core.csproj" />
+    <ProjectReference Include="..\Deployify.Plugins\Deployify.Plugins.csproj" />
     <ProjectReference Include="..\Deployify.Target.Nomad\Deployify.Target.Nomad.csproj" />
     <ProjectReference Include="..\Deployify.Target.Kubernetes\Deployify.Target.Kubernetes.csproj" />
     <ProjectReference Include="..\Deployify.Target.Compose\Deployify.Target.Compose.csproj" />

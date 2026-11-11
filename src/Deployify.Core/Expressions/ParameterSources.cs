@@ -2,14 +2,19 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Security.Cryptography;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Deployify.Core.Expressions;
 
-/// <summary>Supplies values for <c>parameter.v0</c> inputs.</summary>
+/// <summary>
+/// Supplies values for <c>parameter.v0</c> inputs. Async because a source may have to ask
+/// something else for the value: a plugin asks Deployify, a backend may ask a vault.
+/// </summary>
 public interface IParameterSource
 {
     /// <summary>Returns the value for <paramref name="input"/> of <paramref name="parameter"/>, or null to defer.</summary>
-    string? GetValue(string parameter, ParameterInput input);
+    ValueTask<string?> GetValueAsync(string parameter, ParameterInput input, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -20,14 +25,14 @@ public sealed class DictionaryParameterSource(IReadOnlyDictionary<string, string
 {
     private readonly Dictionary<string, string> _values = new(values, StringComparer.OrdinalIgnoreCase);
 
-    public string? GetValue(string parameter, ParameterInput input)
+    public ValueTask<string?> GetValueAsync(string parameter, ParameterInput input, CancellationToken ct = default)
     {
         if (_values.TryGetValue($"{parameter}.{input.Name}", out var v))
         {
-            return v;
+            return ValueTask.FromResult<string?>(v);
         }
 
-        return input.Name == "value" && _values.TryGetValue(parameter, out v) ? v : null;
+        return ValueTask.FromResult(input.Name == "value" && _values.TryGetValue(parameter, out v) ? v : null);
     }
 }
 
@@ -40,18 +45,18 @@ public sealed class EnvironmentParameterSource(Func<string, string?>? getVariabl
 {
     private readonly Func<string, string?> _get = getVariable ?? Environment.GetEnvironmentVariable;
 
-    public string? GetValue(string parameter, ParameterInput input)
+    public ValueTask<string?> GetValueAsync(string parameter, ParameterInput input, CancellationToken ct = default)
     {
         foreach (var name in VariableNames(parameter, input.Name))
         {
             var value = _get(name);
             if (!string.IsNullOrEmpty(value))
             {
-                return value;
+                return ValueTask.FromResult<string?>(value);
             }
         }
 
-        return null;
+        return ValueTask.FromResult<string?>(null);
     }
 
     /// <summary>The variable names that are checked for a parameter, in order.</summary>
@@ -69,7 +74,8 @@ public sealed class EnvironmentParameterSource(Func<string, string?>? getVariabl
 /// <summary>Uses <c>default.value</c> from the manifest.</summary>
 public sealed class DefaultValueParameterSource : IParameterSource
 {
-    public string? GetValue(string parameter, ParameterInput input) => input.DefaultValue;
+    public ValueTask<string?> GetValueAsync(string parameter, ParameterInput input, CancellationToken ct = default)
+        => ValueTask.FromResult(input.DefaultValue);
 }
 
 /// <summary>
@@ -89,7 +95,10 @@ public sealed class GeneratedParameterSource(
     /// <summary>All generated (or previously stored) values.</summary>
     public IDictionary<string, string> Store { get; } = store;
 
-    public string? GetValue(string parameter, ParameterInput input)
+    public ValueTask<string?> GetValueAsync(string parameter, ParameterInput input, CancellationToken ct = default)
+        => ValueTask.FromResult(GetValue(parameter, input));
+
+    private string? GetValue(string parameter, ParameterInput input)
     {
         if (input.Generate is null)
         {
@@ -111,8 +120,18 @@ public sealed class GeneratedParameterSource(
 /// <summary>Asks each source in turn and returns the first value supplied.</summary>
 public sealed class CompositeParameterSource(params IParameterSource[] sources) : IParameterSource
 {
-    public string? GetValue(string parameter, ParameterInput input)
-        => sources.Select(s => s.GetValue(parameter, input)).FirstOrDefault(v => v is not null);
+    public async ValueTask<string?> GetValueAsync(string parameter, ParameterInput input, CancellationToken ct = default)
+    {
+        foreach (var source in sources)
+        {
+            if (await source.GetValueAsync(parameter, input, ct) is { } value)
+            {
+                return value;
+            }
+        }
+
+        return null;
+    }
 }
 
 public static class ParameterSources

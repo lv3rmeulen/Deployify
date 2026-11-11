@@ -20,8 +20,9 @@ namespace Deployify.Target.Nomad;
 /// </remarks>
 public sealed class JobGenerator(ILogger<JobGenerator> logger)
 {
-    public IReadOnlyList<object> GenerateJobs(AspireManifest manifest, EnvironmentConfig config)
-        => [.. Generate(manifest, config)];
+    public async Task<IReadOnlyList<object>> GenerateJobsAsync(
+        AspireManifest manifest, EnvironmentConfig config, CancellationToken ct = default)
+        => [.. await GenerateAsync(manifest, config, ct)];
 
     public async Task<string> WriteHclAsync(
         object jobObj, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
@@ -29,7 +30,7 @@ public sealed class JobGenerator(ILogger<JobGenerator> logger)
 
     // ── Model generation ──────────────────────────────────────────────────────
 
-    public IReadOnlyList<NomadJob> Generate(AspireManifest manifest, EnvironmentConfig config)
+    public async Task<IReadOnlyList<NomadJob>> GenerateAsync(AspireManifest manifest, EnvironmentConfig config, CancellationToken ct = default)
     {
         var nc = ReadConfig(config);
         var ports = ServicePorts.Assign(manifest, nc.BasePort);
@@ -69,12 +70,19 @@ public sealed class JobGenerator(ILogger<JobGenerator> logger)
             }
 
             // Values that contain a secret parameter are kept apart and stored the target's own way.
-            var env = resolver.ResolveEnvironment(resource.Env, overrides?.Env);
+            var env = await resolver.ResolveEnvironmentAsync(resource.Env, overrides?.Env, ct);
             job.Env = env.Plain;
             job.SecretEnv = env.Secrets;
 
-            job.Args = [.. ReadArgs(resource).Select(resolver.Resolve)];
-            if (ReadArgs(resource).Any(a => resolver.Expressions.Resolve(a).IsSecret))
+            var argsHaveSecret = false;
+            foreach (var arg in ReadArgs(resource))
+            {
+                var resolved = await resolver.Expressions.ResolveAsync(arg, ct);
+                job.Args.Add(resolved.ToString());
+                argsHaveSecret |= resolved.IsSecret;
+            }
+
+            if (argsHaveSecret)
             {
                 logger.LogWarning(
                     "An argument of {Service} contains a secret parameter; it is written into the job file. " +

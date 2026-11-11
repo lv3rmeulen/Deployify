@@ -61,7 +61,7 @@ internal static class RolloutCli
             return null;
         }
 
-        if (target is not IRolloutTarget rollout)
+        if (target.GetCapability<IRolloutTarget>() is not { } rollout)
         {
             AnsiConsole.MarkupLineInterpolated(
                 $"[dim]{target.DisplayName} has no health-gated rollout yet: deploying without health checks or automatic rollback.[/]");

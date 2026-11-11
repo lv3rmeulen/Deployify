@@ -286,6 +286,6 @@ public sealed class EcsRolloutTests
     }
 
     [Fact]
-    public void HasNativeRollback_FollowsCircuitBreakerSetting()
-        => Target(new FakeProcessRunner()).HasNativeRollback(EcsFixtures.EcsConfig()).ShouldBeTrue();
+    public async Task HasNativeRollback_FollowsCircuitBreakerSetting()
+        => (await Target(new FakeProcessRunner()).HasNativeRollbackAsync(EcsFixtures.EcsConfig(), TestContext.Current.CancellationToken)).ShouldBeTrue();
 }

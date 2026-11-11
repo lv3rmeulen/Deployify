@@ -40,12 +40,20 @@ public sealed class DeploymentTargetFactoryTests
     }
 
     [Theory]
-    [InlineData(DeploymentTargetType.Nomad, true)]
-    [InlineData(DeploymentTargetType.Kubernetes, false)]
-    public void IsSupported_ReturnsExpected(DeploymentTargetType type, bool expected)
+    [InlineData(DeploymentTargetType.Names.Nomad, true)]
+    [InlineData(DeploymentTargetType.Names.Kubernetes, false)]
+    public void IsSupported_ReturnsExpected(string type, bool expected)
     {
         var factory = new DeploymentTargetFactory([Mock(DeploymentTargetType.Nomad)]);
-        factory.IsSupported(type).ShouldBe(expected);
+        factory.IsSupported(DeploymentTargetType.Parse(type)).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void Get_FindsPluginTarget_CaseInsensitively()
+    {
+        var example = Mock(DeploymentTargetType.Parse("example"));
+        var factory = new DeploymentTargetFactory([example]);
+        factory.Get(DeploymentTargetType.Parse("EXAMPLE")).ShouldBeSameAs(example);
     }
 
     [Fact]
@@ -69,16 +77,16 @@ public sealed class DeploymentTargetFactoryTests
     }
 
     [Theory]
-    [InlineData(DeploymentTargetType.Nomad)]
-    [InlineData(DeploymentTargetType.Kubernetes)]
-    [InlineData(DeploymentTargetType.Compose)]
-    public void Get_ReturnsTarget_ForEachKnownType(DeploymentTargetType type)
+    [InlineData(DeploymentTargetType.Names.Nomad)]
+    [InlineData(DeploymentTargetType.Names.Kubernetes)]
+    [InlineData(DeploymentTargetType.Names.Compose)]
+    public void Get_ReturnsTarget_ForEachKnownType(string name)
     {
         var factory = new DeploymentTargetFactory([
             Mock(DeploymentTargetType.Nomad),
             Mock(DeploymentTargetType.Kubernetes),
             Mock(DeploymentTargetType.Compose)
         ]);
-        factory.Get(type).ShouldNotBeNull();
+        factory.Get(DeploymentTargetType.Parse(name)).ShouldNotBeNull();
     }
 }

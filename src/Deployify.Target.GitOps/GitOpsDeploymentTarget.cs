@@ -185,8 +185,9 @@ public abstract class GitOpsDeploymentTarget : IDeploymentTarget, ISecretStorePr
         => GetGitOpsConfig(config).Register || GetGitOpsConfig(config).Wait ||
            services.Any(s => s.UsesSecretRefs && !s.UsesKeyVaultCsi);
 
-    private IReadOnlyList<KubernetesServiceManifest> Generate(AspireManifest manifest, EnvironmentConfig config)
-        => _generator.Generate(manifest, config, KubernetesConfig(config));
+    private Task<IReadOnlyList<KubernetesServiceManifest>> GenerateServicesAsync(
+        AspireManifest manifest, EnvironmentConfig config, CancellationToken ct)
+        => _generator.GenerateAsync(manifest, config, KubernetesConfig(config), ct);
 
     private async Task<IReadOnlyList<string>> WriteTreeAsync(
         IReadOnlyList<KubernetesServiceManifest> services, EnvironmentConfig config, string outputDirectory, CancellationToken ct)
@@ -255,13 +256,13 @@ public abstract class GitOpsDeploymentTarget : IDeploymentTarget, ISecretStorePr
     /// </summary>
     public async Task<IReadOnlyList<string>> GenerateAsync(
         AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
-        => await WriteTreeAsync(Generate(manifest, config), config, outputDirectory, ct);
+        => await WriteTreeAsync(await GenerateServicesAsync(manifest, config, ct), config, outputDirectory, ct);
 
     /// <summary>Builds every service folder with <c>kubectl kustomize</c> (offline); without kubectl, only writes them.</summary>
     public async Task<IReadOnlyList<ValidationResult>> ValidateAsync(
         AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
     {
-        var services = Generate(manifest, config);
+        var services = await GenerateServicesAsync(manifest, config, ct);
         await WriteTreeAsync(services, config, outputDirectory, ct);
 
         var build = await KubectlAvailableAsync(ct);
@@ -299,7 +300,7 @@ public abstract class GitOpsDeploymentTarget : IDeploymentTarget, ISecretStorePr
     public async Task<IReadOnlyList<DiffEntry>> DiffAsync(
         AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
     {
-        var services = Generate(manifest, config);
+        var services = await GenerateServicesAsync(manifest, config, ct);
         await WriteTreeAsync(services, config, outputDirectory, ct);
 
         if (!await GitAvailableAsync(ct))
@@ -354,7 +355,7 @@ public abstract class GitOpsDeploymentTarget : IDeploymentTarget, ISecretStorePr
     public async Task<IReadOnlyList<DeploymentResult>> ApplyAsync(
         AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
     {
-        var services = Generate(manifest, config);
+        var services = await GenerateServicesAsync(manifest, config, ct);
         var tree = GitOpsTree.TreeDirectory(outputDirectory);
         if (services.Any(s => !Directory.Exists(Path.Combine(tree, s.ServiceName))))
         {
@@ -554,9 +555,10 @@ public abstract class GitOpsDeploymentTarget : IDeploymentTarget, ISecretStorePr
     public Task PublishAsync(AspireManifest manifest, EnvironmentConfig config, string appHostDirectory, CancellationToken ct = default)
         => _publisher.PublishAsync(manifest, config, appHostDirectory, ct);
 
-    public IReadOnlyList<ServiceExplanation> Explain(AspireManifest manifest, EnvironmentConfig config)
+    public async Task<IReadOnlyList<ServiceExplanation>> ExplainAsync(
+        AspireManifest manifest, EnvironmentConfig config, CancellationToken ct = default)
     {
-        var explanations = Kubernetes.Explain(manifest, config);
+        var explanations = await Kubernetes.ExplainAsync(manifest, config, ct);
         var gitops = GetGitOpsConfig(config);
         var repoPath = RepoPath(config);
         foreach (var e in explanations)
@@ -568,8 +570,9 @@ public abstract class GitOpsDeploymentTarget : IDeploymentTarget, ISecretStorePr
         return explanations;
     }
 
-    public IReadOnlyList<ServiceDependency> GetDependencies(AspireManifest manifest, EnvironmentConfig config)
-        => Kubernetes.GetDependencies(manifest, config);
+    public Task<IReadOnlyList<ServiceDependency>> GetDependenciesAsync(
+        AspireManifest manifest, EnvironmentConfig config, CancellationToken ct = default)
+        => Kubernetes.GetDependenciesAsync(manifest, config, ct);
 
     // ── Lifecycle (destroy / prune) ───────────────────────────────────────────
 
@@ -627,6 +630,7 @@ public abstract class GitOpsDeploymentTarget : IDeploymentTarget, ISecretStorePr
         Logger.LogInformation("[git] Removed {Path}/{Name}{Pushed}.", repoPath, service, commit is not null && gitops.Push ? " and pushed" : string.Empty);
     }
 
-    public IReadOnlyList<string> DescribeKept(EnvironmentConfig config, DeleteOptions options)
-        => [.. Kubernetes.DescribeKept(config, options), $"the services' history in {GetGitOpsConfig(config).RepoUrl}"];
+    public async Task<IReadOnlyList<string>> DescribeKeptAsync(
+        EnvironmentConfig config, DeleteOptions options, CancellationToken ct = default)
+        => [.. await Kubernetes.DescribeKeptAsync(config, options, ct), $"the services' history in {GetGitOpsConfig(config).RepoUrl}"];
 }

@@ -77,7 +77,7 @@ public static class DestroyCommand
                 return 1;
             }
 
-            if (target is not IResourceLifecycle lifecycle)
+            if (target.GetCapability<IResourceLifecycle>() is not { } lifecycle)
             {
                 AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {target.DisplayName} doesn't support destroy yet.");
                 return 1;
@@ -116,7 +116,7 @@ public static class DestroyCommand
 
             AnsiConsole.MarkupLineInterpolated($"[bold]Destroy plan[/] for [cyan]{envName}[/] on {target.DisplayName}:");
             StateCli.PrintRemovalPlan(plan, "destroy");
-            var kept = lifecycle.DescribeKept(config, options);
+            var kept = await lifecycle.DescribeKeptAsync(config, options, ct);
             if (kept.Count > 0)
             {
                 AnsiConsole.MarkupLine("[dim]Kept:[/]");

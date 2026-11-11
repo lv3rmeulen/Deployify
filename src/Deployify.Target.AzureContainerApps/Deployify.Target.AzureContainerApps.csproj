@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <RootNamespace>Deployify.Target.AzureContainerApps</RootNamespace>
+    <Description>Deployify deployment target for Azure Container Apps.</Description>
   </PropertyGroup>
 
   <ItemGroup>

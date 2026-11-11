@@ -168,7 +168,7 @@ public static class StateCommand
             }
 
             await using var _ = resolved;
-            if (resolved.Target is not IResourceLifecycle lifecycle)
+            if (resolved.Target.GetCapability<IResourceLifecycle>() is not { } lifecycle)
             {
                 AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {resolved.Target.DisplayName} doesn't support this yet.");
                 return 1;

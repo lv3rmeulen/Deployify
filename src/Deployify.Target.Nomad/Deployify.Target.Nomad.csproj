@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <RootNamespace>Deployify.Target.Nomad</RootNamespace>
+    <Description>Deployify deployment target for HashiCorp Nomad.</Description>
   </PropertyGroup>
 
   <ItemGroup>

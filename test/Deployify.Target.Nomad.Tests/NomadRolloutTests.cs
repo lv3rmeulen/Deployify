@@ -221,7 +221,7 @@ public sealed class NomadRolloutTests
         var paths = await target.GenerateAsync(Fixtures.SingleService("api"), Fixtures.NomadConfig(), dir.Path, Ct);
 
         (await File.ReadAllTextAsync(paths.Single(), Ct)).ShouldContain("auto_revert = true");
-        target.HasNativeRollback(Fixtures.NomadConfig()).ShouldBeTrue();
+        (await target.HasNativeRollbackAsync(Fixtures.NomadConfig(), Ct)).ShouldBeTrue();
     }
 
     /// <summary>Nomad matches JSON field names case-insensitively, and the client sends camelCase.</summary>

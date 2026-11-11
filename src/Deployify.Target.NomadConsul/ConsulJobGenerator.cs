@@ -35,10 +35,10 @@ public sealed class ConsulJobGenerator(ILogger<ConsulJobGenerator> logger)
 
     // ── Model generation ──────────────────────────────────────────────────────
 
-    public IReadOnlyList<ConsulJob> Generate(
+    public async Task<IReadOnlyList<ConsulJob>> GenerateAsync(
         AspireManifest manifest,
         EnvironmentConfig config,
-        NomadConsulTargetConfig consulCfg)
+        NomadConsulTargetConfig consulCfg, CancellationToken ct = default)
     {
         var ports = ServicePorts.Assign(manifest, consulCfg.BasePort);
         var jobs = new List<ConsulJob>();
@@ -112,7 +112,7 @@ public sealed class ConsulJobGenerator(ILogger<ConsulJobGenerator> logger)
             }, ParameterResolution.For(config));
 
             // Secret values go to Nomad Variables; everything else stays in the job's env block.
-            var env = resolver.ResolveEnvironment(resource.Env, overrides?.Env);
+            var env = await resolver.ResolveEnvironmentAsync(resource.Env, overrides?.Env, ct);
             foreach (var (k, v) in env.Plain)
             {
                 job.Env[k] = v;
@@ -124,8 +124,15 @@ public sealed class ConsulJobGenerator(ILogger<ConsulJobGenerator> logger)
                 job.SecretEnv[k] = v;
             }
 
-            job.Args = [.. ReadArgs(resource).Select(resolver.Resolve)];
-            if (ReadArgs(resource).Any(a => resolver.Expressions.Resolve(a).IsSecret))
+            var argsHaveSecret = false;
+            foreach (var arg in ReadArgs(resource))
+            {
+                var resolved = await resolver.Expressions.ResolveAsync(arg, ct);
+                job.Args.Add(resolved.ToString());
+                argsHaveSecret |= resolved.IsSecret;
+            }
+
+            if (argsHaveSecret)
             {
                 logger.LogWarning(
                     "An argument of {Service} contains a secret parameter; it is written into the job file. " +

@@ -134,26 +134,26 @@ public sealed class EcsDeploymentTargetTests
     // ── Explain ───────────────────────────────────────────────────────────────
 
     [Fact]
-    public void Explain_ReturnsOneExplanationPerService()
+    public async Task Explain_ReturnsOneExplanationPerService()
     {
         var config = EcsFixtures.EcsConfig();
-        var explanations = Target().Explain(EcsFixtures.SimpleManifest(), config);
+        var explanations = await Target().ExplainAsync(EcsFixtures.SimpleManifest(), config, TestContext.Current.CancellationToken);
         explanations.Count.ShouldBe(3);
     }
 
     [Fact]
-    public void Explain_SetsServiceNames()
+    public async Task Explain_SetsServiceNames()
     {
         var config = EcsFixtures.EcsConfig();
-        var explanations = Target().Explain(EcsFixtures.SimpleManifest(), config);
+        var explanations = await Target().ExplainAsync(EcsFixtures.SimpleManifest(), config, TestContext.Current.CancellationToken);
         explanations.Select(e => e.Name).ShouldBe(["api", "worker", "redis"], ignoreOrder: true);
     }
 
     [Fact]
-    public void Explain_AdditionalInfo_ContainsClusterAndRegion()
+    public async Task Explain_AdditionalInfo_ContainsClusterAndRegion()
     {
         var config = EcsFixtures.EcsConfig(region: "eu-west-1", cluster: "prod-cluster");
-        var explanations = Target().Explain(EcsFixtures.SingleService("api"), config);
+        var explanations = await Target().ExplainAsync(EcsFixtures.SingleService("api"), config, TestContext.Current.CancellationToken);
 
         var info = explanations[0].AdditionalInfo;
         info["cluster"].ShouldBe("prod-cluster");
@@ -161,36 +161,36 @@ public sealed class EcsDeploymentTargetTests
     }
 
     [Fact]
-    public void Explain_AdditionalInfo_ContainsLaunchType()
+    public async Task Explain_AdditionalInfo_ContainsLaunchType()
     {
         var config = EcsFixtures.EcsConfig();
-        var explanations = Target().Explain(EcsFixtures.SingleService("api"), config);
+        var explanations = await Target().ExplainAsync(EcsFixtures.SingleService("api"), config, TestContext.Current.CancellationToken);
         explanations[0].AdditionalInfo["launchType"].ShouldBe("Fargate");
     }
 
     [Fact]
-    public void Explain_PopulatesPorts()
+    public async Task Explain_PopulatesPorts()
     {
         var config = EcsFixtures.EcsConfig();
-        var explanations = Target().Explain(EcsFixtures.SingleService("api", "project.v0", 8080), config);
+        var explanations = await Target().ExplainAsync(EcsFixtures.SingleService("api", "project.v0", 8080), config, TestContext.Current.CancellationToken);
         explanations[0].Ports.ShouldContain(p => p.Contains("8080"));
     }
 
     // ── GetDependencies ───────────────────────────────────────────────────────
 
     [Fact]
-    public void GetDependencies_ReturnsDependencyEdges()
+    public async Task GetDependencies_ReturnsDependencyEdges()
     {
         var config = EcsFixtures.EcsConfig();
-        var deps = Target().GetDependencies(EcsFixtures.SimpleManifest(), config);
+        var deps = await Target().GetDependenciesAsync(EcsFixtures.SimpleManifest(), config, TestContext.Current.CancellationToken);
         deps.ShouldContain(d => d.From == "api" && d.To == "worker");
     }
 
     [Fact]
-    public void GetDependencies_ReturnsEmpty_WhenNoDependencies()
+    public async Task GetDependencies_ReturnsEmpty_WhenNoDependencies()
     {
         var config = EcsFixtures.EcsConfig();
-        var deps = Target().GetDependencies(EcsFixtures.SingleService("api"), config);
+        var deps = await Target().GetDependenciesAsync(EcsFixtures.SingleService("api"), config, TestContext.Current.CancellationToken);
         deps.ShouldBeEmpty();
     }
 }

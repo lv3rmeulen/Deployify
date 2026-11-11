@@ -35,8 +35,8 @@ public sealed class DeploymentRunnerTests : IAsyncDisposable
         _state = new StateSession(_dir, "dev", config: null);
         _target.TargetType.Returns(DeploymentTargetType.Compose);
         _target.DisplayName.Returns("Fake");
-        _target.Explain(default!, default!).ReturnsForAnyArgs([new ServiceExplanation { Name = "api" }]);
-        _target.GetDependencies(default!, default!).ReturnsForAnyArgs([]);
+        _target.ExplainAsync(default!, default!, default).ReturnsForAnyArgs([new ServiceExplanation { Name = "api" }]);
+        _target.GetDependenciesAsync(default!, default!, default).ReturnsForAnyArgs([]);
         _target.PlanAsync(default!, default!, default!, Ct).ReturnsForAnyArgs(new PlanResult { ToUpdate = ["api"] });
         _target.ApplyAsync(default!, default!, default!, Ct).ReturnsForAnyArgs(
             [new DeploymentResult { ServiceName = "api", Success = true }]);

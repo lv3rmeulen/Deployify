@@ -55,7 +55,7 @@ public sealed class NomadSecretTests
     {
         using var dir = new TempDir();
         var config = Config();
-        var api = _sut.Generate(Manifest(), config).Single(j => j.Name == "api");
+        var api = (await _sut.GenerateAsync(Manifest(), config, TestContext.Current.CancellationToken)).Single(j => j.Name == "api");
 
         var hcl = await File.ReadAllTextAsync(await _sut.WriteHclAsync(api, config, dir.Path, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
 
@@ -70,9 +70,9 @@ public sealed class NomadSecretTests
     }
 
     [Fact]
-    public void Generate_KeepsSecretValuesForApply()
+    public async Task Generate_KeepsSecretValuesForApply()
     {
-        var api = _sut.Generate(Manifest(), Config()).Single(j => j.Name == "api");
+        var api = (await _sut.GenerateAsync(Manifest(), Config(), TestContext.Current.CancellationToken)).Single(j => j.Name == "api");
 
         api.SecretEnv["ConnectionStrings__db"].ToString().ShouldBe($"Host=localhost;Password={Secret};Opt=a$b");
         api.Env.Keys.ShouldBe(new[] { "PLAIN" });
@@ -83,7 +83,7 @@ public sealed class NomadSecretTests
     {
         using var dir = new TempDir();
         var config = Fixtures.NomadConfig();
-        var job = _sut.Generate(Fixtures.SingleService(), config)[0];
+        var job = (await _sut.GenerateAsync(Fixtures.SingleService(), config, TestContext.Current.CancellationToken))[0];
 
         var hcl = await File.ReadAllTextAsync(await _sut.WriteHclAsync(job, config, dir.Path, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
 

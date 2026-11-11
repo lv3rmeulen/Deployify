@@ -319,6 +319,7 @@ public sealed class RolloutEngineTests
         public Task<string?> RestoreAsync(EnvironmentConfig config, ServiceSnapshot snapshot, CancellationToken ct = default)
             => inner.RestoreAsync(config, snapshot, ct);
 
-        public bool HasNativeRollback(EnvironmentConfig config) => false;
+        public Task<bool> HasNativeRollbackAsync(EnvironmentConfig config, CancellationToken ct = default)
+        => Task.FromResult(false);
     }
 }

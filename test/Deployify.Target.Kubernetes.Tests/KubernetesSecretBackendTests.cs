@@ -139,7 +139,7 @@ public sealed class KubernetesSecretModeTests
     private async Task<(KubernetesServiceManifest Svc, Dictionary<string, string> Files)> WriteAsync(
         TempDir dir, string service, EnvironmentConfig config)
     {
-        var svc = _sut.Generate(SecretManifests.Manifest(), config, _cfg).Single(s => s.ServiceName == service);
+        var svc = (await _sut.GenerateAsync(SecretManifests.Manifest(), config, _cfg, TestContext.Current.CancellationToken)).Single(s => s.ServiceName == service);
         var files = await _sut.WriteYamlAsync(svc, dir.Path, TestContext.Current.CancellationToken);
         return (svc, files.ToDictionary(Path.GetFileName, File.ReadAllText)!);
     }
@@ -227,7 +227,7 @@ public sealed class VaultModeTests
 
     private async Task<(KubernetesServiceManifest Svc, Dictionary<string, string> Files)> WriteAsync(TempDir dir, string service)
     {
-        var svc = _sut.Generate(SecretManifests.Manifest(), SecretManifests.Config(SecretBackendType.Vault), _cfg)
+        var svc = (await _sut.GenerateAsync(SecretManifests.Manifest(), SecretManifests.Config(SecretBackendType.Vault), _cfg, TestContext.Current.CancellationToken))
             .Single(s => s.ServiceName == service);
         var files = await _sut.WriteYamlAsync(svc, dir.Path, TestContext.Current.CancellationToken);
         return (svc, files.ToDictionary(Path.GetFileName, File.ReadAllText)!);
@@ -280,7 +280,7 @@ public sealed class VaultModeTests
         using var dir = new TempDir();
         var manifest = SecretManifests.Manifest();
         manifest.Resources["api"].Annotations = new Dictionary<string, string> { [DaprConstants.EnabledAnnotation] = "true" };
-        var svc = _sut.Generate(manifest, SecretManifests.Config(SecretBackendType.Vault), _cfg).Single(s => s.ServiceName == "api");
+        var svc = (await _sut.GenerateAsync(manifest, SecretManifests.Config(SecretBackendType.Vault), _cfg, TestContext.Current.CancellationToken)).Single(s => s.ServiceName == "api");
 
         await _sut.WriteYamlAsync(svc, dir.Path, TestContext.Current.CancellationToken);
 
@@ -341,8 +341,8 @@ public sealed class KubernetesSecretSyncTests
     private readonly KubernetesManifestGenerator _generator = new();
     private readonly KubernetesTargetConfig _cfg = new() { NamespacePrefix = "shop" };
 
-    private KubernetesServiceManifest Service(EnvironmentConfig config, string name = "api")
-        => _generator.Generate(SecretManifests.Manifest(), config, _cfg).Single(s => s.ServiceName == name);
+    private async Task<KubernetesServiceManifest> ServiceAsync(EnvironmentConfig config, string name = "api")
+        => (await _generator.GenerateAsync(SecretManifests.Manifest(), config, _cfg, TestContext.Current.CancellationToken)).Single(s => s.ServiceName == name);
 
     private static KubernetesDeploymentTarget Target(FakeVaultHandler? vault = null) => new(
         Substitute.For<IPublisher>(), NullLogger<KubernetesDeploymentTarget>.Instance)
@@ -356,7 +356,7 @@ public sealed class KubernetesSecretSyncTests
         var config = SecretManifests.Config(SecretBackendType.KubernetesSecret);
         var cluster = new FakeCluster();
 
-        var changed = await Target().SyncSecretsAsync(Service(config), config, cluster, TestContext.Current.CancellationToken);
+        var changed = await Target().SyncSecretsAsync(await ServiceAsync(config), config, cluster, TestContext.Current.CancellationToken);
 
         changed.ShouldBeFalse("a new secret needs no restart");
         cluster.Applied.Select(d => d.RootElement.GetProperty("kind").GetString()).ShouldBe(["Namespace", "Secret"]);
@@ -377,13 +377,13 @@ public sealed class KubernetesSecretSyncTests
         var config = SecretManifests.Config(SecretBackendType.KubernetesSecret);
         var cluster = new FakeCluster();
         var target = Target();
-        await target.SyncSecretsAsync(Service(config), config, cluster, TestContext.Current.CancellationToken);
+        await target.SyncSecretsAsync(await ServiceAsync(config), config, cluster, TestContext.Current.CancellationToken);
 
-        (await target.SyncSecretsAsync(Service(config), config, cluster, TestContext.Current.CancellationToken)).ShouldBeFalse();
+        (await target.SyncSecretsAsync(await ServiceAsync(config), config, cluster, TestContext.Current.CancellationToken)).ShouldBeFalse();
 
         var rotated = SecretManifests.Config(SecretBackendType.KubernetesSecret);
         rotated.Parameters["pg-password"] = "R0tated-pw";
-        (await target.SyncSecretsAsync(Service(rotated), rotated, cluster, TestContext.Current.CancellationToken)).ShouldBeTrue();
+        (await target.SyncSecretsAsync(await ServiceAsync(rotated), rotated, cluster, TestContext.Current.CancellationToken)).ShouldBeTrue();
     }
 
     [Fact]
@@ -392,7 +392,7 @@ public sealed class KubernetesSecretSyncTests
         var config = SecretManifests.Config(SecretBackendType.Inline);
         var cluster = new FakeCluster();
 
-        (await Target().SyncSecretsAsync(Service(config), config, cluster, TestContext.Current.CancellationToken)).ShouldBeFalse();
+        (await Target().SyncSecretsAsync(await ServiceAsync(config), config, cluster, TestContext.Current.CancellationToken)).ShouldBeFalse();
 
         cluster.Applied.ShouldBeEmpty();
         config.Secrets.References.ShouldBeEmpty();
@@ -412,7 +412,7 @@ public sealed class KubernetesSecretSyncTests
         };
         var cluster = new FakeCluster();
 
-        var changed = await Target(vault).SyncSecretsAsync(Service(config), config, cluster, TestContext.Current.CancellationToken);
+        var changed = await Target(vault).SyncSecretsAsync(await ServiceAsync(config), config, cluster, TestContext.Current.CancellationToken);
 
         changed.ShouldBeFalse("first write needs no restart");
         cluster.Applied.ShouldBeEmpty("a project under Vault needs no Kubernetes Secret");
@@ -441,7 +441,7 @@ public sealed class KubernetesSecretSyncTests
                 : FakeVaultHandler.Json("{\"data\":{\"version\":1}}")
         };
 
-        await Target(vault).SyncSecretsAsync(Service(config), config, new FakeCluster(), TestContext.Current.CancellationToken);
+        await Target(vault).SyncSecretsAsync(await ServiceAsync(config), config, new FakeCluster(), TestContext.Current.CancellationToken);
 
         vault.Requests.ShouldAllBe(r => r.Path.StartsWith("/v1/secret/"));
     }
@@ -453,7 +453,7 @@ public sealed class KubernetesSecretSyncTests
         var vault = new FakeVaultHandler();
         var cluster = new FakeCluster();
 
-        await Target(vault).SyncSecretsAsync(Service(config, "pg"), config, cluster, TestContext.Current.CancellationToken);
+        await Target(vault).SyncSecretsAsync(await ServiceAsync(config, "pg"), config, cluster, TestContext.Current.CancellationToken);
 
         vault.Requests.ShouldBeEmpty();
         cluster.Secrets.Keys.ShouldBe(["shop-pg/pg-secrets"]);

@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <RootNamespace>Deployify.Target.AwsEcs</RootNamespace>
+    <Description>Deployify deployment target for AWS ECS (Fargate).</Description>
   </PropertyGroup>
 
   <ItemGroup>

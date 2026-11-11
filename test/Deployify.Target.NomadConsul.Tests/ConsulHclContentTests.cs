@@ -21,10 +21,10 @@ public sealed class ConsulHclContentTests
     {
         using var dir = new Fixtures.TempDir();
         var cfg = consulCfg ?? Fixtures.DefaultConsulCfg();
-        var jobs = _sut.Generate(
+        var jobs = await _sut.GenerateAsync(
             Fixtures.SingleService(serviceName),
             Fixtures.EnvConfig(),
-            cfg);
+            cfg, TestContext.Current.CancellationToken);
         var path = await _sut.WriteHclAsync(jobs[0], Fixtures.EnvConfig(), cfg, dir.Path, ct);
         return await File.ReadAllTextAsync(path, ct);
     }
@@ -82,7 +82,7 @@ public sealed class ConsulHclContentTests
         var cfg = Fixtures.DefaultConsulCfg();
         var config = Fixtures.EnvConfig();
         config.ContainerRuntime = ContainerRuntime.Podman;
-        var jobs = _sut.Generate(Fixtures.SingleService("api"), config, cfg);
+        var jobs = await _sut.GenerateAsync(Fixtures.SingleService("api"), config, cfg, TestContext.Current.CancellationToken);
         var path = await _sut.WriteHclAsync(jobs[0], config, cfg, dir.Path, TestContext.Current.CancellationToken);
         var hcl = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
         hcl.ShouldContain("\"podman\"");
@@ -95,7 +95,7 @@ public sealed class ConsulHclContentTests
         using var dir = new Fixtures.TempDir();
         var cfg = Fixtures.DefaultConsulCfg();
         var config = Fixtures.EnvConfig(registry: "reg.io/app", tag: "v2");
-        var jobs = _sut.Generate(Fixtures.SingleService("api"), config, cfg);
+        var jobs = await _sut.GenerateAsync(Fixtures.SingleService("api"), config, cfg, TestContext.Current.CancellationToken);
         var path = await _sut.WriteHclAsync(jobs[0], config, cfg, dir.Path, TestContext.Current.CancellationToken);
         var hcl = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
         hcl.ShouldContain("reg.io/app/api:v2");
@@ -108,7 +108,7 @@ public sealed class ConsulHclContentTests
         var cfg = Fixtures.DefaultConsulCfg();
         var config = Fixtures.EnvConfig();
         config.ServiceOverrides["myapp"] = new ServiceOverride { Count = 3 };
-        var jobs = _sut.Generate(Fixtures.SingleService("myapp"), config, cfg);
+        var jobs = await _sut.GenerateAsync(Fixtures.SingleService("myapp"), config, cfg, TestContext.Current.CancellationToken);
         var path = await _sut.WriteHclAsync(jobs[0], config, cfg, dir.Path, TestContext.Current.CancellationToken);
         var hcl = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
         hcl.ShouldContain("count = 3");
@@ -181,7 +181,7 @@ public sealed class ConsulHclContentTests
     {
         using var dir = new Fixtures.TempDir();
         var cfg = Fixtures.DefaultConsulCfg();
-        var jobs = _sut.Generate(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), cfg);
+        var jobs = await _sut.GenerateAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), cfg, TestContext.Current.CancellationToken);
         var worker = jobs.Single(j => j.Name == "worker");
         var path = await _sut.WriteHclAsync(worker, Fixtures.EnvConfig(), cfg, dir.Path, TestContext.Current.CancellationToken);
         var hcl = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
@@ -193,7 +193,7 @@ public sealed class ConsulHclContentTests
     {
         using var dir = new Fixtures.TempDir();
         var cfg = Fixtures.DefaultConsulCfg();
-        var jobs = _sut.Generate(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), cfg);
+        var jobs = await _sut.GenerateAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), cfg, TestContext.Current.CancellationToken);
         var worker = jobs.Single(j => j.Name == "worker");
         var path = await _sut.WriteHclAsync(worker, Fixtures.EnvConfig(), cfg, dir.Path, TestContext.Current.CancellationToken);
         var hcl = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
@@ -205,7 +205,7 @@ public sealed class ConsulHclContentTests
     {
         using var dir = new Fixtures.TempDir();
         var cfg = Fixtures.DefaultConsulCfg(upstreamBase: 20000);
-        var jobs = _sut.Generate(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), cfg);
+        var jobs = await _sut.GenerateAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), cfg, TestContext.Current.CancellationToken);
         var worker = jobs.Single(j => j.Name == "worker");
         var path = await _sut.WriteHclAsync(worker, Fixtures.EnvConfig(), cfg, dir.Path, TestContext.Current.CancellationToken);
         var hcl = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
@@ -217,7 +217,7 @@ public sealed class ConsulHclContentTests
     {
         using var dir = new Fixtures.TempDir();
         var cfg = Fixtures.DefaultConsulCfg(upstreamBase: 20000);
-        var jobs = _sut.Generate(Fixtures.ManifestWithDependencyChain(), Fixtures.EnvConfig(), cfg);
+        var jobs = await _sut.GenerateAsync(Fixtures.ManifestWithDependencyChain(), Fixtures.EnvConfig(), cfg, TestContext.Current.CancellationToken);
         var api = jobs.Single(j => j.Name == "api");
         var path = await _sut.WriteHclAsync(api, Fixtures.EnvConfig(), cfg, dir.Path, TestContext.Current.CancellationToken);
         var hcl = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
@@ -240,7 +240,7 @@ public sealed class ConsulHclContentTests
         // worker has no bindings but depends on api — should still get a service+connect block
         using var dir = new Fixtures.TempDir();
         var cfg = Fixtures.DefaultConsulCfg();
-        var jobs = _sut.Generate(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), cfg);
+        var jobs = await _sut.GenerateAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), cfg, TestContext.Current.CancellationToken);
         var worker = jobs.Single(j => j.Name == "worker");
         var path = await _sut.WriteHclAsync(worker, Fixtures.EnvConfig(), cfg, dir.Path, TestContext.Current.CancellationToken);
         var hcl = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
@@ -255,7 +255,7 @@ public sealed class ConsulHclContentTests
         // worker has no bindings, so the service block should NOT contain a port = line
         using var dir = new Fixtures.TempDir();
         var cfg = Fixtures.DefaultConsulCfg();
-        var jobs = _sut.Generate(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), cfg);
+        var jobs = await _sut.GenerateAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), cfg, TestContext.Current.CancellationToken);
         var worker = jobs.Single(j => j.Name == "worker");
         var path = await _sut.WriteHclAsync(worker, Fixtures.EnvConfig(), cfg, dir.Path, TestContext.Current.CancellationToken);
         var hcl = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
@@ -282,7 +282,7 @@ public sealed class ConsulHclContentTests
                 ["cache"] = new() { Type = "container.v0", Image = "redis:7" }
             }
         };
-        var jobs = _sut.Generate(manifest, Fixtures.EnvConfig(), cfg);
+        var jobs = await _sut.GenerateAsync(manifest, Fixtures.EnvConfig(), cfg, TestContext.Current.CancellationToken);
         var path = await _sut.WriteHclAsync(jobs[0], Fixtures.EnvConfig(), cfg, dir.Path, TestContext.Current.CancellationToken);
         var hcl = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
         hcl.ShouldNotContain("service {");
@@ -296,7 +296,7 @@ public sealed class ConsulHclContentTests
     {
         using var dir = new Fixtures.TempDir();
         var cfg = Fixtures.DefaultConsulCfg();
-        var jobs = _sut.Generate(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), cfg);
+        var jobs = await _sut.GenerateAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), cfg, TestContext.Current.CancellationToken);
         var api = jobs.Single(j => j.Name == "api");
         var path = await _sut.WriteHclAsync(api, Fixtures.EnvConfig(), cfg, dir.Path, TestContext.Current.CancellationToken);
         var hcl = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
@@ -309,7 +309,7 @@ public sealed class ConsulHclContentTests
     {
         using var dir = new Fixtures.TempDir();
         var cfg = Fixtures.DefaultConsulCfg(upstreamBase: 20000);
-        var jobs = _sut.Generate(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), cfg);
+        var jobs = await _sut.GenerateAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), cfg, TestContext.Current.CancellationToken);
         var worker = jobs.Single(j => j.Name == "worker");
         var path = await _sut.WriteHclAsync(worker, Fixtures.EnvConfig(), cfg, dir.Path, TestContext.Current.CancellationToken);
         var hcl = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
@@ -344,9 +344,9 @@ public sealed class ConsulHclContentTests
     private async Task<string> GatewayHclAsync(NomadConsulTargetConfig cfg, CancellationToken ct = default)
     {
         using var dir = new Fixtures.TempDir();
-        var jobs = _sut.Generate(
+        var jobs = await _sut.GenerateAsync(
             Fixtures.SingleService("api", "project.v0", 8080, "http", external: true),
-            Fixtures.EnvConfig(), cfg);
+            Fixtures.EnvConfig(), cfg, TestContext.Current.CancellationToken);
         var gw = jobs.Single(j => j.IsIngressGateway);
         var path = await _sut.WriteHclAsync(gw, Fixtures.EnvConfig(), cfg, dir.Path, ct);
         return await File.ReadAllTextAsync(path, ct);
@@ -393,7 +393,7 @@ public sealed class ConsulHclContentTests
     {
         using var dir = new Fixtures.TempDir();
         var cfg = Fixtures.DefaultConsulCfg();
-        var jobs = _sut.Generate(Fixtures.SingleService("myservice"), Fixtures.EnvConfig(), cfg);
+        var jobs = await _sut.GenerateAsync(Fixtures.SingleService("myservice"), Fixtures.EnvConfig(), cfg, TestContext.Current.CancellationToken);
         var path = await _sut.WriteHclAsync(jobs[0], Fixtures.EnvConfig(), cfg, dir.Path, TestContext.Current.CancellationToken);
         File.Exists(path).ShouldBeTrue();
         path.ShouldEndWith("myservice.job.hcl");
@@ -405,7 +405,7 @@ public sealed class ConsulHclContentTests
         using var dir = new Fixtures.TempDir();
         var cfg = Fixtures.DefaultConsulCfg();
         var config = Fixtures.EnvConfig();
-        foreach (var job in _sut.Generate(Fixtures.SimpleManifest(), config, cfg))
+        foreach (var job in await _sut.GenerateAsync(Fixtures.SimpleManifest(), config, cfg, TestContext.Current.CancellationToken))
         {
             await _sut.WriteHclAsync(job, config, cfg, dir.Path, TestContext.Current.CancellationToken);
         }
@@ -419,7 +419,7 @@ public sealed class ConsulHclContentTests
         using var dir = new Fixtures.TempDir();
         var cfg = Fixtures.DefaultConsulCfg();
         var config = Fixtures.EnvConfig();
-        var jobs = _sut.Generate(Fixtures.SingleService("api"), config, cfg);
+        var jobs = await _sut.GenerateAsync(Fixtures.SingleService("api"), config, cfg, TestContext.Current.CancellationToken);
         var path1 = await _sut.WriteHclAsync(jobs[0], config, cfg, dir.Path, TestContext.Current.CancellationToken);
         var path2 = await _sut.WriteHclAsync(jobs[0], config, cfg, dir.Path, TestContext.Current.CancellationToken);
         path1.ShouldBe(path2);

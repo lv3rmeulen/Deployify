@@ -71,11 +71,11 @@ internal static class Fixtures
     };
 
     public static EnvironmentConfig DefaultConfig(
-        DeploymentTargetType target = DeploymentTargetType.Nomad,
+        DeploymentTargetType? target = null,
         string registry = "registry.example.com/myapp",
         string tag = "v1.0.0") => new()
     {
-        Target = target,
+        Target = target ?? DeploymentTargetType.Nomad,
         ContainerRegistry = registry,
         ImageTag = tag,
         OutputPath = "deployify-output"

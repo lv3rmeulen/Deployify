@@ -24,7 +24,7 @@ public sealed class AcaCliClientValidationTests
         var generator = new AcaManifestGenerator();
         var config = AcaFixtures.AcaConfig();
         var acaCfg = new AcaTargetConfig { Location = "eastus", SubscriptionId = "sub-123", EnvironmentName = "env" };
-        var apps = generator.Generate(AcaFixtures.SingleService("api"), config, acaCfg);
+        var apps = await generator.GenerateAsync(AcaFixtures.SingleService("api"), config, acaCfg, TestContext.Current.CancellationToken);
         var path = await generator.WriteAppSpecAsync(apps[0], config, acaCfg, dir.Path, TestContext.Current.CancellationToken);
 
         var errors = await Client().ValidateAppSpecAsync(path, TestContext.Current.CancellationToken);
@@ -218,26 +218,26 @@ public sealed class AcaDeploymentTargetTests
     // ── Explain ───────────────────────────────────────────────────────────────
 
     [Fact]
-    public void Explain_ReturnsOneExplanationPerService()
+    public async Task Explain_ReturnsOneExplanationPerService()
     {
         var config = AcaFixtures.AcaConfig();
-        var explanations = Target().Explain(AcaFixtures.SimpleManifest(), config);
+        var explanations = await Target().ExplainAsync(AcaFixtures.SimpleManifest(), config, TestContext.Current.CancellationToken);
         explanations.Count.ShouldBe(3);
     }
 
     [Fact]
-    public void Explain_SetsServiceNames()
+    public async Task Explain_SetsServiceNames()
     {
         var config = AcaFixtures.AcaConfig();
-        var explanations = Target().Explain(AcaFixtures.SimpleManifest(), config);
+        var explanations = await Target().ExplainAsync(AcaFixtures.SimpleManifest(), config, TestContext.Current.CancellationToken);
         explanations.Select(e => e.Name).ShouldBe(["api", "worker", "redis"], ignoreOrder: true);
     }
 
     [Fact]
-    public void Explain_AdditionalInfo_ContainsResourceGroupAndLocation()
+    public async Task Explain_AdditionalInfo_ContainsResourceGroupAndLocation()
     {
         var config = AcaFixtures.AcaConfig(resourceGroup: "prod-rg", location: "westeurope");
-        var explanations = Target().Explain(AcaFixtures.SingleService("api"), config);
+        var explanations = await Target().ExplainAsync(AcaFixtures.SingleService("api"), config, TestContext.Current.CancellationToken);
 
         var info = explanations[0].AdditionalInfo;
         info["resourceGroup"].ShouldBe("prod-rg");
@@ -245,10 +245,10 @@ public sealed class AcaDeploymentTargetTests
     }
 
     [Fact]
-    public void Explain_AdditionalInfo_ContainsReplicaRange()
+    public async Task Explain_AdditionalInfo_ContainsReplicaRange()
     {
         var config = AcaFixtures.AcaConfig();
-        var explanations = Target().Explain(AcaFixtures.SingleService("api"), config);
+        var explanations = await Target().ExplainAsync(AcaFixtures.SingleService("api"), config, TestContext.Current.CancellationToken);
 
         var info = explanations[0].AdditionalInfo;
         info.ShouldContainKey("minReplicas");
@@ -256,10 +256,10 @@ public sealed class AcaDeploymentTargetTests
     }
 
     [Fact]
-    public void Explain_AdditionalInfo_ContainsCpuAndMemory()
+    public async Task Explain_AdditionalInfo_ContainsCpuAndMemory()
     {
         var config = AcaFixtures.AcaConfig();
-        var explanations = Target().Explain(AcaFixtures.SingleService("api"), config);
+        var explanations = await Target().ExplainAsync(AcaFixtures.SingleService("api"), config, TestContext.Current.CancellationToken);
 
         var info = explanations[0].AdditionalInfo;
         info["cpu"].ShouldContain("cores");
@@ -267,28 +267,28 @@ public sealed class AcaDeploymentTargetTests
     }
 
     [Fact]
-    public void Explain_PopulatesPorts()
+    public async Task Explain_PopulatesPorts()
     {
         var config = AcaFixtures.AcaConfig();
-        var explanations = Target().Explain(AcaFixtures.SingleService("api", "project.v0", 8080), config);
+        var explanations = await Target().ExplainAsync(AcaFixtures.SingleService("api", "project.v0", 8080), config, TestContext.Current.CancellationToken);
         explanations[0].Ports.ShouldContain(p => p.Contains("8080"));
     }
 
     // ── GetDependencies ───────────────────────────────────────────────────────
 
     [Fact]
-    public void GetDependencies_ReturnsDependencyEdges()
+    public async Task GetDependencies_ReturnsDependencyEdges()
     {
         var config = AcaFixtures.AcaConfig();
-        var deps = Target().GetDependencies(AcaFixtures.SimpleManifest(), config);
+        var deps = await Target().GetDependenciesAsync(AcaFixtures.SimpleManifest(), config, TestContext.Current.CancellationToken);
         deps.ShouldContain(d => d.From == "api" && d.To == "worker");
     }
 
     [Fact]
-    public void GetDependencies_ReturnsEmpty_WhenNoDependencies()
+    public async Task GetDependencies_ReturnsEmpty_WhenNoDependencies()
     {
         var config = AcaFixtures.AcaConfig();
-        var deps = Target().GetDependencies(AcaFixtures.SingleService("api"), config);
+        var deps = await Target().GetDependenciesAsync(AcaFixtures.SingleService("api"), config, TestContext.Current.CancellationToken);
         deps.ShouldBeEmpty();
     }
 }

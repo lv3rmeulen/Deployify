@@ -50,7 +50,7 @@ public sealed class NomadConsulSecretTests
         var cfg = Fixtures.DefaultConsulCfg();
         var config = Fixtures.EnvConfig(consulCfg: cfg);
         config.Parameters["pg-password"] = Secret;
-        var api = _sut.Generate(Manifest(), config, cfg).Single(j => j.Name == "api");
+        var api = (await _sut.GenerateAsync(Manifest(), config, cfg, TestContext.Current.CancellationToken)).Single(j => j.Name == "api");
 
         var path = await _sut.WriteHclAsync(api, config, cfg, dir.Path, TestContext.Current.CancellationToken);
         var hcl = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);

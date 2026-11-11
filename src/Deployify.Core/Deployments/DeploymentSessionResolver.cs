@@ -66,7 +66,11 @@ public static class DeploymentSessionResolver
         var (config, envName) = await stateManager.LoadActiveAsync(stateDirectory, request.Environment, ct);
 
         var targetType = request.Target ?? config.Target;
-        var target = Get<IDeploymentTargetFactory>(services).Get(targetType);
+        var target = Get<IDeploymentTargetFactory>(services).Get(targetType, stateDirectory);
+        if (target is IStartableTarget startable)
+        {
+            await startable.StartAsync(ct);
+        }
 
         // Deployment state: lock first, then copy remote state in, so parameter values below
         // are the ones the last run (on any machine) stored.

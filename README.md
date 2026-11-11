@@ -90,6 +90,13 @@ deployify ci --skip-validate
 | `explain` | Human-readable summary of every service and its configuration |
 | `graph` | Print the service dependency tree |
 
+### Plugins
+
+| Command | Description |
+|---|---|
+| `plugin list [--check]` | Target plugins Deployify can find, and where; `--check` starts each one |
+| `plugin lock [targets…]` | Pin plugin versions (and file hashes) in `deployify-plugins.lock.json` |
+
 ### Automation
 
 | Command | Description |
@@ -866,6 +873,15 @@ gateway with a TCP listener for every HTTP endpoint marked external in the AppHo
 `healthCheckType` works as for the `Nomad` target (`tcp` by default).
 
 ---
+
+### Plugin targets
+
+Any other platform can be added as an out-of-process plugin: an executable named
+`deployify-target-<id>` that Deployify finds in the project's `.deployify/plugins` folder,
+`~/.deployify/plugins` or on `PATH`, and talks to over JSON-RPC. Set `"Target": "<id>"` and
+use it like a built-in target. See [docs/plugins.md](docs/plugins.md) for using, locking,
+writing (with `Deployify.Plugin.Sdk`) and testing plugins.
+
 
 ## Parameters and secrets
 

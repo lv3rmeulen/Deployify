@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using Deployify.Core.Expressions;
 using Shouldly;
 using Xunit;
@@ -39,16 +40,16 @@ public sealed class ParameterSourceTests
     }
 
     [Fact]
-    public void Dictionary_MatchesByNameCaseInsensitively()
+    public async Task Dictionary_MatchesByNameCaseInsensitively()
     {
         var source = new DictionaryParameterSource(new Dictionary<string, string> { ["PG-Password"] = "pw" });
 
-        source.GetValue("pg-password", s_value).ShouldBe("pw");
-        source.GetValue("other", s_value).ShouldBeNull();
+        (await source.GetValueAsync("pg-password", s_value, TestContext.Current.CancellationToken)).ShouldBe("pw");
+        (await source.GetValueAsync("other", s_value, TestContext.Current.CancellationToken)).ShouldBeNull();
     }
 
     [Fact]
-    public void Dictionary_NamedInput_UsesDottedKey()
+    public async Task Dictionary_NamedInput_UsesDottedKey()
     {
         var source = new DictionaryParameterSource(new Dictionary<string, string>
         {
@@ -56,34 +57,34 @@ public sealed class ParameterSourceTests
             ["p.region"] = "westeurope"
         });
 
-        source.GetValue("p", new ParameterInput { Name = "region" }).ShouldBe("westeurope");
-        source.GetValue("p", new ParameterInput { Name = "zone" }).ShouldBeNull();
+        (await source.GetValueAsync("p", new ParameterInput { Name = "region" }, TestContext.Current.CancellationToken)).ShouldBe("westeurope");
+        (await source.GetValueAsync("p", new ParameterInput { Name = "zone" }, TestContext.Current.CancellationToken)).ShouldBeNull();
     }
 
     [Fact]
-    public void Environment_UsesAspireConvention()
+    public async Task Environment_UsesAspireConvention()
     {
         var env = new Dictionary<string, string> { ["Parameters__greeting"] = "hi" };
         var source = new EnvironmentParameterSource(n => env.GetValueOrDefault(n));
 
-        source.GetValue("greeting", s_value).ShouldBe("hi");
+        (await source.GetValueAsync("greeting", s_value, TestContext.Current.CancellationToken)).ShouldBe("hi");
     }
 
     [Fact]
-    public void Environment_AcceptsUnderscoreForDash()
+    public async Task Environment_AcceptsUnderscoreForDash()
     {
         var env = new Dictionary<string, string> { ["Parameters__pg_password"] = "pw" };
         var source = new EnvironmentParameterSource(n => env.GetValueOrDefault(n));
 
-        source.GetValue("pg-password", s_value).ShouldBe("pw");
+        (await source.GetValueAsync("pg-password", s_value, TestContext.Current.CancellationToken)).ShouldBe("pw");
     }
 
     [Fact]
-    public void Environment_IgnoresEmptyValues()
+    public async Task Environment_IgnoresEmptyValues()
     {
         var source = new EnvironmentParameterSource(_ => "");
 
-        source.GetValue("greeting", s_value).ShouldBeNull();
+        (await source.GetValueAsync("greeting", s_value, TestContext.Current.CancellationToken)).ShouldBeNull();
     }
 
     [Fact]
@@ -95,13 +96,13 @@ public sealed class ParameterSourceTests
     }
 
     [Fact]
-    public void Generated_IsStoredAndReused()
+    public async Task Generated_IsStoredAndReused()
     {
         var store = new Dictionary<string, string>();
         var input = new ParameterInput { Name = "value", Generate = new GenerateOptions { MinLength = 16 } };
 
-        var first = new GeneratedParameterSource(store).GetValue("pg-password", input);
-        var second = new GeneratedParameterSource(store).GetValue("pg-password", input);
+        var first = await new GeneratedParameterSource(store).GetValueAsync("pg-password", input, TestContext.Current.CancellationToken);
+        var second = await new GeneratedParameterSource(store).GetValueAsync("pg-password", input, TestContext.Current.CancellationToken);
 
         first.ShouldNotBeNull().Length.ShouldBe(16);
         second.ShouldBe(first);
@@ -109,56 +110,56 @@ public sealed class ParameterSourceTests
     }
 
     [Fact]
-    public void Generated_UsesExistingStoreValue()
+    public async Task Generated_UsesExistingStoreValue()
     {
         var store = new Dictionary<string, string> { ["pg-password.value"] = "from-state" };
         var input = new ParameterInput { Generate = new GenerateOptions() };
 
-        new GeneratedParameterSource(store).GetValue("pg-password", input).ShouldBe("from-state");
+        (await new GeneratedParameterSource(store).GetValueAsync("pg-password", input, TestContext.Current.CancellationToken)).ShouldBe("from-state");
     }
 
     [Fact]
-    public void Generated_SkipsInputsWithoutGenerate()
+    public async Task Generated_SkipsInputsWithoutGenerate()
     {
-        new GeneratedParameterSource().GetValue("p", s_value).ShouldBeNull();
+        (await new GeneratedParameterSource().GetValueAsync("p", s_value, TestContext.Current.CancellationToken)).ShouldBeNull();
     }
 
     [Fact]
-    public void Default_ExplicitBeatsEnvironmentBeatsDefaultBeatsGenerated()
+    public async Task Default_ExplicitBeatsEnvironmentBeatsDefaultBeatsGenerated()
     {
         var input = new ParameterInput { DefaultValue = "default", Generate = new GenerateOptions() };
         var env = new Dictionary<string, string> { ["Parameters__p"] = "env" };
 
-        ParameterSources.Default(new Dictionary<string, string> { ["p"] = "explicit" }, getVariable: n => env.GetValueOrDefault(n))
-            .GetValue("p", input).ShouldBe("explicit");
-        ParameterSources.Default(getVariable: n => env.GetValueOrDefault(n))
-            .GetValue("p", input).ShouldBe("env");
-        ParameterSources.Default(getVariable: _ => null)
-            .GetValue("p", input).ShouldBe("default");
-        ParameterSources.Default(getVariable: _ => null)
-            .GetValue("p", new ParameterInput { Generate = new GenerateOptions() }).ShouldNotBeNull().Length.ShouldBe(22);
+        (await ParameterSources.Default(new Dictionary<string, string> { ["p"] = "explicit" }, getVariable: n => env.GetValueOrDefault(n))
+            .GetValueAsync("p", input, TestContext.Current.CancellationToken)).ShouldBe("explicit");
+        (await ParameterSources.Default(getVariable: n => env.GetValueOrDefault(n))
+            .GetValueAsync("p", input, TestContext.Current.CancellationToken)).ShouldBe("env");
+        (await ParameterSources.Default(getVariable: _ => null)
+            .GetValueAsync("p", input, TestContext.Current.CancellationToken)).ShouldBe("default");
+        (await ParameterSources.Default(getVariable: _ => null)
+            .GetValueAsync("p", new ParameterInput { Generate = new GenerateOptions() }, TestContext.Current.CancellationToken)).ShouldNotBeNull().Length.ShouldBe(22);
     }
 
     [Fact]
-    public void Default_WritesGeneratedValuesToGivenStore()
+    public async Task Default_WritesGeneratedValuesToGivenStore()
     {
         var store = new Dictionary<string, string>();
         var source = ParameterSources.Default(generatedStore: store, getVariable: _ => null);
 
-        var value = source.GetValue("p", new ParameterInput { Generate = new GenerateOptions() });
+        var value = await source.GetValueAsync("p", new ParameterInput { Generate = new GenerateOptions() }, TestContext.Current.CancellationToken);
 
         store.ShouldHaveSingleItem().ShouldBe(new KeyValuePair<string, string>("p.value", value!));
     }
 
     [Fact]
-    public void Composite_ReturnsFirstNonNull()
+    public async Task Composite_ReturnsFirstNonNull()
     {
         var source = new CompositeParameterSource(
             new DictionaryParameterSource(new Dictionary<string, string>()),
             new DictionaryParameterSource(new Dictionary<string, string> { ["p"] = "second" }),
             new DictionaryParameterSource(new Dictionary<string, string> { ["p"] = "third" }));
 
-        source.GetValue("p", s_value).ShouldBe("second");
+        (await source.GetValueAsync("p", s_value, TestContext.Current.CancellationToken)).ShouldBe("second");
     }
 
     // ── PasswordGenerator ─────────────────────────────────────────────────────

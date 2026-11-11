@@ -180,7 +180,7 @@ public sealed class AcaRolloutTests
         var config = KeyVaultConfig();
         var cfg = ((System.Text.Json.JsonElement)config.TargetConfig["aca"]!)
             .Deserialize<AcaTargetConfig>(Deployify.Core.Models.TargetConfigJsonOptions.Default)!;
-        var app = new AcaManifestGenerator().Generate(manifest, config, cfg).Single(a => a.Name == "api");
+        var app = (await new AcaManifestGenerator().GenerateAsync(manifest, config, cfg, TestContext.Current.CancellationToken)).Single(a => a.Name == "api");
         var secretName = AcaKeyVault.AppSecretName(
             config.Secrets.KeyVault, cfg, "api", AcaManifestGenerator.SecretNames(app)[app.SecretEnv.Keys.Single()]);
 

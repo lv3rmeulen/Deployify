@@ -59,12 +59,12 @@ public sealed class KubernetesKeyVaultTests
         return config;
     }
 
-    private KubernetesServiceManifest Service(EnvironmentConfig config, string name = "api")
-        => _generator.Generate(SecretManifests.Manifest(), config, _cfg).Single(s => s.ServiceName == name);
+    private async Task<KubernetesServiceManifest> ServiceAsync(EnvironmentConfig config, string name = "api")
+        => (await _generator.GenerateAsync(SecretManifests.Manifest(), config, _cfg, TestContext.Current.CancellationToken)).Single(s => s.ServiceName == name);
 
     private async Task<Dictionary<string, string>> WriteAsync(TempDir dir, EnvironmentConfig config, string name = "api")
     {
-        var files = await _generator.WriteYamlAsync(Service(config, name), dir.Path, TestContext.Current.CancellationToken);
+        var files = await _generator.WriteYamlAsync(await ServiceAsync(config, name), dir.Path, TestContext.Current.CancellationToken);
         return files.ToDictionary(f => Path.GetFileName(f), f => File.ReadAllText(f).ReplaceLineEndings("\n"));
     }
 
@@ -192,11 +192,11 @@ public sealed class KubernetesKeyVaultTests
     }
 
     [Fact]
-    public void MissingSettings_AreReportedTogether()
+    public async Task MissingSettings_AreReportedTogether()
     {
         var config = SecretManifests.Config(SecretBackendType.KeyVault);
 
-        var ex = Should.Throw<InvalidOperationException>(() => Service(config));
+        var ex = await Should.ThrowAsync<InvalidOperationException>(() => ServiceAsync(config));
 
         ex.Message.ShouldContain("secrets.keyVault.vaultName");
         ex.Message.ShouldContain("secrets.keyVault.tenantId");
@@ -204,13 +204,13 @@ public sealed class KubernetesKeyVaultTests
     }
 
     [Fact]
-    public void CloudName_IsPassedToTheProvider()
+    public async Task CloudName_IsPassedToTheProvider()
     {
         var config = Config();
         config.Secrets.KeyVault.CloudName = "AzureChinaCloud";
         using var dir = new TempDir();
 
-        var files = _generator.WriteYamlAsync(Service(config), dir.Path, TestContext.Current.CancellationToken).GetAwaiter().GetResult();
+        var files = await _generator.WriteYamlAsync(await ServiceAsync(config), dir.Path, TestContext.Current.CancellationToken);
 
         File.ReadAllText(files.Single(f => f.EndsWith("secretproviderclass.yaml"))).ShouldContain("cloudName: \"AzureChinaCloud\"");
     }
@@ -224,7 +224,7 @@ public sealed class KubernetesKeyVaultTests
         var kv = new FakeKeyVault();
         var cluster = new FakeCluster();
 
-        var changed = await Target(kv).SyncSecretsAsync(Service(config), config, cluster, TestContext.Current.CancellationToken);
+        var changed = await Target(kv).SyncSecretsAsync(await ServiceAsync(config), config, cluster, TestContext.Current.CancellationToken);
 
         changed.ShouldBeFalse();
         cluster.Applied.ShouldBeEmpty("the CSI driver owns the synced Secret");
@@ -244,12 +244,12 @@ public sealed class KubernetesKeyVaultTests
         var kv = new FakeKeyVault();
         var target = Target(kv);
         var config = Config();
-        await target.SyncSecretsAsync(Service(config), config, new FakeCluster(), TestContext.Current.CancellationToken);
-        (await target.SyncSecretsAsync(Service(config), config, new FakeCluster(), TestContext.Current.CancellationToken)).ShouldBeFalse();
+        await target.SyncSecretsAsync(await ServiceAsync(config), config, new FakeCluster(), TestContext.Current.CancellationToken);
+        (await target.SyncSecretsAsync(await ServiceAsync(config), config, new FakeCluster(), TestContext.Current.CancellationToken)).ShouldBeFalse();
         kv.Sets.Count.ShouldBe(1);
 
         var rotated = Config(secret: "R0tated-pw");
-        (await target.SyncSecretsAsync(Service(rotated), rotated, new FakeCluster(), TestContext.Current.CancellationToken)).ShouldBeTrue();
+        (await target.SyncSecretsAsync(await ServiceAsync(rotated), rotated, new FakeCluster(), TestContext.Current.CancellationToken)).ShouldBeTrue();
     }
 
     [Fact]

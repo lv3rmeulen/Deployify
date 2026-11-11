@@ -38,7 +38,7 @@ public sealed class NomadDeploymentTarget(
     public async Task<IReadOnlyList<string>> GenerateAsync(
         AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
     {
-        var jobs = jobGenerator.Generate(manifest, config);
+        var jobs = await jobGenerator.GenerateAsync(manifest, config, ct);
         var paths = new List<string>();
         foreach (var job in jobs)
         {
@@ -52,7 +52,7 @@ public sealed class NomadDeploymentTarget(
         AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        var jobs = jobGenerator.Generate(manifest, config);
+        var jobs = await jobGenerator.GenerateAsync(manifest, config, ct);
         var results = new List<ValidationResult>();
         using var client = BuildClient(cfg);
         foreach (var job in jobs)
@@ -85,7 +85,7 @@ public sealed class NomadDeploymentTarget(
     private async Task<List<DiffEntry>> CompareWithClusterAsync(
         AspireManifest manifest, EnvironmentConfig config, NomadTargetConfig cfg, string outputDirectory, CancellationToken ct)
     {
-        var jobs = jobGenerator.Generate(manifest, config);
+        var jobs = await jobGenerator.GenerateAsync(manifest, config, ct);
         var paths = new Dictionary<string, string>();
         foreach (var job in jobs)
         {
@@ -152,7 +152,7 @@ public sealed class NomadDeploymentTarget(
         AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        var jobs = jobGenerator.Generate(manifest, config);
+        var jobs = await jobGenerator.GenerateAsync(manifest, config, ct);
         var results = new List<DeploymentResult>();
         using var client = BuildClient(cfg);
 
@@ -212,7 +212,7 @@ public sealed class NomadDeploymentTarget(
         AspireManifest manifest, EnvironmentConfig config, string outputDirectory, string service,
         CancellationToken ct = default)
     {
-        var job = jobGenerator.Generate(manifest, config).FirstOrDefault(j => j.Name == service);
+        var job = (await jobGenerator.GenerateAsync(manifest, config, ct)).FirstOrDefault(j => j.Name == service);
         if (job is null)
         {
             return new AppliedRevision { ServiceName = service, Success = false, Error = "not a Nomad job in this manifest" };
@@ -248,7 +248,8 @@ public sealed class NomadDeploymentTarget(
         return await _rollout.RestoreAsync(client, cfg.Namespace, snapshot, ct);
     }
 
-    public bool HasNativeRollback(EnvironmentConfig config) => GetConfig(config).AutoRevert;
+    public Task<bool> HasNativeRollbackAsync(EnvironmentConfig config, CancellationToken ct = default)
+        => Task.FromResult(GetConfig(config).AutoRevert);
 
     // ── Lifecycle (destroy / prune) ───────────────────────────────────────────
 
@@ -264,18 +265,18 @@ public sealed class NomadDeploymentTarget(
         await NomadLifecycle.DeleteServiceAsync(client, service, options, logger, ct);
     }
 
-    public IReadOnlyList<string> DescribeKept(EnvironmentConfig config, DeleteOptions options)
-        => NomadLifecycle.DescribeKept(GetConfig(config).Namespace, options);
+    public Task<IReadOnlyList<string>> DescribeKeptAsync(EnvironmentConfig config, DeleteOptions options, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<string>>(NomadLifecycle.DescribeKept(GetConfig(config).Namespace, options));
 
     public async Task PublishAsync(
         AspireManifest manifest, EnvironmentConfig config, string appHostDirectory, CancellationToken ct = default)
         => await publisher.PublishAsync(manifest, config, appHostDirectory, ct);
 
-    public IReadOnlyList<ServiceExplanation> Explain(AspireManifest manifest, EnvironmentConfig config)
+    public async Task<IReadOnlyList<ServiceExplanation>> ExplainAsync(AspireManifest manifest, EnvironmentConfig config, CancellationToken ct = default)
     {
         var cfg = GetConfig(config);
-        var jobs = jobGenerator.Generate(manifest, config);
-        return
+        var jobs = await jobGenerator.GenerateAsync(manifest, config, ct);
+        return 
         [
             .. jobs.Select(j => new ServiceExplanation
             {
@@ -291,10 +292,10 @@ public sealed class NomadDeploymentTarget(
         ];
     }
 
-    public IReadOnlyList<ServiceDependency> GetDependencies(AspireManifest manifest, EnvironmentConfig config)
-        =>
+    public async Task<IReadOnlyList<ServiceDependency>> GetDependenciesAsync(AspireManifest manifest, EnvironmentConfig config, CancellationToken ct = default)
+        => 
         [
-            .. jobGenerator.Generate(manifest, config)
+            .. (await jobGenerator.GenerateAsync(manifest, config, ct))
                 .SelectMany(j => j.Dependencies.Select(dep => new ServiceDependency { From = dep, To = j.Name }))
         ];
 

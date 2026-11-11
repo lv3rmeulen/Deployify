@@ -17,6 +17,14 @@
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.14" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="10.0.14" />
   </ItemGroup>
+  <ItemGroup Label="Plugins">
+    <!-- Kept at the version Aspire.Hosting depends on, so Deployify.Hosting doesn't upgrade
+         Aspire's own StreamJsonRpc inside the AppHost. Move it together with Aspire.Hosting. -->
+    <PackageVersion Include="StreamJsonRpc" Version="2.25.29" />
+    <!-- StreamJsonRpc 2.25.29 asks for MessagePack 2.5.302, which has GHSA-qhrr-8q5h-9q3h. -->
+    <PackageVersion Include="MessagePack" Version="2.5.307" />
+    <PackageVersion Include="JsonSchema.Net" Version="9.6.0" />
+  </ItemGroup>
   <ItemGroup Label="Aspire">
     <!-- Pinned: Deployify.Hosting builds on Aspire's experimental pipeline APIs (ASPIREPIPELINES001). -->
     <PackageVersion Include="Aspire.Hosting" Version="13.6.5" />

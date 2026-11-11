@@ -76,17 +76,20 @@ public interface IDeploymentTarget
 
     /// <summary>
     /// Returns human-readable explanations for each service in the manifest.
+    /// Async so a target can ask something else (a plugin process, an API) for the answer.
     /// </summary>
-    IReadOnlyList<ServiceExplanation> Explain(
+    Task<IReadOnlyList<ServiceExplanation>> ExplainAsync(
         AspireManifest manifest,
-        EnvironmentConfig config);
+        EnvironmentConfig config,
+        CancellationToken ct = default);
 
     /// <summary>
     /// Returns dependency edges between services for graph rendering.
     /// </summary>
-    IReadOnlyList<ServiceDependency> GetDependencies(
+    Task<IReadOnlyList<ServiceDependency>> GetDependenciesAsync(
         AspireManifest manifest,
-        EnvironmentConfig config);
+        EnvironmentConfig config,
+        CancellationToken ct = default);
 
     /// <summary>
     /// Compares the live state of the target against the local artifacts.

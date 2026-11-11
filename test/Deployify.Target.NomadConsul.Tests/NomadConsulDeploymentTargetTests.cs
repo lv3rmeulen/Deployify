@@ -249,67 +249,67 @@ public sealed class NomadConsulDeploymentTargetTests
     // ── Explain ───────────────────────────────────────────────────────────────
 
     [Fact]
-    public void Explain_ReturnsOneExplanationPerService()
+    public async Task Explain_ReturnsOneExplanationPerService()
     {
-        var explanations = Target().Explain(Fixtures.SimpleManifest(), Fixtures.EnvConfig());
+        var explanations = await Target().ExplainAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), TestContext.Current.CancellationToken);
         explanations.Count.ShouldBe(3);
     }
 
     [Fact]
-    public void Explain_SetsServiceNames()
+    public async Task Explain_SetsServiceNames()
     {
-        var explanations = Target().Explain(Fixtures.SimpleManifest(), Fixtures.EnvConfig());
+        var explanations = await Target().ExplainAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), TestContext.Current.CancellationToken);
         explanations.Select(e => e.Name).ShouldBe(["api", "worker", "redis"], ignoreOrder: true);
     }
 
     [Fact]
-    public void Explain_AdditionalInfo_ContainsNetworkMode()
+    public async Task Explain_AdditionalInfo_ContainsNetworkMode()
     {
-        var explanations = Target().Explain(
-            Fixtures.SingleService("api"), Fixtures.EnvConfig());
+        var explanations = await Target().ExplainAsync(
+            Fixtures.SingleService("api"), Fixtures.EnvConfig(), TestContext.Current.CancellationToken);
 
         explanations[0].AdditionalInfo["networkMode"].ShouldContain("bridge");
     }
 
     [Fact]
-    public void Explain_AdditionalInfo_ContainsConsulAddress()
+    public async Task Explain_AdditionalInfo_ContainsConsulAddress()
     {
         var cfg = Fixtures.EnvConfig(consulCfg: Fixtures.DefaultConsulCfg(
             consulAddr: "http://consul.prod:8500"));
 
-        var explanations = Target().Explain(Fixtures.SingleService("api"), cfg);
+        var explanations = await Target().ExplainAsync(Fixtures.SingleService("api"), cfg, TestContext.Current.CancellationToken);
 
         explanations[0].AdditionalInfo["consulAddress"].ShouldBe("http://consul.prod:8500");
     }
 
     [Fact]
-    public void Explain_AdditionalInfo_ShowsUpstreams_ForWorker()
+    public async Task Explain_AdditionalInfo_ShowsUpstreams_ForWorker()
     {
-        var explanations = Target().Explain(Fixtures.SimpleManifest(), Fixtures.EnvConfig());
+        var explanations = await Target().ExplainAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), TestContext.Current.CancellationToken);
         var worker = explanations.Single(e => e.Name == "worker");
         worker.AdditionalInfo["upstreams"].ShouldContain("api");
     }
 
     [Fact]
-    public void Explain_AdditionalInfo_ShowsNone_WhenNoUpstreams()
+    public async Task Explain_AdditionalInfo_ShowsNone_WhenNoUpstreams()
     {
-        var explanations = Target().Explain(
-            Fixtures.SingleService("api"), Fixtures.EnvConfig());
+        var explanations = await Target().ExplainAsync(
+            Fixtures.SingleService("api"), Fixtures.EnvConfig(), TestContext.Current.CancellationToken);
 
         explanations[0].AdditionalInfo["upstreams"].ShouldBe("none");
     }
 
     [Fact]
-    public void Explain_AdditionalInfo_IngressGateway_Disabled_WhenNotConfigured()
+    public async Task Explain_AdditionalInfo_IngressGateway_Disabled_WhenNotConfigured()
     {
-        var explanations = Target().Explain(
-            Fixtures.SingleService("api"), Fixtures.EnvConfig());
+        var explanations = await Target().ExplainAsync(
+            Fixtures.SingleService("api"), Fixtures.EnvConfig(), TestContext.Current.CancellationToken);
 
         explanations[0].AdditionalInfo["ingressGateway"].ShouldBe("disabled");
     }
 
     [Fact]
-    public void Explain_AdditionalInfo_IngressGateway_ShowsName_WhenEnabled()
+    public async Task Explain_AdditionalInfo_IngressGateway_ShowsName_WhenEnabled()
     {
         var cfg = Fixtures.EnvConfig(consulCfg: Fixtures.DefaultConsulCfg(ingress: true));
         cfg.TargetConfig["nomadconsul"] = System.Text.Json.JsonSerializer
@@ -317,8 +317,8 @@ public sealed class NomadConsulDeploymentTargetTests
                 System.Text.Json.JsonSerializer.Serialize(
                     Fixtures.DefaultConsulCfg(ingress: true)));
 
-        var explanations = Target().Explain(
-            Fixtures.SingleService("api", "project.v0", 8080, "http", external: true), cfg);
+        var explanations = await Target().ExplainAsync(
+            Fixtures.SingleService("api", "project.v0", 8080, "http", external: true), cfg, TestContext.Current.CancellationToken);
 
         explanations[0].AdditionalInfo["ingressGateway"].ShouldNotBe("disabled");
     }
@@ -326,24 +326,24 @@ public sealed class NomadConsulDeploymentTargetTests
     // ── GetDependencies ───────────────────────────────────────────────────────
 
     [Fact]
-    public void GetDependencies_ReturnsDependencyEdges()
+    public async Task GetDependencies_ReturnsDependencyEdges()
     {
-        var deps = Target().GetDependencies(Fixtures.SimpleManifest(), Fixtures.EnvConfig());
+        var deps = await Target().GetDependenciesAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), TestContext.Current.CancellationToken);
         deps.ShouldContain(d => d.From == "api" && d.To == "worker");
     }
 
     [Fact]
-    public void GetDependencies_ReturnsEmpty_WhenNoDependencies()
+    public async Task GetDependencies_ReturnsEmpty_WhenNoDependencies()
     {
-        var deps = Target().GetDependencies(Fixtures.SingleService("api"), Fixtures.EnvConfig());
+        var deps = await Target().GetDependenciesAsync(Fixtures.SingleService("api"), Fixtures.EnvConfig(), TestContext.Current.CancellationToken);
         deps.ShouldBeEmpty();
     }
 
     [Fact]
-    public void GetDependencies_ReturnMultipleEdges_ForDependencyChain()
+    public async Task GetDependencies_ReturnMultipleEdges_ForDependencyChain()
     {
-        var deps = Target().GetDependencies(
-            Fixtures.ManifestWithDependencyChain(), Fixtures.EnvConfig());
+        var deps = await Target().GetDependenciesAsync(
+            Fixtures.ManifestWithDependencyChain(), Fixtures.EnvConfig(), TestContext.Current.CancellationToken);
 
         deps.Count.ShouldBe(3); // frontend→api, api→redis, api→db
         deps.ShouldContain(d => d.From == "api" && d.To == "frontend");
@@ -366,16 +366,16 @@ public sealed class NomadConsulDeploymentTargetTests
     // ── Config deserialization ────────────────────────────────────────────────
 
     [Fact]
-    public void GetConfig_UsesDefaults_WhenTargetConfigEmpty()
+    public async Task GetConfig_UsesDefaults_WhenTargetConfigEmpty()
     {
         // If no "nomadconsul" key exists, target should fall back to defaults
         var config = new EnvironmentConfig { Target = DeploymentTargetType.NomadConsul };
-        var act = () => Target().Explain(Fixtures.SingleService("api"), config);
-        Should.NotThrow(act);
+        var act = async () => await Target().ExplainAsync(Fixtures.SingleService("api"), config);
+        await Should.NotThrowAsync(act);
     }
 
     [Fact]
-    public void GetConfig_ReadsNomadAndConsulAddresses()
+    public async Task GetConfig_ReadsNomadAndConsulAddresses()
     {
         var consulCfg = new NomadConsulTargetConfig
         {
@@ -384,7 +384,7 @@ public sealed class NomadConsulDeploymentTargetTests
         };
         var config = Fixtures.EnvConfig(consulCfg: consulCfg);
 
-        var explanations = Target().Explain(Fixtures.SingleService("api"), config);
+        var explanations = await Target().ExplainAsync(Fixtures.SingleService("api"), config, TestContext.Current.CancellationToken);
 
         explanations[0].AdditionalInfo["consulAddress"].ShouldBe("http://consul.prod:8500");
     }

@@ -150,27 +150,27 @@ public sealed class SecretRegistryTests
     private static readonly ParameterInput PlainInput = new() { Name = "value", Secret = false };
 
     [Fact]
-    public void RecordingSource_RecordsOnlySecretInputs()
+    public async Task RecordingSource_RecordsOnlySecretInputs()
     {
         var registry = new SecretRegistry();
         var source = new RecordingParameterSource(
             new DictionaryParameterSource(new Dictionary<string, string> { ["pw"] = "S3cret-pw", ["user"] = "postgres" }),
             registry);
 
-        source.GetValue("pw", SecretInput).ShouldBe("S3cret-pw");
-        source.GetValue("user", PlainInput).ShouldBe("postgres");
+        (await source.GetValueAsync("pw", SecretInput, TestContext.Current.CancellationToken)).ShouldBe("S3cret-pw");
+        (await source.GetValueAsync("user", PlainInput, TestContext.Current.CancellationToken)).ShouldBe("postgres");
 
         registry.Snapshot().Keys.ShouldBe(["pw"]);
     }
 
     [Fact]
-    public void RecordingSource_NamesNonDefaultInputs()
+    public async Task RecordingSource_NamesNonDefaultInputs()
     {
         var registry = new SecretRegistry();
         var source = new RecordingParameterSource(
             new DictionaryParameterSource(new Dictionary<string, string> { ["api.key"] = "k3y-value" }), registry);
 
-        source.GetValue("api", new ParameterInput { Name = "key", Secret = true });
+        await source.GetValueAsync("api", new ParameterInput { Name = "key", Secret = true }, TestContext.Current.CancellationToken);
 
         registry.Snapshot().Keys.ShouldBe(["api.key"]);
     }
@@ -304,7 +304,7 @@ public sealed class GeneratedSecretSessionTests
         var store = new FakeSecretStore { Values = { ["pg-password.value"] = "existing-password-1" } };
         var (session, source) = await OpenAsync(store);
 
-        source.GetValue("pg-password", Generated).ShouldBe("existing-password-1");
+        (await source.GetValueAsync("pg-password", Generated, TestContext.Current.CancellationToken)).ShouldBe("existing-password-1");
         session.Pending.ShouldBeEmpty();
     }
 
@@ -314,7 +314,7 @@ public sealed class GeneratedSecretSessionTests
         var store = new FakeSecretStore();
         var (session, source) = await OpenAsync(store);
 
-        var value = source.GetValue("pg-password", Generated)!;
+        var value = (await source.GetValueAsync("pg-password", Generated, TestContext.Current.CancellationToken))!;
         value.Length.ShouldBe(20);
         session.Pending.ShouldBe(["pg-password.value"]);
         store.Values.ShouldBeEmpty();
@@ -343,7 +343,7 @@ public sealed class GeneratedSecretSessionTests
         // A value generated now could replace a password a running database already uses.
         var store = new FakeSecretStore { LoadFailure = new InvalidOperationException("cluster unreachable") };
         var (session, source) = await OpenAsync(store);
-        source.GetValue("pg-password", Generated);
+        await source.GetValueAsync("pg-password", Generated, TestContext.Current.CancellationToken);
 
         session.LoadError.ShouldNotBeNull();
         var ex = await Should.ThrowAsync<InvalidOperationException>(() => session.FlushAsync(TestContext.Current.CancellationToken));
@@ -358,8 +358,8 @@ public sealed class GeneratedSecretSessionTests
         var legacy = new Dictionary<string, string> { ["a.value"] = "from-file-123", ["b.value"] = "from-file-456" };
         var (session, source) = await OpenAsync(store, legacy);
 
-        source.GetValue("a", Generated).ShouldBe("from-store-123");
-        source.GetValue("b", Generated).ShouldBe("from-file-456");
+        (await source.GetValueAsync("a", Generated, TestContext.Current.CancellationToken)).ShouldBe("from-store-123");
+        (await source.GetValueAsync("b", Generated, TestContext.Current.CancellationToken)).ShouldBe("from-file-456");
         session.Pending.ShouldBe(["b.value"]);
 
         await session.FlushAsync(TestContext.Current.CancellationToken);
