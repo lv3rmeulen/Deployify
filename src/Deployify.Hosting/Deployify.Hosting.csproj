@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>Deployify.Hosting</RootNamespace>
+    <PackageId>Deployify.Hosting</PackageId>
+    <Description>Runs Deployify inside 'aspire deploy' through Aspire's deployment pipeline.</Description>
+    <PackageTags>aspire;deployment;nomad;kubernetes;compose;ecs;containerapps;helm;gitops</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IsPackable>true</IsPackable>
+    <!-- Aspire's pipeline and interaction APIs are experimental; Aspire.Hosting is pinned in Directory.Packages.props. -->
+    <NoWarn>$(NoWarn);ASPIREPIPELINES001;ASPIREINTERACTION001</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Deployify.Core\Deployify.Core.csproj" />
+    <ProjectReference Include="..\Deployify.Targets\Deployify.Targets.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Deployify.Hosting.Tests" />
+  </ItemGroup>
+
+</Project>

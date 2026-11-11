@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>Deployify.Targets</RootNamespace>
+    <Description>Registers Deployify's core services and every built-in deployment target in one call.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Deployify.Core\Deployify.Core.csproj" />
+    <ProjectReference Include="..\Deployify.Target.Nomad\Deployify.Target.Nomad.csproj" />
+    <ProjectReference Include="..\Deployify.Target.Kubernetes\Deployify.Target.Kubernetes.csproj" />
+    <ProjectReference Include="..\Deployify.Target.Compose\Deployify.Target.Compose.csproj" />
+    <ProjectReference Include="..\Deployify.Target.AwsEcs\Deployify.Target.AwsEcs.csproj" />
+    <ProjectReference Include="..\Deployify.Target.AzureContainerApps\Deployify.Target.AzureContainerApps.csproj" />
+    <ProjectReference Include="..\Deployify.Target.NomadConsul\Deployify.Target.NomadConsul.csproj" />
+    <ProjectReference Include="..\Deployify.Target.Helm\Deployify.Target.Helm.csproj" />
+    <ProjectReference Include="..\Deployify.Target.GitOps\Deployify.Target.GitOps.csproj" />
+  </ItemGroup>
+
+</Project>
