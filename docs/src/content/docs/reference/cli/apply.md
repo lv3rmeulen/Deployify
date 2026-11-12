@@ -24,6 +24,7 @@ deployify apply [options]
 | `--env`, `-e` | Environment to use, overriding the active environment (e.g. local, prod). |  |
 | `--target`, `-t` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| ovhcloud \| compose \| awsecs \| azurecontainerapps \| nomadconsul \| iis, or the ID of a plugin target. |  |
 | `--dry-run` | Simulate the operation without making changes. | `false` |
+| `--strict` | Fail when the manifest has resources Deployify won't deploy, even if nothing depends on them (list the ones you expect under ignoreResources). | `false` |
 | `--auto-approve` | Skip confirmation prompt. | `false` |
 | `--no-health-gate` | Deploy without waiting for services to become healthy and without automatic rollback. | `false` |
 | `--no-rollback` | Wait for health, but leave a failed deployment in place instead of rolling it back. | `false` |

@@ -22,6 +22,12 @@ public sealed class DeploymentRunOptions
     public RolloutOptions Rollout { get; init; } = new();
 
     /// <summary>
+    /// Stop when the manifest has resources Deployify won't deploy, even if nothing depends on
+    /// them. Without it, only resources a deployed service depends on stop the run.
+    /// </summary>
+    public bool Strict { get; init; }
+
+    /// <summary>
     /// Asked once the plan is known, before anything changes. Returning false stops the run
     /// without deploying. Null deploys without asking.
     /// </summary>
@@ -72,13 +78,22 @@ public sealed class DeploymentRunner(DeploymentSession session)
         var target = session.Target;
         var config = session.Config;
 
+        // ── Manifest check ─────────────────────────────────────────────────────
+        // LoadManifestAsync already reported each resource that won't be deployed.
+        if (session.ManifestAudit.Blocks(options.Strict))
+        {
+            var summary = session.ManifestAudit.BlockedSummary(options.Strict);
+            Reporter.Error(summary);
+            return Failed(summary);
+        }
+
         // ── Plan ───────────────────────────────────────────────────────────────
         PlanResult plan;
         await using (var stage = await Reporter.BeginStageAsync($"Planning changes on {target.DisplayName}", ct))
         {
             try
             {
-                plan = await target.PlanAsync(manifest, config, session.OutputDirectory, ct);
+                plan = session.WithSkipped(await target.PlanAsync(manifest, config, session.OutputDirectory, ct));
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -98,7 +113,7 @@ public sealed class DeploymentRunner(DeploymentSession session)
             }
 
             await stage.CompleteAsync(Describe(plan),
-                plan.UnknownCount > 0 ? DeploymentStageOutcome.Warning : DeploymentStageOutcome.Succeeded, ct);
+                plan.UnknownCount > 0 || plan.Skipped.Count > 0 ? DeploymentStageOutcome.Warning : DeploymentStageOutcome.Succeeded, ct);
         }
 
         // ── Approve ────────────────────────────────────────────────────────────
@@ -114,7 +129,7 @@ public sealed class DeploymentRunner(DeploymentSession session)
         }
 
         // ── Publish ────────────────────────────────────────────────────────────
-        if (options.Publish && manifest.Resources.Values.Any(r => r.Type.StartsWith("project.v", StringComparison.Ordinal)))
+        if (options.Publish && manifest.Resources.Values.Any(r => r.IsProject))
         {
             await using var stage = await Reporter.BeginStageAsync(
                 $"Publishing project images (tag {config.ImageTag}, {config.ContainerRuntime})", ct);
@@ -335,7 +350,8 @@ public sealed class DeploymentRunner(DeploymentSession session)
     /// <summary>"+1 create / ~2 update / -0 delete / 3 unchanged", with unchecked services when any.</summary>
     public static string Describe(PlanResult plan)
         => $"+{plan.CreateCount} create / ~{plan.UpdateCount} update / -{plan.DeleteCount} delete / {plan.Unchanged.Count} unchanged" +
-           (plan.UnknownCount > 0 ? $" / ?{plan.UnknownCount} unchecked" : "");
+           (plan.UnknownCount > 0 ? $" / ?{plan.UnknownCount} unchecked" : "") +
+           (plan.Skipped.Count > 0 ? $" / {plan.Skipped.Count} not deployed ({string.Join(", ", plan.Skipped.Select(s => s.Name))})" : "");
 
     private static DeploymentRunResult Failed(string summary, PlanResult? plan = null)
         => new() { Outcome = DeploymentRunOutcome.Failed, Summary = summary, Plan = plan };

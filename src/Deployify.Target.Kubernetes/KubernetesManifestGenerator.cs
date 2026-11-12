@@ -60,7 +60,7 @@ public sealed class KubernetesManifestGenerator
                 Dependencies = resource.References?.Select(r => r.Name).ToList() ?? [],
                 HealthCheckType = kubernetesConfig.HealthCheckType.ToLowerInvariant(),
                 HealthCheckPath = kubernetesConfig.HealthCheckPath,
-                Image = resource.Type.StartsWith("project.", StringComparison.Ordinal)
+                Image = resource.IsProject
                     ? config.ContainerRegistry is not null
                         ? $"{config.ContainerRegistry.TrimEnd('/')}/{name}"
                         : name
@@ -180,7 +180,7 @@ public sealed class KubernetesManifestGenerator
         KubernetesServiceManifest svc, EnvironmentConfig config, KubernetesTargetConfig kubernetesConfig, AspireResource resource)
     {
         svc.SecretBackend = config.Secrets.Backend;
-        svc.IsProject = resource.Type.StartsWith("project.", StringComparison.Ordinal);
+        svc.IsProject = resource.IsProject;
         if (svc.SecretBackend == SecretBackendType.KeyVault)
         {
             var keyVault = config.Secrets.KeyVault;

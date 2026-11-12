@@ -53,6 +53,14 @@ public sealed class EnvironmentConfig
     public Dictionary<string, ServiceOverride> ServiceOverrides { get; set; } = [];
 
     /// <summary>
+    /// Manifest resources Deployify can't deploy (executables, Azure or AWS infrastructure,
+    /// Dockerfile builds, unknown types) that you know about and handle another way. Deployify
+    /// reports every such resource; listing one here turns the warning, or the error that stops a
+    /// deploy when a service depends on it, into an info line.
+    /// </summary>
+    public List<string> IgnoreResources { get; set; } = [];
+
+    /// <summary>
     /// Values for Aspire <c>parameter.v0</c> resources, keyed by parameter name, or
     /// <c>name.input</c> for an input other than <c>value</c>. A value of <c>"env:NAME"</c> is read
     /// from environment variable NAME, which is how secret parameters should be supplied.

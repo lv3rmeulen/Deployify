@@ -19,6 +19,13 @@ public interface IDeploymentTarget
     string DisplayName { get; }
 
     /// <summary>
+    /// Manifest resource types this target deploys beyond Deployify's own workloads (projects and
+    /// containers), e.g. <c>executable.v0</c> for a target that runs executables. Resources of
+    /// these types aren't reported as skipped. Empty for the built-in targets.
+    /// </summary>
+    IReadOnlyCollection<string> AdditionalResourceTypes => [];
+
+    /// <summary>
     /// Checks connectivity to the target cluster/daemon.
     /// Returns (true, null) on success, or (false, errorMessage) on failure.
     /// </summary>

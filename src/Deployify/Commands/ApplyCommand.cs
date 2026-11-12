@@ -23,6 +23,7 @@ public static class ApplyCommand
         cmd.Options.Add(GlobalOptions.Environment);
         cmd.Options.Add(GlobalOptions.Target);
         cmd.Options.Add(GlobalOptions.DryRun);
+        cmd.Options.Add(GlobalOptions.Strict);
         cmd.Options.Add(autoApprove);
         RolloutCli.AddTo(cmd);
         StateCli.AddPruneOptions(cmd);
@@ -34,6 +35,7 @@ public static class ApplyCommand
             var envOverride = parseResult.GetValue(GlobalOptions.Environment);
             var targetOpt = parseResult.GetValue(GlobalOptions.Target);
             var dryRun = parseResult.GetValue(GlobalOptions.DryRun);
+            var strict = parseResult.GetValue(GlobalOptions.Strict);
             var approve = parseResult.GetValue(autoApprove);
 
             ResolvedContext resolved;
@@ -67,7 +69,7 @@ public static class ApplyCommand
             PlanResult? plan = null;
             try
             {
-                plan = await target.PlanAsync(manifest, config, outputDir, ct);
+                plan = resolved.WithSkipped(await target.PlanAsync(manifest, config, outputDir, ct));
                 PlanOutput.PrintUnknown(plan);
                 AnsiConsole.MarkupLine(PlanOutput.Summary(plan, "[bold]Plan:[/]"));
                 StateCli.PrintLeftInPlace(plan, targetType, prune);
@@ -77,6 +79,11 @@ public static class ApplyCommand
                 AnsiConsole.MarkupLineInterpolated($"[yellow]![/] Could not reach cluster for diff: {ex.Message}");
                 AnsiConsole.MarkupLine("[yellow]Dry-run: artifacts written, no changes applied.[/]");
                 return 0;
+            }
+
+            if (PlanOutput.AuditBlocks(resolved, strict))
+            {
+                return 1;
             }
 
             if (dryRun)

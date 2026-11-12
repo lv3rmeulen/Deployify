@@ -349,6 +349,19 @@ public static class PluginConformance
                 problems.Add($"'{t.Id}' declares unknown capabilities: {string.Join(", ", unknown)}");
             }
 
+            foreach (var type in t.ResourceTypes)
+            {
+                if (string.IsNullOrWhiteSpace(type) || type.Any(char.IsWhiteSpace))
+                {
+                    problems.Add($"'{t.Id}' declares an empty or malformed resource type '{type}'");
+                }
+                else if (ResourceTypes.Classify(new AspireResource { Type = type }).Kind is ResourceKind.Input or ResourceKind.Folded ||
+                         ResourceTypes.IsProject(type) || ResourceTypes.IsContainer(type))
+                {
+                    problems.Add($"'{t.Id}' declares resource type '{type}', which Deployify handles itself; declare only types it can't deploy");
+                }
+            }
+
             if (t.ConfigSchema is { ValueKind: not System.Text.Json.JsonValueKind.Object })
             {
                 problems.Add($"'{t.Id}' has a config schema that isn't a JSON object");

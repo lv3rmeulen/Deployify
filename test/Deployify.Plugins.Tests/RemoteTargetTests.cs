@@ -19,7 +19,7 @@ public sealed class RemoteTargetTests : IAsyncLifetime
 
     private readonly InProcessPlugin _plugin = new(p => p
         .Named("fakes", "1.2.3")
-        .AddTarget<FullTarget>("full", "Full Fake", t => t.WithConfigSchema<FakeConfig>())
+        .AddTarget<FullTarget>("full", "Full Fake", t => t.WithConfigSchema<FakeConfig>().ResourceTypes.Add("executable.v0"))
         .AddTarget<PlainTarget>("plain", "Plain Fake"));
 
     private static readonly AspireManifest Manifest = new()
@@ -57,6 +57,18 @@ public sealed class RemoteTargetTests : IAsyncLifetime
         target.Info!.Capabilities.ShouldBe(["rollout", "lifecycle"]);
         target.Info.ConfigSchema!.Value.GetProperty("properties").TryGetProperty("Region", out _).ShouldBeTrue();
         (await _plugin.Host.GetConnectionAsync(Ct)).Info.Plugin.Version.ShouldBe("1.2.3");
+    }
+
+    [Fact]
+    public async Task DeclaredResourceTypes_ReachTheAudit()
+    {
+        IDeploymentTarget full = _plugin.Target("full");
+        IDeploymentTarget plain = _plugin.Target("plain");
+        await ((RemoteDeploymentTarget)full).StartAsync(Ct);
+        await ((RemoteDeploymentTarget)plain).StartAsync(Ct);
+
+        full.AdditionalResourceTypes.ShouldBe(["executable.v0"]);
+        plain.AdditionalResourceTypes.ShouldBeEmpty();
     }
 
     [Fact]

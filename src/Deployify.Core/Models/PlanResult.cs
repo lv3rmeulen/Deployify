@@ -23,6 +23,13 @@ public sealed class PlanResult
     /// </summary>
     public List<PlanUnknown> Unknown { get; set; } = [];
 
+    /// <summary>
+    /// Manifest resources that won't be deployed because Deployify can't deploy them
+    /// (see <see cref="Deployments.ManifestAudit"/>). Not a change, so not part of
+    /// <see cref="IsUpToDate"/>: a skipped resource stays skipped on every run.
+    /// </summary>
+    public List<PlanSkipped> Skipped { get; set; } = [];
+
     public int CreateCount => ToCreate.Count;
     public int UpdateCount => ToUpdate.Count;
     public int DeleteCount => ToDelete.Count;
@@ -66,6 +73,9 @@ public sealed class PlanResult
 
 /// <summary>A service whose live state couldn't be compared, and why.</summary>
 public sealed record PlanUnknown(string ServiceName, string Reason);
+
+/// <summary>A manifest resource that won't be deployed, its type, and why.</summary>
+public sealed record PlanSkipped(string Name, string Type, string Reason);
 
 public sealed class DiffEntry
 {

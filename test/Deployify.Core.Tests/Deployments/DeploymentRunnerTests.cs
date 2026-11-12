@@ -97,6 +97,47 @@ public sealed class DeploymentRunnerTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task ResourceAServiceDependsOn_ThatCantBeDeployed_StopsBeforePlanning()
+    {
+        var runner = RunnerWithAudit(new ManifestAuditResult(
+            [new ManifestDiagnostic("npm", "executable.v0", ManifestDiagnosticSeverity.Error, "'npm' runs a local executable")],
+            [new PlanSkipped("npm", "executable.v0", "runs a local executable")]));
+
+        var result = await runner.RunAsync(_manifest, new DeploymentRunOptions(), Ct);
+
+        result.Outcome.ShouldBe(DeploymentRunOutcome.Failed);
+        result.Summary.ShouldContain("nothing was changed");
+        await _target.DidNotReceiveWithAnyArgs().PlanAsync(default!, default!, default!, Ct);
+        await _target.DidNotReceiveWithAnyArgs().ApplyAsync(default!, default!, default!, Ct);
+    }
+
+    [Fact]
+    public async Task UnusedResourceThatCantBeDeployed_IsSkipped_UnlessStrict()
+    {
+        var audit = new ManifestAuditResult(
+            [new ManifestDiagnostic("npm", "executable.v0", ManifestDiagnosticSeverity.Warning, "'npm' runs a local executable")],
+            [new PlanSkipped("npm", "executable.v0", "runs a local executable")]);
+
+        var result = await RunnerWithAudit(audit).RunAsync(_manifest, new DeploymentRunOptions(), Ct);
+        result.Outcome.ShouldBe(DeploymentRunOutcome.Deployed);
+        result.Plan!.Skipped.ShouldHaveSingleItem().Name.ShouldBe("npm");
+
+        var strict = await RunnerWithAudit(audit).RunAsync(_manifest, new DeploymentRunOptions { Strict = true }, Ct);
+        strict.Outcome.ShouldBe(DeploymentRunOutcome.Failed);
+        strict.Summary.ShouldContain("--strict");
+    }
+
+    private DeploymentRunner RunnerWithAudit(ManifestAuditResult audit)
+    {
+        var session = new DeploymentSession(
+            Substitute.For<IServiceProvider>(), new EnvironmentConfig { Target = DeploymentTargetType.Compose },
+            "dev", DeploymentTargetType.Compose, _target, _dir)
+        { State = _state };
+        session.ManifestAudit = audit;
+        return new DeploymentRunner(session);
+    }
+
+    [Fact]
     public async Task SkipsPublishing_WhenTurnedOff()
     {
         await Runner().RunAsync(_manifest, new DeploymentRunOptions { Publish = false }, Ct);

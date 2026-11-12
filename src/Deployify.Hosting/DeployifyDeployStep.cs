@@ -67,6 +67,7 @@ internal static class DeployifyDeployStep
         {
             Publish = options.Publish,
             HealthGate = options.HealthGate,
+            Strict = options.Strict,
             Rollout = new RolloutOptions
             {
                 AutoRollback = options.AutoRollback,
@@ -143,7 +144,8 @@ internal static class DeployifyDeployStep
                     ? TimeSpan.FromSeconds(s)
                     : throw new InvalidOperationException($"Deployify:HealthTimeoutSeconds '{seconds}' is not a positive number of seconds.")
                 : code.HealthTimeout,
-            AutoApprove = Bool(section, "AutoApprove") ?? code.AutoApprove
+            AutoApprove = Bool(section, "AutoApprove") ?? code.AutoApprove,
+            Strict = Bool(section, "Strict") ?? code.Strict
         };
 
         static string? Text(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();

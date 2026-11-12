@@ -54,11 +54,11 @@ public sealed class JobGenerator(ILogger<JobGenerator> logger)
                 ImageTag = overrides?.ImageTag ?? config.ImageTag,
                 Count = overrides?.Count ?? 1,
                 Dependencies = resource.References?.Select(r => r.Name).ToList() ?? [],
-                IsProject = resource.Type.StartsWith("project.", StringComparison.Ordinal),
+                IsProject = resource.IsProject,
                 UseHostNetwork = nc.DeploymentMode == NomadDeploymentMode.Docker
             };
 
-            if (resource.Type.StartsWith("project.", StringComparison.Ordinal))
+            if (resource.IsProject)
             {
                 job.Image = config.ContainerRegistry is not null
                     ? $"{config.ContainerRegistry.TrimEnd('/')}/{name}"

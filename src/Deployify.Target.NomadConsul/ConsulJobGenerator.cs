@@ -61,7 +61,7 @@ public sealed class ConsulJobGenerator(ILogger<ConsulJobGenerator> logger)
                 Dependencies = resource.References?.Select(r => r.Name)
                     .Where(d => manifest.Resources.TryGetValue(d, out var dep) && dep.IsDeployable)
                     .ToList() ?? [],
-                IsProjectService = resource.Type.StartsWith("project.", StringComparison.Ordinal),
+                IsProjectService = resource.IsProject,
                 ExposeViaIngressGateway = consulCfg.EnableIngressGateway &&
                     resource.Bindings?.Values.Any(b => b is { IsHttp: true, IsExternal: true }) == true
             };

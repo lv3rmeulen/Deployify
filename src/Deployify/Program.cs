@@ -1,6 +1,11 @@
 using System;
 using System.CommandLine;
+using Deployify;
 using Deployify.Commands;
+using Spectre.Console;
+
+// Before anything writes: without a terminal, Spectre.Console would otherwise print nothing.
+ConsoleSetup.Configure(AnsiConsole.Console);
 
 var root = DeployifyCli.CreateRootCommand();
 

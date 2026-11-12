@@ -36,6 +36,9 @@ public sealed class RemoteDeploymentTarget
     /// <summary>What the plugin declared for this target; null until started.</summary>
     public PluginTargetInfo? Info => _info;
 
+    /// <summary>The resource types the plugin declared; empty until started.</summary>
+    public IReadOnlyCollection<string> AdditionalResourceTypes => _info?.ResourceTypes ?? [];
+
     /// <summary>Starts the plugin and checks that it serves this target.</summary>
     public async Task StartAsync(CancellationToken ct = default) => await ConnectAsync(ct);
 

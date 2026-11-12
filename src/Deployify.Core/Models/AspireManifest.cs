@@ -105,12 +105,17 @@ public sealed class AspireResource
 
     // ── Type helpers ──────────────────────────────────────────────────────────
 
-    /// <summary>True for resources that become a running workload (projects and containers).</summary>
+    /// <summary>
+    /// True for resources that become a running workload: projects, and containers with an image.
+    /// Everything else is either an input or reported by <see cref="Deployments.ManifestAudit"/>;
+    /// see <see cref="ResourceTypes.Classify(AspireResource)"/>.
+    /// </summary>
     [JsonIgnore]
-    public bool IsDeployable
-        => Type.StartsWith("project.", StringComparison.Ordinal) ||
-            Type.StartsWith("container.", StringComparison.Ordinal) ||
-            Type.StartsWith("dockerfile.", StringComparison.Ordinal);
+    public bool IsDeployable => ResourceTypes.IsWorkload(this);
+
+    /// <summary>True for .NET project resources (<c>project.v0</c>, <c>project.v1</c>).</summary>
+    [JsonIgnore]
+    public bool IsProject => ResourceTypes.IsProject(Type);
 
     /// <summary>The first HTTP(S) binding, if the resource has one.</summary>
     [JsonIgnore]
@@ -431,7 +436,7 @@ public static class AspireManifestExtensions
 
     // ── Dependency inference ──────────────────────────────────────────────────
 
-    private static readonly Regex s_placeholderRef =
+    internal static readonly Regex s_placeholderRef =
         new(@"\{(?<res>[A-Za-z0-9_-]+)\.", RegexOptions.Compiled);
 
     /// <summary>
@@ -498,7 +503,7 @@ public static class AspireManifestExtensions
         return new AspireManifest { Resources = result, ExtensionData = manifest.ExtensionData };
     }
 
-    private static IEnumerable<string> PlaceholderSources(AspireResource resource)
+    internal static IEnumerable<string> PlaceholderSources(AspireResource resource)
     {
         if (resource.Env is not null)
         {

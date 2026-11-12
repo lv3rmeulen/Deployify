@@ -27,6 +27,7 @@ deployify ci [options]
 | `--skip-apply` | Stop after plan — generate and validate but do not deploy. | `false` |
 | `--fail-on-changes` | Exit non-zero if the plan detects any create/update/delete changes (drift gating). | `false` |
 | `--auto-approve` | Deploy without asking for confirmation. Required when there is no interactive terminal. | `false` |
+| `--strict` | Fail when the manifest has resources Deployify won't deploy, even if nothing depends on them (list the ones you expect under ignoreResources). | `false` |
 | `--no-health-gate` | Deploy without waiting for services to become healthy and without automatic rollback. | `false` |
 | `--no-rollback` | Wait for health, but leave a failed deployment in place instead of rolling it back. | `false` |
 | `--health-timeout` | Seconds each service may take to become healthy before the rollout fails (default: 600). | `600` |

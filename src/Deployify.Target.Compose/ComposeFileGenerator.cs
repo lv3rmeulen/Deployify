@@ -50,7 +50,7 @@ public sealed class ComposeFileGenerator
                 ImageTag = overrides?.ImageTag ?? config.ImageTag,
                 Replicas = overrides?.Count ?? 1,
                 RestartPolicy = composeConfig.RestartPolicy,
-                IsProjectService = resource.Type.StartsWith("project.", StringComparison.Ordinal)
+                IsProjectService = resource.IsProject
             };
 
             svc.Image = svc.IsProjectService

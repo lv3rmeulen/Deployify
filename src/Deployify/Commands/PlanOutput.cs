@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using Deployify.Core.Models;
 using Spectre.Console;
 
@@ -7,14 +8,41 @@ namespace Deployify.Commands;
 /// <summary>Plan output shared by plan, apply, ci and watch, so they report the same thing.</summary>
 internal static class PlanOutput
 {
-    /// <summary>"Plan: 1 to create, 0 to update, 0 to delete[, 2 could not be checked]." as markup.</summary>
+    /// <summary>
+    /// "Plan: 1 to create, 0 to update, 0 to delete[, 2 could not be checked][, 1 not deployed]."
+    /// as markup.
+    /// </summary>
     public static string Summary(PlanResult plan, string prefix = "Plan:")
     {
         var line = $"{prefix} [green]{plan.CreateCount} to create[/], [yellow]{plan.UpdateCount} to update[/], " +
                    $"[red]{plan.DeleteCount} to delete[/]";
-        return plan.UnknownCount > 0
-            ? $"{line}, [blue]{plan.UnknownCount} could not be checked[/]."
-            : line + ".";
+        if (plan.UnknownCount > 0)
+        {
+            line += $", [blue]{plan.UnknownCount} could not be checked[/]";
+        }
+
+        if (plan.Skipped.Count > 0)
+        {
+            line += $", [grey]{plan.Skipped.Count} not deployed ({Markup.Escape(string.Join(", ", plan.Skipped.Select(s => s.Name)))})[/]";
+        }
+
+        return line + ".";
+    }
+
+    /// <summary>
+    /// True, after saying why, when the manifest has resources Deployify won't deploy that a
+    /// deployed service depends on (or any, with --strict). The findings themselves were
+    /// reported when the manifest was loaded.
+    /// </summary>
+    public static bool AuditBlocks(ResolvedContext resolved, bool strict)
+    {
+        if (!resolved.ManifestAudit.Blocks(strict))
+        {
+            return false;
+        }
+
+        AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {resolved.ManifestAudit.BlockedSummary(strict)}");
+        return true;
     }
 
     /// <summary>The "could not be checked" section: each service with the reason.</summary>

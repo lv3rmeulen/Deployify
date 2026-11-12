@@ -42,6 +42,13 @@ public static class GlobalOptions
         DefaultValueFactory = _ => false
     };
 
+    public static readonly Option<bool> Strict = new("--strict")
+    {
+        Description = "Fail when the manifest has resources Deployify won't deploy, even if nothing depends on them " +
+                      "(list the ones you expect under ignoreResources).",
+        DefaultValueFactory = _ => false
+    };
+
     public static readonly Option<VerbosityLevel> Verbosity = new("--verbosity", "-v")
     {
         Description = "Log verbosity: quiet | normal | verbose",

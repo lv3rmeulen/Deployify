@@ -77,6 +77,19 @@ public sealed class ConformanceTests : IDisposable
     }
 
     [Fact]
+    public async Task DeclaringATypeDeployifyHandles_FailsTheHandshake()
+    {
+        var report = await PluginConformance.RunInProcessAsync(
+            p => p.Named("good", "1.0.0").AddTarget<GoodTarget>("good", "Good", t => t.ResourceTypes.AddRange(["executable.v0", "parameter.v0"])),
+            "good", Options(), Ct);
+
+        var handshake = report.Checks.Single(c => c.Name == "handshake");
+        handshake.Outcome.ShouldBe(CheckOutcome.Failed);
+        handshake.Detail.ShouldContain("'parameter.v0', which Deployify handles itself");
+        handshake.Detail.ShouldNotContain("executable.v0");
+    }
+
+    [Fact]
     public async Task TheBuiltInComposeTarget_PassesTheOfflineChecksAsAPlugin()
     {
         var report = await PluginConformance.RunInProcessAsync(

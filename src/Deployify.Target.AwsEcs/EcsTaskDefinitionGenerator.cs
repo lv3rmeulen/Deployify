@@ -50,7 +50,7 @@ public sealed class EcsTaskDefinitionGenerator
                 DesiredCount = overrides?.Count ?? ecsConfig.DefaultDesiredCount,
                 Cpu = ecsConfig.DefaultCpu,
                 Memory = ecsConfig.DefaultMemory,
-                IsProjectService = resource.Type.StartsWith("project.", StringComparison.Ordinal),
+                IsProjectService = resource.IsProject,
                 Dependencies = resource.References?.Select(r => r.Name).ToList() ?? []
             };
 

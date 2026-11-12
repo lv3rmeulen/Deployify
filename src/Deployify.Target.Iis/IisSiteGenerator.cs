@@ -44,7 +44,7 @@ public sealed class IisSiteGenerator
     public IReadOnlyList<string> Unresolved { get; private set; } = [];
 
     public static bool IsProject(AspireResource resource)
-        => resource.Type.StartsWith("project.", StringComparison.Ordinal);
+        => resource.IsProject;
 
     public static string SitePrefix(EnvironmentConfig config, IisTargetConfig iis)
         => iis.SiteNamePrefix ?? $"{config.Name ?? "deployify"}-";

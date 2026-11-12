@@ -55,6 +55,7 @@ public static class CiCommand
         cmd.Options.Add(skipApply);
         cmd.Options.Add(failOnChanges);
         cmd.Options.Add(autoApprove);
+        cmd.Options.Add(GlobalOptions.Strict);
         RolloutCli.AddTo(cmd);
         StateCli.AddPruneOptions(cmd);
 
@@ -67,6 +68,7 @@ public static class CiCommand
             var doSkipApply = parseResult.GetValue(skipApply);
             var doFailOnChanges = parseResult.GetValue(failOnChanges);
             var doAutoApprove = parseResult.GetValue(autoApprove);
+            var strict = parseResult.GetValue(GlobalOptions.Strict);
 
             ResolvedContext resolved;
             try
@@ -88,7 +90,7 @@ public static class CiCommand
             AnsiConsole.MarkupLineInterpolated($"[bold]Deployify CI[/] — environment: [cyan]{envName}[/] target: [cyan]{target.DisplayName}[/]\n");
 
             var manifest = await resolved.LoadManifestAsync(ct);
-            if (manifest is null)
+            if (manifest is null || PlanOutput.AuditBlocks(resolved, strict))
             {
                 return 1;
             }
@@ -135,10 +137,11 @@ public static class CiCommand
             PlanResult? plan = null;
             if (!await StepAsync("3/4 Plan", async stepCt =>
             {
-                plan = await target.PlanAsync(manifest, config, outputDir, stepCt);
+                plan = resolved.WithSkipped(await target.PlanAsync(manifest, config, outputDir, stepCt));
                 AnsiConsole.MarkupLine(
                     $"[dim] +{plan.CreateCount} create / ~{plan.UpdateCount} update / -{plan.DeleteCount} delete" +
-                    (plan.UnknownCount > 0 ? $" / ?{plan.UnknownCount} unchecked" : "") + "[/]");
+                    (plan.UnknownCount > 0 ? $" / ?{plan.UnknownCount} unchecked" : "") +
+                    (plan.Skipped.Count > 0 ? $" / {plan.Skipped.Count} not deployed" : "") + "[/]");
                 foreach (var u in plan.Unknown)
                 {
                     AnsiConsole.MarkupLineInterpolated($"[dim]   ? {u.ServiceName}: {u.Reason}[/]");

@@ -54,6 +54,7 @@ Set in code, or per run through configuration under `Deployify:` (environment va
 | `AutoRollback` | `Deployify:AutoRollback` | `true` |
 | `HealthTimeout` | `Deployify:HealthTimeoutSeconds` | 10 minutes |
 | `AutoApprove` | `Deployify:AutoApprove` | `false`; without it, a run that can't ask fails |
+| `Strict` | `Deployify:Strict` | `false`; when `true`, a manifest resource Deployify can't deploy stops the run even if nothing depends on it (see [ignored resources](/reference/state-file/#ignored-resources)) |
 
 ```csharp
 builder.AddDeployify(configure: o =>

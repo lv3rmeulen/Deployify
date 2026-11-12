@@ -15,12 +15,14 @@ public static class PlanCommand
         cmd.Options.Add(GlobalOptions.ProjectPath);
         cmd.Options.Add(GlobalOptions.Environment);
         cmd.Options.Add(GlobalOptions.Target);
+        cmd.Options.Add(GlobalOptions.Strict);
 
         cmd.SetAction(async (parseResult, ct) =>
         {
             var projectPath = parseResult.GetValue(GlobalOptions.ProjectPath)!;
             var envOverride = parseResult.GetValue(GlobalOptions.Environment);
             var targetOpt = parseResult.GetValue(GlobalOptions.Target);
+            var strict = parseResult.GetValue(GlobalOptions.Strict);
 
             ResolvedContext resolved;
             try
@@ -52,7 +54,7 @@ public static class PlanCommand
             PlanResult plan;
             try
             {
-                plan = await target.PlanAsync(manifest, config, outputDir, ct);
+                plan = resolved.WithSkipped(await target.PlanAsync(manifest, config, outputDir, ct));
             }
             catch (Exception ex)
             {
@@ -74,7 +76,8 @@ public static class PlanCommand
                 AnsiConsole.MarkupLine("[dim]No changes. Everything is up to date.[/]");
             }
 
-            return 0;
+            // Plan is the pre-flight check: fail when apply would refuse.
+            return PlanOutput.AuditBlocks(resolved, strict) ? 1 : 0;
         });
 
         return cmd;

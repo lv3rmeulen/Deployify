@@ -40,6 +40,10 @@ Steps printed during a run:
 ✓ CI pipeline complete.
 ```
 
+Without a terminal, as on most CI runners, output is plain text with no colors, and long
+lines aren't wrapped, so each message stays on one line in the log. Set `COLUMNS` to wrap
+at a given width instead.
+
 ## Workflows
 
 ### GitHub Actions — full deploy

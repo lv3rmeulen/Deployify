@@ -69,6 +69,23 @@ public sealed record DeploymentSession(
     /// </summary>
     public string? ManifestPath { get; init; }
 
+    /// <summary>
+    /// What the last <see cref="LoadManifestAsync"/> found about resources that won't be deployed.
+    /// Its findings are already reported; commands that deploy check
+    /// <see cref="ManifestAuditResult.Blocks"/> before changing anything.
+    /// </summary>
+    public ManifestAuditResult ManifestAudit { get; internal set; } = ManifestAuditResult.Empty;
+
+    /// <summary>
+    /// Adds the manifest resources that won't be deployed to <paramref name="plan"/>, so plan
+    /// output lists them next to the changes.
+    /// </summary>
+    public PlanResult WithSkipped(PlanResult plan)
+    {
+        plan.Skipped = [.. ManifestAudit.Skipped];
+        return plan;
+    }
+
     /// <summary>Folder where generated artifacts are written.</summary>
     public string OutputDirectory => Path.Combine(Directory, Config.OutputPath);
 
@@ -185,10 +202,14 @@ public sealed record DeploymentSession(
                 manifest = await reader.ReadAsync(path, ct);
             }
 
-            return manifest
+            manifest = manifest
                 .WithDashboardIfEnabled(Config)
                 .WithDaprIfEnabled(Config)
                 .WithInferredReferences();
+
+            ManifestAudit = Deployments.ManifestAudit.Run(manifest, Config.IgnoreResources, Target.AdditionalResourceTypes);
+            Deployments.ManifestAudit.Report(ManifestAudit, Reporter);
+            return manifest;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

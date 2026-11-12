@@ -21,6 +21,12 @@ Generates artifacts and compares them against the live cluster state. Exits 0 ev
 
 A service that exists on the target but couldn't be compared is listed under **Could not be checked**, with the reason, instead of being guessed as an update. Typical reasons: `kubectl diff` failed (on Windows it needs a `diff` program — add Git's `usr\bin` folder to `PATH` or set `KUBECTL_EXTERNAL_DIFF`), only the in-cluster API fallback is available, Nomad's plan API returned an error, or Docker Compose is older than 2.18 and has no `up --dry-run`. `plan` and `diff` use the same comparison, so they always agree.
 
+Manifest resources Deployify can't deploy (executables, Dockerfile builds, Azure or AWS
+infrastructure, unknown types) are reported before the plan and counted as **not deployed** in
+its summary. When a deployed service depends on one, `plan` exits 1, and `apply` and `ci` stop
+before changing anything. See [ignored resources](/reference/state-file/#ignored-resources) to
+mark the ones you deploy another way.
+
 ```bash
 deployify plan
 deployify plan --env prod

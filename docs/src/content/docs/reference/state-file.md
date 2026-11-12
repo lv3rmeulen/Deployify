@@ -69,6 +69,27 @@ Deployify prints a warning after saving the state file when it contains a litera
 git does not ignore the file. If `launchSettings.json` or the state file was already
 committed, remove it from the index with `git rm --cached <file>` and rotate any secrets it held.
 
+## Ignored resources
+
+Deployify deploys projects and containers with an image. Before planning, it checks every other
+resource in the manifest and reports the ones it can't deploy: executables (`executable.v0`),
+Dockerfile builds (`dockerfile.v0`, or `container.v1` with only a `build`), Azure and AWS
+infrastructure (`azure.*`, `aws.*`), and types it doesn't know. Parameters, values, Dapr
+resources and child resources such as databases need no deploying and aren't reported.
+
+When a deployed service depends on such a resource, `plan` fails and `apply`, `ci` and
+`aspire deploy` stop before changing anything. Otherwise Deployify warns and deploys the rest.
+If you run a resource another way, list it under `ignoreResources` to turn the error or
+warning into an info line:
+
+```json
+"ignoreResources": ["frontend", "storage"]
+```
+
+Deployify still reports names in the list that aren't in the manifest, or that it deploys
+anyway, so the list doesn't go stale. Pass `--strict` to `plan`, `apply` or `ci` to fail on
+warnings too.
+
 ## Service overrides
 
 Override image tag, replica count, or environment variables per service:

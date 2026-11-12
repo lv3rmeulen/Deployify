@@ -162,7 +162,7 @@ public sealed class BindingsHandler : IReferenceHandler
         }
 
         if (resolver.ProjectHttpsAsHttp && property != "targetPort" &&
-            binding.Scheme == "https" && resource.Type.StartsWith("project.", StringComparison.Ordinal) &&
+            binding.Scheme == "https" && resource.IsProject &&
             resource.Bindings.FirstOrDefault(b => b.Value.Scheme == "http") is { Key: not null } http)
         {
             bindingName = http.Key;

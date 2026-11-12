@@ -44,6 +44,14 @@ public sealed record PluginTargetInfo
     public IReadOnlyList<string> Capabilities { get; init; } = [];
 
     /// <summary>
+    /// Aspire manifest resource types the target deploys beyond projects and containers, such as
+    /// <c>executable.v0</c>. Deployify reports resources it can't deploy before calling the
+    /// plugin; it doesn't report resources of these types. Empty when the target deploys projects
+    /// and containers only.
+    /// </summary>
+    public IReadOnlyList<string> ResourceTypes { get; init; } = [];
+
+    /// <summary>
     /// JSON Schema for the target's section of the environment's <c>TargetConfig</c>, keyed by
     /// <see cref="ConfigKey"/>. Deployify checks the section against it before calling the plugin.
     /// </summary>

@@ -105,6 +105,7 @@ public sealed class PluginBuilder
             Id = Id.Value,
             DisplayName = DisplayName,
             Capabilities = Capabilities,
+            ResourceTypes = [.. Options.ResourceTypes],
             ConfigKey = Options.ConfigKey,
             ConfigSchema = Options.ConfigSchema
         };
@@ -119,6 +120,13 @@ public sealed class TargetOptions
 
     /// <summary>JSON Schema for the target's settings, which Deployify checks before calling the plugin.</summary>
     public JsonElement? ConfigSchema { get; set; }
+
+    /// <summary>
+    /// Aspire manifest resource types the target deploys beyond projects and containers, such as
+    /// <c>executable.v0</c>. Deployify reports every other resource it can't deploy before
+    /// calling the target, so declare the types the target handles itself.
+    /// </summary>
+    public List<string> ResourceTypes { get; } = [];
 
     /// <summary>Derives <see cref="ConfigSchema"/> from the class the target reads its settings into.</summary>
     public TargetOptions WithConfigSchema<TConfig>()

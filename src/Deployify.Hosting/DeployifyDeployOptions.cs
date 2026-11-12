@@ -52,4 +52,12 @@ public sealed class DeployifyDeployOptions
     /// (non-interactive runs), the same way <c>deployify ci</c> needs <c>--auto-approve</c>.
     /// </summary>
     public bool AutoApprove { get; set; }
+
+    /// <summary>
+    /// Fail when the manifest has resources Deployify won't deploy, even if nothing depends on
+    /// them (key <c>Deployify:Strict</c>), like <c>deployify apply --strict</c>. Resources a deployed
+    /// service depends on always stop the deploy; list the ones you handle elsewhere under
+    /// <c>ignoreResources</c> in deployify-state.json.
+    /// </summary>
+    public bool Strict { get; set; }
 }

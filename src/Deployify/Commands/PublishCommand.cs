@@ -72,7 +72,7 @@ public static class PublishCommand
                 AnsiConsole.MarkupLine("[yellow]Dry-run: would publish the following project services:[/]");
                 foreach (var (name, res) in manifest.Resources)
                 {
-                    if (res.Type.StartsWith("project.v"))
+                    if (res.IsProject)
                     {
                         AnsiConsole.MarkupLineInterpolated($"  [cyan]{name}[/]");
                     }

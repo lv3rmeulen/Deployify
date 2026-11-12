@@ -122,7 +122,7 @@ public static class PackageCommand
             {
                 foreach (var (name, resource) in manifest.Resources)
                 {
-                    if (!resource.Type.StartsWith("project.v") || resource.Path is null)
+                    if (!resource.IsProject || resource.Path is null)
                     {
                         continue;
                     }

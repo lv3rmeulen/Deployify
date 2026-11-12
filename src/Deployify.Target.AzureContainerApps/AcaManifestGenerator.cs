@@ -61,7 +61,7 @@ public sealed class AcaManifestGenerator
                 MaxReplicas = overrides?.Count ?? acaConfig.MaxReplicas,
                 Cpu = acaConfig.DefaultCpu,
                 Memory = acaConfig.DefaultMemory,
-                IsProjectService = resource.Type.StartsWith("project.", StringComparison.Ordinal),
+                IsProjectService = resource.IsProject,
                 Dependencies = resource.References?.Select(r => r.Name).ToList() ?? [],
                 IngressType = acaConfig.IngressType
             };

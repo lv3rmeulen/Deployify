@@ -107,6 +107,19 @@ The SDK:
 - reads `TargetConfig` and the Aspire manifest into the same `EnvironmentConfig` and
   `AspireManifest` types the built-in targets use.
 
+### Resource types beyond projects and containers
+
+Before it calls your target, Deployify reports every manifest resource it can't deploy itself,
+and stops the deploy when a service depends on one. If your target deploys another resource
+type, such as executables, declare it so Deployify leaves those resources to you:
+
+```csharp
+.AddTarget<ExampleDeploymentTarget>("example", "Example", target => target.ResourceTypes.Add("executable.v0"))
+```
+
+The types go out in the handshake (`resourceTypes`). The conformance kit fails a plugin that
+declares a type Deployify handles itself, such as `project.v0` or `parameter.v0`.
+
 [`samples/Deployify.Plugin.Sample.Compose`](https://github.com/lv3rmeulen/Deployify/blob/main/samples/Deployify.Plugin.Sample.Compose/Program.cs)
 is a complete plugin: it serves Deployify's own Compose target as `compose-plugin`.
 
