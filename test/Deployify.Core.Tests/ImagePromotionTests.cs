@@ -89,12 +89,28 @@ public sealed class ImagePromotionTests
     }
 
     [Fact]
-    public void Plan_DifferentRegistry_IsNotSupportedYet()
+    public void Plan_DifferentRegistry_NeedsACopy()
     {
         var entries = ImagePromotion.Plan(Manifest(), PublishedStaging(), "staging", Env(registry: "prod.example.com/app"));
 
+        entries.ShouldAllBe(e => e.CanPromote && e.NeedsCopy);
+        var api = entries.Single(e => e.Service == "api");
+        api.SourceRepository.ShouldBe("reg.example.com/app/api");
+        api.TargetRepository.ShouldBe("prod.example.com/app/api");
+        api.Digest.ShouldBe(Digest);
+    }
+
+    [Fact]
+    public void Plan_SameRegistry_NeedsNoCopy()
+        => ImagePromotion.Plan(Manifest(), PublishedStaging(), "staging", Env()).ShouldAllBe(e => !e.NeedsCopy);
+
+    [Fact]
+    public void Plan_TargetWithoutRegistry_IsAProblem()
+    {
+        var entries = ImagePromotion.Plan(Manifest(), PublishedStaging(), "staging", Env(registry: ""));
+
         entries.ShouldAllBe(e => !e.CanPromote);
-        entries[0].Problem!.ShouldContain("different registry");
+        entries[0].Problem!.ShouldContain("no container registry to copy the image to");
     }
 
     [Fact]

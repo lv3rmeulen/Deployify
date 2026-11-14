@@ -102,7 +102,8 @@ at a given width instead.
 ### GitHub Actions — build once, promote to production
 
 Staging builds and deploys the images; production deploys the same images by digest, without
-rebuilding them. Both environments need the same container registry.
+rebuilding them. When production uses another registry, `promote` copies the images there
+first; the job then needs to be signed in to both registries.
 
 ```yaml
 - name: Deploy to staging

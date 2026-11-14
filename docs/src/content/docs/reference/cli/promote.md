@@ -24,5 +24,6 @@ deployify promote [options]
 | `--from` | **Required.** Environment whose published images to promote (e.g. staging). |  |
 | `--to` | **Required.** Environment to promote them to (e.g. prod). |  |
 | `--image-tag`, `-i` | Tag to promote, for example the commit SHA. Defaults to the source environment's configured tag. |  |
+| `--copy-with` | Tool that copies images when the target uses another registry: crane \| skopeo \| docker. Defaults to the first one installed, in that order. |  |
 | `--dry-run` | Simulate the operation without making changes. | `false` |
 

@@ -63,14 +63,44 @@ build at that tag, and records it in the target environment's deployment state. 
 nothing: the target's next `apply` (or `ci --no-publish`) references the images by those digests.
 Without `--image-tag`, it promotes the source environment's configured tag.
 
-It promotes all images or none. It stops without recording anything when:
+It promotes all images or none. It stops without recording anything when the source
+environment has no digest for an image at that tag (it never published that build), or when the
+target has no `containerRegistry`.
 
-- the source environment has no digest for an image at that tag (it never published that build), or
-- the target runs the image from a different registry. Both environments need the same
-  `containerRegistry` for now; copying images between registries isn't supported yet.
+`--dry-run` shows what would be promoted and copied. The target environment's state is locked
+while `promote` runs.
 
-`--dry-run` shows what would be promoted. The target environment's state is locked while
-`promote` runs.
+### Promoting to another registry
+
+When the target environment has a different `containerRegistry`, for example a production
+registry in another account or region, `promote` copies each image there first. The copy goes
+from registry to registry by digest, so the target ends up with exactly the same image:
+nothing is rebuilt or pulled into a local image store. Images already in the target registry
+are skipped.
+
+The copy uses the first of these tools that is installed:
+
+| Tool | Command it runs |
+|---|---|
+| [crane](https://github.com/google/go-containerregistry/tree/main/cmd/crane) | `crane copy` |
+| [skopeo](https://github.com/containers/skopeo) | `skopeo copy --all --preserve-digests` |
+| Docker with Buildx | `docker buildx imagetools create` |
+
+`--copy-with crane|skopeo|docker` picks one. All three sign in to the registries with the
+credentials `docker login` stored, including credential helpers such as the ones for ECR, ACR
+and GCR, so sign in to both registries before promoting. On a CI runner the job needs pull
+access to the source registry and push access to the target one.
+
+After each copy, `promote` checks that the target registry has a manifest with the source
+digest. crane and skopeo always keep it; if Docker ever rewrites a manifest, `promote` stops
+and asks for crane or skopeo. Copies happen before anything is recorded: when one fails,
+the target's state is unchanged and a second run skips the images already copied.
+
+```bash
+docker login registry.staging.example.com
+docker login registry.prod.example.com
+deployify promote --from staging --to prod --image-tag "$GITHUB_SHA"
+```
 
 ### Requiring digests
 

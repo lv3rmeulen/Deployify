@@ -20,14 +20,21 @@ public sealed record ImagePromotionEntry(
 {
     public bool CanPromote => Problem is null && Digest is not null;
 
+    /// <summary>
+    /// True when the target runs the image from another repository (another registry, or another
+    /// registry path), so the image has to be copied there before the target can deploy it.
+    /// </summary>
+    public bool NeedsCopy => !string.Equals(SourceRepository, TargetRepository, StringComparison.Ordinal);
+
     /// <summary>True when the target already pins this tag to the same digest.</summary>
     public bool AlreadyPromoted { get; init; }
 }
 
 /// <summary>
 /// Build once, deploy many times: makes another environment deploy exactly the images an
-/// environment already published, by digest, without building them again. Only images in the
-/// same registry are promoted for now; both environments must name the image the same way.
+/// environment already published, by digest, without building them again. When the target uses
+/// another registry, the image is copied there first (see <see cref="Services.ImageCopier"/>);
+/// <see cref="ImagePromotionEntry.NeedsCopy"/> says which ones.
 /// </summary>
 public static class ImagePromotion
 {
@@ -61,10 +68,9 @@ public static class ImagePromotion
                     ? $"{sourceName} has no container registry, so its images aren't recorded by digest"
                     : $"{sourceName} has no published digest for {sourceRepository}:{sourceTag}; publish it there first";
             }
-            else if (!string.Equals(sourceRepository, targetRepository, StringComparison.Ordinal))
+            else if (string.IsNullOrEmpty(target.ContainerRegistry))
             {
-                problem = $"the target runs it from {targetRepository}, a different registry than {sourceRepository}; " +
-                          "copying images between registries isn't supported yet";
+                problem = "the target has no container registry to copy the image to";
             }
 
             var already = digest is not null &&

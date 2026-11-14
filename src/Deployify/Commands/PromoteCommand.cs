@@ -3,8 +3,10 @@ using System.CommandLine;
 using System.Linq;
 using Deployify.Core.Deployments;
 using Deployify.Core.Interfaces;
+using Deployify.Core.Services;
 using Deployify.Core.State;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Spectre.Console;
 
 namespace Deployify.Commands;
@@ -12,7 +14,8 @@ namespace Deployify.Commands;
 /// <summary>
 /// <c>deployify promote --from staging --to prod</c>: records the image digests the source
 /// environment published in the target environment's deployment state, so the target's next
-/// apply deploys exactly those images without building them again. Nothing is deployed.
+/// apply deploys exactly those images without building them again. When the target uses another
+/// registry, the images are copied there by digest first. Nothing is deployed.
 /// </summary>
 public static class PromoteCommand
 {
@@ -32,6 +35,18 @@ public static class PromoteCommand
         {
             Description = "Tag to promote, for example the commit SHA. Defaults to the source environment's configured tag."
         };
+        var copyWithOpt = new Option<string?>("--copy-with")
+        {
+            Description = "Tool that copies images when the target uses another registry: crane | skopeo | docker. " +
+                          "Defaults to the first one installed, in that order."
+        };
+        copyWithOpt.Validators.Add(result =>
+        {
+            if (result.GetValueOrDefault<string?>() is { } value && !ImageCopier.TryParse(value, out _))
+            {
+                result.AddError($"--copy-with must be crane, skopeo or docker, not '{value}'.");
+            }
+        });
 
         var cmd = new Command("promote",
             "Make another environment deploy the images an environment already published, by digest, without rebuilding them.");
@@ -39,6 +54,7 @@ public static class PromoteCommand
         cmd.Options.Add(fromOpt);
         cmd.Options.Add(toOpt);
         cmd.Options.Add(imageTagOpt);
+        cmd.Options.Add(copyWithOpt);
         cmd.Options.Add(GlobalOptions.DryRun);
 
         cmd.SetAction(async (parseResult, ct) =>
@@ -48,6 +64,9 @@ public static class PromoteCommand
             var to = parseResult.GetValue(toOpt)!;
             var tagOverride = parseResult.GetValue(imageTagOpt)?.Trim();
             var dryRun = parseResult.GetValue(GlobalOptions.DryRun);
+            ImageCopyTool? copyWith = ImageCopier.TryParse(parseResult.GetValue(copyWithOpt), out var parsedTool)
+                ? parsedTool
+                : null;
 
             if (string.Equals(from, to, StringComparison.Ordinal))
             {
@@ -112,6 +131,7 @@ public static class PromoteCommand
             {
                 var status = e.Problem is not null ? $"[red]✗ {Markup.Escape(e.Problem)}[/]"
                     : e.AlreadyPromoted ? "[dim]already promoted[/]"
+                    : e.NeedsCopy ? $"[green]✓ copy from {Markup.Escape(e.SourceRepository)}, promote[/]"
                     : "[green]✓ promote[/]";
                 table.AddRow(
                     Markup.Escape(e.Service),
@@ -131,10 +151,49 @@ public static class PromoteCommand
                 return 1;
             }
 
+            var copies = entries.Where(e => e is { NeedsCopy: true, AlreadyPromoted: false }).ToList();
+            var copier = new ImageCopier(logger: resolved.Services.GetService<ILoggerFactory>()?.CreateLogger("Deployify.Promote"));
+            ImageCopyTool tool = default;
+            if (copies.Count > 0)
+            {
+                if (await ResolveCopyToolAsync(copier, copyWith, ct) is not { } found)
+                {
+                    return 1;
+                }
+
+                tool = found;
+                AnsiConsole.MarkupLineInterpolated(
+                    $"\n[dim]{copies.Count} image(s) are copied to {to}'s registry with {tool.ToString().ToLowerInvariant()}.[/]");
+            }
+
             if (dryRun)
             {
-                AnsiConsole.MarkupLine("\n[yellow]Dry-run: nothing recorded.[/]");
+                AnsiConsole.MarkupLine("\n[yellow]Dry-run: nothing copied or recorded.[/]");
                 return 0;
+            }
+
+            // Copy everything before recording anything: an image copied to a registry is harmless
+            // on its own, but recorded digests the target can't pull would break its next deploy.
+            foreach (var e in copies)
+            {
+                try
+                {
+                    if (await copier.ExistsAsync(tool, e.TargetRepository, e.Digest!, ct))
+                    {
+                        AnsiConsole.MarkupLineInterpolated($"  [dim]{e.Service}: already in {e.TargetRepository}[/]");
+                        continue;
+                    }
+
+                    await ConsoleStatus.RunAsync($"Copying {e.Service}...",
+                        () => copier.CopyAsync(tool, e.SourceRepository, e.Digest!, e.TargetRepository, e.TargetTag, ct));
+                    AnsiConsole.MarkupLineInterpolated($"  [green]✓[/] {e.Service}: copied to {e.TargetRepository}:{e.TargetTag}");
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {e.Service}: {ex.Message}");
+                    AnsiConsole.MarkupLine("Nothing was recorded. Fix the problem and promote again; images already copied are skipped.");
+                    return 1;
+                }
             }
 
             var recorded = ImagePromotion.Record(entries, target, DateTimeOffset.UtcNow);
@@ -160,5 +219,32 @@ public static class PromoteCommand
         });
 
         return cmd;
+    }
+
+    /// <summary>The copy tool asked for (when installed), else the first one installed. Null after saying why.</summary>
+    private static async System.Threading.Tasks.Task<ImageCopyTool?> ResolveCopyToolAsync(
+        ImageCopier copier, ImageCopyTool? requested, System.Threading.CancellationToken ct)
+    {
+        if (requested is { } tool)
+        {
+            if (await copier.IsAvailableAsync(tool, ct))
+            {
+                return tool;
+            }
+
+            AnsiConsole.MarkupLineInterpolated(
+                $"[red]✗[/] --copy-with {tool.ToString().ToLowerInvariant()} is set, but it isn't installed or doesn't run.");
+            return null;
+        }
+
+        if (await copier.DetectAsync(ct) is { } detected)
+        {
+            return detected;
+        }
+
+        AnsiConsole.MarkupLine("[red]✗[/] The target uses another registry, so the images have to be copied there, " +
+            "but none of crane, skopeo or docker buildx is installed. Install one of them; they sign in with your " +
+            "docker login credentials.");
+        return null;
     }
 }
