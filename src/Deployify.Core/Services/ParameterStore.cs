@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using Deployify.Core.Expressions;
 using Deployify.Core.Models;
@@ -17,7 +18,14 @@ public sealed class ParameterStore
 {
     public const string FileName = "deployify-parameters.json";
 
-    private static readonly JsonSerializerOptions s_json = new() { WriteIndented = true };
+    // Relaxed escaping writes a generated password as it is, so it can be copied out of the
+    // file: the default would write '+' as \u002B. The file is never embedded in HTML, which is
+    // what the default escaping protects against; quotes and control characters are still escaped.
+    private static readonly JsonSerializerOptions s_json = new()
+    {
+        WriteIndented = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
 
     private readonly object _lock = new();
     private readonly Dictionary<string, Dictionary<string, string>> _environments;

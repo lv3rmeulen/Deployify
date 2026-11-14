@@ -6,9 +6,10 @@ using Xunit;
 namespace Deployify.Integration.Tests;
 
 /// <summary>
-/// The CLI's output with no terminal, as on CI runners. A console that writes to a
-/// <see cref="StringWriter"/> has no terminal either, so these tests don't depend on how
-/// they're run.
+/// The CLI's output with no terminal, as on CI runners. The tests use a console whose output
+/// reports what Spectre.Console 0.57.2 reports there, width -1, rather than asking the process:
+/// run from a terminal, Spectre would read the terminal's real width even for a console that
+/// writes to a <see cref="StringWriter"/>.
 /// </summary>
 public sealed class ConsoleSetupTests
 {
@@ -19,9 +20,36 @@ public sealed class ConsoleSetupTests
         {
             Ansi = AnsiSupport.No,
             Interactive = InteractionSupport.No,
-            Out = new AnsiConsoleOutput(output)
+            Out = new NoTerminalOutput(output)
         });
         return (console, output);
+    }
+
+    /// <summary>Output that isn't a terminal and has no width, as Spectre sees stdout on a CI runner.</summary>
+    private sealed class NoTerminalOutput(TextWriter writer) : IAnsiConsoleOutput
+    {
+        public TextWriter Writer => writer;
+
+        public bool IsTerminal => false;
+
+        public int Width => -1;
+
+        public int Height => -1;
+
+        public void SetEncoding(System.Text.Encoding encoding)
+        {
+        }
+    }
+
+    [Fact]
+    public void WithoutATerminal_SpectreWritesNothingUnconfigured()
+    {
+        // The bug ConsoleSetup works around. If this starts failing, Spectre fixed it itself.
+        var (console, output) = NoTerminal();
+
+        console.WriteLine("plain line");
+
+        output.ToString().ShouldBeEmpty();
     }
 
     [Fact]

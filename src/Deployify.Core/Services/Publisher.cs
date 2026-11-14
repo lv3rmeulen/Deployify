@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -17,6 +17,14 @@ public class Publisher(ILogger<Publisher> logger) : IPublisher
     public async Task PublishAsync(AspireManifest manifest, EnvironmentConfig config,
         string appHostDirectory, CancellationToken ct = default)
     {
+        // Only .NET projects are built here; containers already have an image. With nothing to
+        // build, don't require a container runtime: a container-only app publishes nothing.
+        if (!manifest.Resources.Values.Any(r => r.IsProject && r.Path is not null))
+        {
+            logger.LogInformation("No .NET projects in the manifest; nothing to publish.");
+            return;
+        }
+
         var runtime = await ResolveRuntimeAsync(config.ContainerRuntime, ct);
 
         // Pre-flight: fail fast with a clear message before attempting to publish.

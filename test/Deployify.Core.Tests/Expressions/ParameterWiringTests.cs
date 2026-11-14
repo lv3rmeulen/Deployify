@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Deployify.Core.Expressions;
 using Deployify.Core.Models;
@@ -189,9 +190,23 @@ public sealed class ParameterWiringTests
         var value = await store.CreateSource(new EnvironmentConfig()).GetValueAsync("pg-password", s_generated, TestContext.Current.CancellationToken);
 
         value.ShouldNotBeNull().Length.ShouldBe(20);
-        var json = File.ReadAllText(Path.Combine(dir.Path, ParameterStore.FileName));
-        json.ShouldContain("\"prod\"");
-        json.ShouldContain($"\"pg-password.value\": \"{value}\"");
+        var saved = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(
+            await File.ReadAllTextAsync(Path.Combine(dir.Path, ParameterStore.FileName), TestContext.Current.CancellationToken))!;
+        saved["prod"]["pg-password.value"].ShouldBe(value);
+    }
+
+    [Fact]
+    public void Store_WritesValuesReadably()
+    {
+        // Every character the generator can produce must appear as itself, so a password can be
+        // copied out of the file.
+        using var dir = new TempDir();
+        var value = PasswordGenerator.LowerChars + PasswordGenerator.UpperChars + PasswordGenerator.NumericChars + PasswordGenerator.SpecialChars;
+
+        ParameterStore.WriteSection(dir.Path, "prod", new Dictionary<string, string> { ["pg-password.value"] = value });
+
+        File.ReadAllText(Path.Combine(dir.Path, ParameterStore.FileName)).ShouldContain($"\"pg-password.value\": \"{value}\"");
+        ParameterStore.Load(dir.Path, "prod").Values["pg-password.value"].ShouldBe(value);
     }
 
     [Fact]
