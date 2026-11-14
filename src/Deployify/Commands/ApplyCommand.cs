@@ -18,6 +18,11 @@ public static class ApplyCommand
             DefaultValueFactory = _ => false
         };
 
+        var imageTagOpt = new Option<string?>("--image-tag", "-i")
+        {
+            Description = "Deploy this image tag instead of the environment's configured tag, for example one promoted from another environment."
+        };
+
         var cmd = new Command("apply", "Deploy to the target.");
         cmd.Options.Add(GlobalOptions.ProjectPath);
         cmd.Options.Add(GlobalOptions.Environment);
@@ -25,6 +30,8 @@ public static class ApplyCommand
         cmd.Options.Add(GlobalOptions.DryRun);
         cmd.Options.Add(GlobalOptions.Strict);
         cmd.Options.Add(autoApprove);
+        cmd.Options.Add(imageTagOpt);
+        cmd.Options.Add(GlobalOptions.RequireDigest);
         RolloutCli.AddTo(cmd);
         StateCli.AddPruneOptions(cmd);
 
@@ -37,6 +44,8 @@ public static class ApplyCommand
             var dryRun = parseResult.GetValue(GlobalOptions.DryRun);
             var strict = parseResult.GetValue(GlobalOptions.Strict);
             var approve = parseResult.GetValue(autoApprove);
+            var tagOverride = parseResult.GetValue(imageTagOpt)?.Trim();
+            var requireDigest = parseResult.GetValue(GlobalOptions.RequireDigest);
 
             ResolvedContext resolved;
             try
@@ -54,11 +63,15 @@ public static class ApplyCommand
             var (_, config, envName, targetType, target, directory) = resolved;
             var prune = StateCli.PruneRequested(parseResult, config);
             var outputDir = Path.Combine(directory, config.OutputPath);
+            if (!string.IsNullOrEmpty(tagOverride))
+            {
+                config.ImageTag = tagOverride;
+            }
 
             AnsiConsole.MarkupLineInterpolated($"[dim]Environment: [cyan]{envName}[/] Target: [cyan]{target.DisplayName}[/][/]\n");
 
             var manifest = await resolved.LoadManifestAsync(ct);
-            if (manifest is null)
+            if (manifest is null || PlanOutput.UnpinnedBlocks(manifest, config, requireDigest))
             {
                 return 1;
             }

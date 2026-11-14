@@ -3,7 +3,7 @@ title: deployify destroy
 description: "Remove everything Deployify deployed in an environment."
 sidebar:
   label: destroy
-  order: 16
+  order: 17
 ---
 
 :::note

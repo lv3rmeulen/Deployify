@@ -3,7 +3,7 @@ title: deployify graph
 description: "Display a dependency graph of all services."
 sidebar:
   label: graph
-  order: 12
+  order: 13
 ---
 
 :::note

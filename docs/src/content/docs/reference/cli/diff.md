@@ -3,7 +3,7 @@ title: deployify diff
 description: "Show differences between local manifest and the running target."
 sidebar:
   label: diff
-  order: 13
+  order: 14
 ---
 
 :::note

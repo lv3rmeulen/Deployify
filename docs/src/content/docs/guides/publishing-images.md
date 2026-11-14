@@ -48,6 +48,40 @@ inventory), locally or in the [remote state backend](/concepts/state/#remote-sta
 exact repository and tag it was published as: change the tag and the artifacts reference the new
 tag until it is published. Images in the local store (no registry) are referenced by tag.
 
+## Promoting images to another environment
+
+Build once, deploy many times: `promote` makes another environment deploy the images an
+environment already published, by digest, without building them again.
+
+```bash
+deployify promote --from staging --to prod --image-tag "$GITHUB_SHA"
+deployify apply   --env prod --image-tag "$GITHUB_SHA" --require-digest
+```
+
+`promote` looks up the digest the source environment recorded for each project and Dockerfile
+build at that tag, and records it in the target environment's deployment state. It deploys
+nothing: the target's next `apply` (or `ci --no-publish`) references the images by those digests.
+Without `--image-tag`, it promotes the source environment's configured tag.
+
+It promotes all images or none. It stops without recording anything when:
+
+- the source environment has no digest for an image at that tag (it never published that build), or
+- the target runs the image from a different registry. Both environments need the same
+  `containerRegistry` for now; copying images between registries isn't supported yet.
+
+`--dry-run` shows what would be promoted. The target environment's state is locked while
+`promote` runs.
+
+### Requiring digests
+
+`--require-digest` on `apply` and `ci` stops the deploy when a built image would run by tag
+because no digest is recorded for it, for example when the promotion was skipped or used a
+different tag. Without it, such an image is deployed by tag, as before.
+
+Promotion only reuses images when the environments don't need different builds. Configuration
+and secrets that Aspire passes at deploy time are fine. A Dockerfile build whose build arguments
+differ per environment needs its own build in each one.
+
 ## Container runtime
 
 Deployify uses `dotnet publish -t:PublishContainer` to build project images, and `docker build`

@@ -49,6 +49,13 @@ public static class GlobalOptions
         DefaultValueFactory = _ => false
     };
 
+    public static readonly Option<bool> RequireDigest = new("--require-digest")
+    {
+        Description = "Fail instead of deploying a built image by tag when no published digest is recorded for it " +
+                      "(for example after 'deployify promote').",
+        DefaultValueFactory = _ => false
+    };
+
     public static readonly Option<VerbosityLevel> Verbosity = new("--verbosity", "-v")
     {
         Description = "Log verbosity: quiet | normal | verbose",

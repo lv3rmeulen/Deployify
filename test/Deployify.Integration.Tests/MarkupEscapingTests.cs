@@ -28,12 +28,7 @@ public sealed class MarkupEscapingTests : IDisposable
 
     public MarkupEscapingTests()
     {
-        var console = AnsiConsole.Create(new AnsiConsoleSettings
-        {
-            Out = new AnsiConsoleOutput(_out), Ansi = AnsiSupport.No, ColorSystem = ColorSystemSupport.NoColors
-        });
-        console.Profile.Width = 200; // a redirected writer reports no width, which wraps everything away
-        AnsiConsole.Console = console;
+        AnsiConsole.Console = PlainConsole.Create(_out, width: 200);
     }
 
     public void Dispose() => AnsiConsole.Console = _original;

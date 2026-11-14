@@ -3,7 +3,7 @@ title: deployify watch
 description: "Watch for source changes and automatically re-run generate + plan."
 sidebar:
   label: watch
-  order: 10
+  order: 11
 ---
 
 :::note

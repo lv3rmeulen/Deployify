@@ -3,7 +3,7 @@ title: deployify ci
 description: "Run the full generate → validate → plan → publish → apply pipeline for CI/CD."
 sidebar:
   label: ci
-  order: 9
+  order: 10
 ---
 
 :::note
@@ -31,6 +31,7 @@ deployify ci [options]
 | `--fail-on-changes` | Exit non-zero if the plan detects any create/update/delete changes (drift gating). | `false` |
 | `--auto-approve` | Deploy without asking for confirmation. Required when there is no interactive terminal. | `false` |
 | `--strict` | Fail when the manifest has resources Deployify won't deploy, even if nothing depends on them (list the ones you expect under ignoreResources). | `false` |
+| `--require-digest` | Fail instead of deploying a built image by tag when no published digest is recorded for it (for example after 'deployify promote'). | `false` |
 | `--no-health-gate` | Deploy without waiting for services to become healthy and without automatic rollback. | `false` |
 | `--no-rollback` | Wait for health, but leave a failed deployment in place instead of rolling it back. | `false` |
 | `--health-timeout` | Seconds each service may take to become healthy before the rollout fails (default: 600). | `600` |

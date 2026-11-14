@@ -3,7 +3,7 @@ title: deployify status
 description: "Show recent rollouts and how they ended."
 sidebar:
   label: status
-  order: 14
+  order: 15
 ---
 
 :::note

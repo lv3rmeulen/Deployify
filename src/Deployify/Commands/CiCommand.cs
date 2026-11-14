@@ -82,6 +82,7 @@ public static class CiCommand
         cmd.Options.Add(failOnChanges);
         cmd.Options.Add(autoApprove);
         cmd.Options.Add(GlobalOptions.Strict);
+        cmd.Options.Add(GlobalOptions.RequireDigest);
         RolloutCli.AddTo(cmd);
         StateCli.AddPruneOptions(cmd);
 
@@ -98,6 +99,7 @@ public static class CiCommand
             var tagOverride = parseResult.GetValue(imageTag);
             var doAllowMutableTag = parseResult.GetValue(allowMutableTag);
             var strict = parseResult.GetValue(GlobalOptions.Strict);
+            var requireDigest = parseResult.GetValue(GlobalOptions.RequireDigest);
 
             ResolvedContext resolved;
             try
@@ -131,6 +133,12 @@ public static class CiCommand
                 : null;
             if (!await SetImageTagAsync(config, tagOverride, publishes: publishReason is null, doAllowMutableTag,
                     resolved.AppHostDirectory, ct))
+            {
+                return 1;
+            }
+
+            // A run that publishes pins what it pushes; one that doesn't must find the digests.
+            if (!doSkipApply && publishReason is not null && PlanOutput.UnpinnedBlocks(manifest, config, requireDigest))
             {
                 return 1;
             }

@@ -19,6 +19,7 @@ public static class DeployifyCli
             ApplyCommand.Build(),
             PublishCommand.Build(),
             PackageCommand.Build(),
+            PromoteCommand.Build(),
             CiCommand.Build(),
             WatchCommand.Build(),
             ExplainCommand.Build(),

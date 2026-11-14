@@ -3,7 +3,7 @@ title: deployify explain
 description: "Display a human-readable summary of all services."
 sidebar:
   label: explain
-  order: 11
+  order: 12
 ---
 
 :::note

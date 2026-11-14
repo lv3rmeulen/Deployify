@@ -28,12 +28,7 @@ public sealed class CiPublishTests : IDisposable
 
     public CiPublishTests()
     {
-        var console = AnsiConsole.Create(new AnsiConsoleSettings
-        {
-            Out = new AnsiConsoleOutput(_out), Ansi = AnsiSupport.No, ColorSystem = ColorSystemSupport.NoColors
-        });
-        console.Profile.Width = 300;
-        AnsiConsole.Console = console;
+        AnsiConsole.Console = PlainConsole.Create(_out, width: 300);
     }
 
     public void Dispose() => AnsiConsole.Console = _original;

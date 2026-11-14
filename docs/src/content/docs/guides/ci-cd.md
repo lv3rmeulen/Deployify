@@ -99,6 +99,25 @@ at a given width instead.
       --fail-on-changes
 ```
 
+### GitHub Actions — build once, promote to production
+
+Staging builds and deploys the images; production deploys the same images by digest, without
+rebuilding them. Both environments need the same container registry.
+
+```yaml
+- name: Deploy to staging
+  run: deployify ci --env staging --image-tag "$GITHUB_SHA" --skip-validate --auto-approve
+
+# Later, for example in a job that needs an approval:
+- name: Promote to production
+  run: |
+    deployify promote --from staging --to prod --image-tag "$GITHUB_SHA"
+    deployify ci --env prod --no-publish --image-tag "$GITHUB_SHA" --require-digest \
+      --skip-validate --auto-approve
+```
+
+See [promoting images](/guides/publishing-images/#promoting-images-to-another-environment).
+
 ### Separate steps
 
 ```bash

@@ -19,6 +19,7 @@ Generated from the command definitions by `tools/Deployify.DocGen`; don't edit b
 | [`apply`](./apply/) | Deploy to the target. |
 | [`publish`](./publish/) | Build and push service images or artifacts. |
 | [`package`](./package/) | Zip build output and upload to the artifact store (raw_exec Nomad deployments only). |
+| [`promote`](./promote/) | Make another environment deploy the images an environment already published, by digest, without rebuilding them. |
 | [`ci`](./ci/) | Run the full generate → validate → plan → publish → apply pipeline for CI/CD. |
 | [`watch`](./watch/) | Watch for source changes and automatically re-run generate + plan. |
 | [`explain`](./explain/) | Display a human-readable summary of all services. |
