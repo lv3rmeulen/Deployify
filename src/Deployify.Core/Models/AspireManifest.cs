@@ -35,6 +35,18 @@ public sealed class AspireResource
     [JsonPropertyName("image")]
     public string? Image { get; set; }
 
+    /// <summary>For dockerfile.v0 resources: the build context folder. <see cref="Path"/> is the Dockerfile.</summary>
+    [JsonPropertyName("context")]
+    public string? Context { get; set; }
+
+    /// <summary>For dockerfile.v0 resources: <c>--build-arg</c> values.</summary>
+    [JsonPropertyName("buildArgs")]
+    public Dictionary<string, string>? BuildArgs { get; set; }
+
+    /// <summary>For container.v1 resources made with AddDockerfile or WithDockerfile: how to build the image.</summary>
+    [JsonPropertyName("build")]
+    public AspireContainerBuild? Build { get; set; }
+
     [JsonPropertyName("env")]
     public Dictionary<string, string>? Env { get; set; }
 
@@ -117,6 +129,27 @@ public sealed class AspireResource
     [JsonIgnore]
     public bool IsProject => ResourceTypes.IsProject(Type);
 
+    /// <summary>
+    /// How to build this resource's image from a Dockerfile, or null when it isn't built from one:
+    /// a <c>dockerfile.v0</c> resource, or a <c>container.v1</c> resource with a <c>build</c> section.
+    /// </summary>
+    [JsonIgnore]
+    public DockerfileBuild? DockerfileBuild
+        => Type == ResourceTypes.Dockerfile && !string.IsNullOrEmpty(Path) && !string.IsNullOrEmpty(Context)
+            ? new DockerfileBuild(Context, Path, BuildArgs ?? [], [])
+            : ResourceTypes.IsContainer(Type) && Build is { Context.Length: > 0 } b
+                ? new DockerfileBuild(b.Context,
+                    string.IsNullOrEmpty(b.Dockerfile) ? System.IO.Path.Combine(b.Context, "Dockerfile") : b.Dockerfile,
+                    b.Args ?? [], [.. (b.Secrets ?? []).Keys])
+                : null;
+
+    /// <summary>
+    /// True when Deployify builds and publishes this resource's image: .NET projects and
+    /// Dockerfile builds. Such images are named after the resource under the configured registry.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsBuiltImage => IsProject || DockerfileBuild is not null;
+
     /// <summary>The first HTTP(S) binding, if the resource has one.</summary>
     [JsonIgnore]
     public KeyValuePair<string, AspireBinding>? HttpBinding
@@ -128,6 +161,9 @@ public sealed class AspireResource
         Type = Type,
         Path = Path,
         Image = Image,
+        Context = Context,
+        BuildArgs = BuildArgs,
+        Build = Build,
         Env = Env is null ? null : new Dictionary<string, string>(Env),
         Bindings = Bindings,
         ConnectionString = ConnectionString,
@@ -139,6 +175,37 @@ public sealed class AspireResource
         ExtensionData = ExtensionData
     };
 }
+
+/// <summary>The <c>build</c> section of a <c>container.v1</c> resource.</summary>
+public sealed class AspireContainerBuild
+{
+    /// <summary>The build context folder, relative to the manifest file.</summary>
+    [JsonPropertyName("context")]
+    public string Context { get; set; } = string.Empty;
+
+    /// <summary>The Dockerfile, relative to the manifest file.</summary>
+    [JsonPropertyName("dockerfile")]
+    public string? Dockerfile { get; set; }
+
+    [JsonPropertyName("args")]
+    public Dictionary<string, string>? Args { get; set; }
+
+    /// <summary>Build secrets by name; each is an <c>env</c> or a <c>file</c> secret.</summary>
+    [JsonPropertyName("secrets")]
+    public Dictionary<string, JsonElement>? Secrets { get; set; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
+}
+
+/// <summary>
+/// A Dockerfile build, from either a <c>dockerfile.v0</c> resource or a <c>container.v1</c>
+/// <c>build</c> section. Paths are as the manifest wrote them until
+/// <see cref="AspireManifestExtensions.WithProjectPathsRelativeTo"/> makes them absolute.
+/// </summary>
+/// <param name="Secrets">Names of the build secrets the manifest asks for.</param>
+public sealed record DockerfileBuild(
+    string Context, string Dockerfile, IReadOnlyDictionary<string, string> Args, IReadOnlyList<string> Secrets);
 
 public sealed class AspireBinding
 {
@@ -456,6 +523,44 @@ public static class AspireManifestExtensions
             var normalized = resource.Path.Replace('\\', System.IO.Path.DirectorySeparatorChar)
                                           .Replace('/', System.IO.Path.DirectorySeparatorChar);
             resource.Path = System.IO.Path.GetFullPath(System.IO.Path.Combine(manifestDirectory, normalized));
+        }
+
+        return manifest;
+    }
+
+    /// <summary>
+    /// Makes the Dockerfile and build context of every Dockerfile build absolute. Aspire writes
+    /// them relative to the manifest file, which Deployify keeps in the output folder, so they
+    /// can't be read relative to the AppHost.
+    /// </summary>
+    public static AspireManifest WithBuildPathsRelativeTo(this AspireManifest manifest, string manifestDirectory)
+    {
+        string Absolute(string path)
+            => System.IO.Path.GetFullPath(System.IO.Path.Combine(manifestDirectory,
+                path.Replace('\\', System.IO.Path.DirectorySeparatorChar).Replace('/', System.IO.Path.DirectorySeparatorChar)));
+
+        foreach (var resource in manifest.Resources.Values)
+        {
+            if (resource.Type == ResourceTypes.Dockerfile)
+            {
+                if (!string.IsNullOrEmpty(resource.Context))
+                {
+                    resource.Context = Absolute(resource.Context);
+                }
+
+                if (!string.IsNullOrEmpty(resource.Path))
+                {
+                    resource.Path = Absolute(resource.Path);
+                }
+            }
+            else if (resource.Build is { } build && !string.IsNullOrEmpty(build.Context))
+            {
+                build.Context = Absolute(build.Context);
+                if (!string.IsNullOrEmpty(build.Dockerfile))
+                {
+                    build.Dockerfile = Absolute(build.Dockerfile);
+                }
+            }
         }
 
         return manifest;

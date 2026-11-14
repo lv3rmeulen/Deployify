@@ -71,9 +71,9 @@ committed, remove it from the index with `git rm --cached <file>` and rotate any
 
 ## Ignored resources
 
-Deployify deploys projects and containers with an image. Before planning, it checks every other
-resource in the manifest and reports the ones it can't deploy: executables (`executable.v0`),
-Dockerfile builds (`dockerfile.v0`, or `container.v1` with only a `build`), Azure and AWS
+Deployify deploys projects, Dockerfile builds and containers with an image. Before planning, it
+checks every other resource in the manifest and reports the ones it can't deploy: executables
+(`executable.v0`), containers with neither an image nor a build, Azure and AWS
 infrastructure (`azure.*`, `aws.*`), and types it doesn't know. Parameters, values, Dapr
 resources and child resources such as databases need no deploying and aren't reported.
 

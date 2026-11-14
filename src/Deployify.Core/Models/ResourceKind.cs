@@ -19,7 +19,7 @@ public enum ResourceKind
     /// <summary>Folded into another resource before deploying (Dapr sidecars and components).</summary>
     Folded,
 
-    /// <summary>A resource type Deployify knows but can't deploy (executables, Bicep, Dockerfile builds).</summary>
+    /// <summary>A resource type Deployify knows but can't deploy (executables, Bicep, containers with nothing to run).</summary>
     Unsupported,
 
     /// <summary>A resource type, or a version of one, this Deployify doesn't know.</summary>
@@ -58,9 +58,13 @@ public static partial class ResourceTypes
     /// <summary>True for <c>container.v0</c> and <c>container.v1</c>, with or without an image.</summary>
     public static bool IsContainer(string type) => type is ContainerV0 or ContainerV1;
 
-    /// <summary>True when the resource becomes a running service: a project, or a container with an image.</summary>
+    /// <summary>
+    /// True when the resource becomes a running service: a project, a Dockerfile build, or a
+    /// container with an image.
+    /// </summary>
     public static bool IsWorkload(AspireResource resource)
-        => IsProject(resource.Type) || (IsContainer(resource.Type) && !string.IsNullOrEmpty(resource.Image));
+        => IsProject(resource.Type) || resource.DockerfileBuild is not null ||
+           (IsContainer(resource.Type) && !string.IsNullOrEmpty(resource.Image));
 
     /// <summary>
     /// Classifies a resource on its own. A resource with a <c>parent</c> whose type Deployify
@@ -88,9 +92,10 @@ public static partial class ResourceTypes
 
         if (IsContainer(type) || type == Dockerfile)
         {
+            // A Dockerfile build with its context and Dockerfile is a workload (above); this one lacks them.
             return new(ResourceKind.Unsupported,
-                "is built from a Dockerfile, which Deployify doesn't build. Build and push the image yourself " +
-                "and use AddContainer with that image, or deploy it another way");
+                "has neither an image nor a Dockerfile build with a context and a Dockerfile, so there is " +
+                "nothing to run. Give it an image, or build it with AddDockerfile or WithDockerfile");
         }
 
         if (type == Executable)

@@ -69,16 +69,7 @@ public sealed class JobGenerator(ILogger<JobGenerator> logger)
                 UseHostNetwork = nc.DeploymentMode == NomadDeploymentMode.Docker
             };
 
-            if (resource.IsProject)
-            {
-                job.Image = config.ContainerRegistry is not null
-                    ? $"{config.ContainerRegistry.TrimEnd('/')}/{name}"
-                    : name;
-            }
-            else
-            {
-                job.Image = resource.Image;
-            }
+            job.Image = ServiceImage.For(name, resource, config);
 
             // Values that contain a secret parameter are kept apart and stored the target's own way.
             var env = await resolver.ResolveEnvironmentAsync(resource.Env, overrides?.Env, ct);

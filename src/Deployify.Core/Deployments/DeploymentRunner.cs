@@ -129,14 +129,17 @@ public sealed class DeploymentRunner(DeploymentSession session)
         }
 
         // ── Publish ────────────────────────────────────────────────────────────
-        if (options.Publish && manifest.Resources.Values.Any(r => r.IsProject))
+        if (options.Publish && manifest.Resources.Values.Any(r => r.IsBuiltImage))
         {
             await using var stage = await Reporter.BeginStageAsync(
-                $"Publishing project images (tag {config.ImageTag}, {config.ContainerRuntime})", ct);
+                $"Publishing images (tag {config.ImageTag}, {config.ContainerRuntime})", ct);
             try
             {
                 await target.PublishAsync(manifest, config, session.AppHostDirectory, ct);
-                await stage.CompleteAsync("Images published.", ct: ct);
+                await session.RecordPublishedImagesAsync(manifest, ct);
+                await stage.CompleteAsync(config.PublishedImages.HasChanges
+                    ? $"Images published; {config.PublishedImages.Recorded.Count} pinned by digest."
+                    : "Images published.", ct: ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

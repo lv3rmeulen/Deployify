@@ -66,11 +66,7 @@ public sealed class ConsulJobGenerator(ILogger<ConsulJobGenerator> logger)
                     resource.Bindings?.Values.Any(b => b is { IsHttp: true, IsExternal: true }) == true
             };
 
-            job.Image = job.IsProjectService
-                ? config.ContainerRegistry is not null
-                    ? $"{config.ContainerRegistry.TrimEnd('/')}/{name}"
-                    : name
-                : resource.Image;
+            job.Image = ServiceImage.For(name, resource, config);
 
             // Ports: the service's HTTP binding first, since that's the one Consul registers.
             if (resource.Bindings is not null)

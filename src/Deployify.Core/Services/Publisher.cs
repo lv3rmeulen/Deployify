@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Interfaces;
@@ -12,17 +13,38 @@ using Microsoft.Extensions.Logging;
 
 namespace Deployify.Core.Services;
 
-public class Publisher(ILogger<Publisher> logger) : IPublisher
+/// <summary>
+/// Builds the images Deployify owns and pushes them to the configured registry: .NET projects
+/// with the SDK's container support, Dockerfile builds with docker or podman. The content digest
+/// of every pushed image is recorded in <see cref="EnvironmentConfig.PublishedImages"/>, so the
+/// artifacts generated afterwards can pin it.
+/// </summary>
+public partial class Publisher(ILogger<Publisher> logger) : IPublisher
 {
+    /// <summary>Starts dotnet, docker and podman. Replaced in tests.</summary>
+    internal IProcessRunner Runner { get; init; } = ProcessRunner.Default;
+
+    internal TimeProvider Time { get; init; } = TimeProvider.System;
+
     public async Task PublishAsync(AspireManifest manifest, EnvironmentConfig config,
         string appHostDirectory, CancellationToken ct = default)
     {
-        // Only .NET projects are built here; containers already have an image. With nothing to
-        // build, don't require a container runtime: a container-only app publishes nothing.
-        if (!manifest.Resources.Values.Any(r => r.IsProject && r.Path is not null))
+        // Containers with an image are pulled as they are. With nothing to build, don't require a
+        // container runtime: a container-only app publishes nothing.
+        var builds = manifest.Resources
+            .Where(r => r.Value.DockerfileBuild is not null)
+            .Select(r => (Name: r.Key, Build: r.Value.DockerfileBuild!))
+            .ToList();
+        if (!manifest.Resources.Values.Any(r => r.IsProject && r.Path is not null) && builds.Count == 0)
         {
-            logger.LogInformation("No .NET projects in the manifest; nothing to publish.");
+            logger.LogInformation("No .NET projects or Dockerfile builds in the manifest; nothing to publish.");
             return;
+        }
+
+        // Check what a build can't do before spending minutes on the others.
+        foreach (var (name, build) in builds)
+        {
+            DockerfileBuildCommands.EnsureBuildable(name, build);
         }
 
         var runtime = await ResolveRuntimeAsync(config.ContainerRuntime, ct);
@@ -91,12 +113,96 @@ public class Publisher(ILogger<Publisher> logger) : IPublisher
 
             logger.LogInformation("Publishing '{Name}' → {Repository}:{Tag} (runtime: {Runtime})...",
                 name, repository, tag, runtime);
-            (await ProcessRunner.Default.RunAsync(new ProcessSpec("dotnet",
+            var result = (await Runner.RunAsync(new ProcessSpec("dotnet",
                     BuildPublishArgs(projectPath, config.ContainerOs, config.ContainerArch, repository, tag,
-                        registryArg, runtimeArg, socketArg)) { Log = logger }, ct))
+                        registryArg, runtimeArg, socketArg, "-getProperty:GeneratedContainerDigest", "-getProperty:GeneratedContainerNames")) { Log = logger }, ct))
                 .EnsureSuccess("dotnet publish");
+
+            // A digest means something only for an image in a registry: a local image is referenced by tag.
+            if (registryArg.Length > 0)
+            {
+                RecordDigest(config, name, tag, ReadSdkDigest(result.Stdout));
+            }
+        }
+
+        foreach (var (name, build) in builds)
+        {
+            await BuildDockerfileAsync(name, build, config, runtime, ct);
         }
     }
+
+    /// <summary>
+    /// The digest in <c>dotnet publish</c> output. Asked for with two <c>-getProperty</c> switches,
+    /// MSBuild prints both properties as JSON after the build. Null when it isn't there.
+    /// </summary>
+    internal static string? ReadSdkDigest(string output)
+        => SdkDigestPattern().Match(output) is { Success: true } m ? m.Groups[1].Value : null;
+
+    /// <summary>The digest in <c>docker push</c> output (<c>latest: digest: sha256:… size: 1234</c>), or null.</summary>
+    internal static string? ReadPushDigest(string output)
+        => PushDigestPattern().Matches(output) is { Count: > 0 } all ? all[^1].Groups[1].Value : null;
+
+    private void RecordDigest(EnvironmentConfig config, string name, string tag, string? digest)
+    {
+        var repository = ServiceImage.Repository(name, config);
+        if (digest is null)
+        {
+            logger.LogWarning("Published '{Name}', but couldn't read its digest; it is deployed by tag {Repository}:{Tag}.",
+                name, repository, tag);
+            return;
+        }
+
+        config.PublishedImages.Record(repository, tag, digest, Time.GetUtcNow());
+        logger.LogInformation("'{Name}' is {Repository}@{Digest}.", name, repository, digest);
+    }
+
+    private async Task BuildDockerfileAsync(
+        string name, DockerfileBuild build, EnvironmentConfig config, ContainerRuntime runtime, CancellationToken ct)
+    {
+        var tool = runtime == ContainerRuntime.Podman ? "podman" : "docker";
+        var tag = ServiceImage.Tag(name, config);
+        var reference = ImageReference.Format(ServiceImage.Repository(name, config), tag);
+
+        logger.LogInformation("Building '{Name}' → {Reference} from {Dockerfile} ({Tool})...",
+            name, reference, build.Dockerfile, tool);
+        (await Runner.RunAsync(new ProcessSpec(tool,
+                DockerfileBuildCommands.BuildArgs(build, reference, config.ContainerOs, config.ContainerArch)) { Log = logger }, ct))
+            .EnsureSuccess($"{tool} build");
+
+        if (string.IsNullOrEmpty(config.ContainerRegistry))
+        {
+            logger.LogInformation("No container registry configured: '{Name}' stays a local image.", name);
+            return;
+        }
+
+        if (runtime == ContainerRuntime.Podman)
+        {
+            // podman push prints no digest; it writes one to a file on request.
+            var digestFile = Path.Combine(Path.GetTempPath(), $"deployify-{Guid.NewGuid():N}.digest");
+            try
+            {
+                (await Runner.RunAsync(new ProcessSpec(tool, ["push", "--digestfile", digestFile, reference]) { Log = logger }, ct))
+                    .EnsureSuccess("podman push");
+                RecordDigest(config, name, tag, File.Exists(digestFile) ? (await File.ReadAllTextAsync(digestFile, ct)).Trim() : null);
+            }
+            finally
+            {
+                File.Delete(digestFile);
+            }
+        }
+        else
+        {
+            var push = (await Runner.RunAsync(new ProcessSpec(tool, ["push", reference]) { Log = logger }, ct))
+                .EnsureSuccess("docker push");
+            RecordDigest(config, name, tag, ReadPushDigest(push.Stdout));
+        }
+    }
+
+    [GeneratedRegex("\"GeneratedContainerDigest\"\\s*:\\s*\"(sha256:[0-9a-f]{64})\"")]
+    private static partial Regex SdkDigestPattern();
+
+    [GeneratedRegex("digest: (sha256:[0-9a-f]{64})")]
+    private static partial Regex PushDigestPattern();
 
     /// <summary>
     /// The <c>dotnet publish</c> arguments, one list item per argument, so a project path with
@@ -162,7 +268,7 @@ public class Publisher(ILogger<Publisher> logger) : IPublisher
         return string.Empty;
     }
 
-    private static async Task<bool> IsRuntimeReachableAsync(ContainerRuntime runtime, CancellationToken ct)
+    private async Task<bool> IsRuntimeReachableAsync(ContainerRuntime runtime, CancellationToken ct)
         => runtime == ContainerRuntime.Podman
             ? await IsPodmanReachableAsync(ct)
             : await IsDockerReachableAsync(ct);
@@ -244,15 +350,15 @@ public class Publisher(ILogger<Publisher> logger) : IPublisher
             : path;
     }
 
-    private static async Task<bool> IsDockerReachableAsync(CancellationToken ct)
+    private async Task<bool> IsDockerReachableAsync(CancellationToken ct)
     {
-        return await ProcessRunner.Default.IsAvailableAsync("docker", ["info"], TimeSpan.FromSeconds(3), ct);
+        return await Runner.IsAvailableAsync("docker", ["info"], TimeSpan.FromSeconds(3), ct);
     }
 
-    private static async Task<bool> IsPodmanReachableAsync(CancellationToken ct)
+    private async Task<bool> IsPodmanReachableAsync(CancellationToken ct)
     {
         TrySetPodmanSocketAsDockerHost();
-        return await ProcessRunner.Default.IsAvailableAsync("podman", ["info"], TimeSpan.FromSeconds(3), ct);
+        return await Runner.IsAvailableAsync("podman", ["info"], TimeSpan.FromSeconds(3), ct);
     }
 
     private static void TrySetPodmanSocketAsDockerHost()

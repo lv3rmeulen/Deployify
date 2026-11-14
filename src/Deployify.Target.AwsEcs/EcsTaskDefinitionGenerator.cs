@@ -54,11 +54,7 @@ public sealed class EcsTaskDefinitionGenerator
                 Dependencies = resource.References?.Select(r => r.Name).ToList() ?? []
             };
 
-            svc.Image = svc.IsProjectService
-                ? config.ContainerRegistry is not null
-                    ? $"{config.ContainerRegistry.TrimEnd('/')}/{name}"
-                    : name
-                : resource.Image;
+            svc.Image = ServiceImage.For(name, resource, config);
 
             // Values that contain a secret parameter are kept apart and stored the target's own way.
             var env = await resolver.ResolveEnvironmentAsync(resource.Env, overrides?.Env, ct);

@@ -53,11 +53,7 @@ public sealed class ComposeFileGenerator
                 IsProjectService = resource.IsProject
             };
 
-            svc.Image = svc.IsProjectService
-                ? config.ContainerRegistry is not null
-                    ? $"{config.ContainerRegistry.TrimEnd('/')}/{name}"
-                    : name
-                : resource.Image;
+            svc.Image = ServiceImage.For(name, resource, config);
 
             // Values that contain a secret parameter are kept apart and stored the target's own way.
             var env = await resolver.ResolveEnvironmentAsync(resource.Env, overrides?.Env, ct);
@@ -116,7 +112,8 @@ public sealed class ComposeFileGenerator
 
             if (composeConfig.GenerateProfiles)
             {
-                svc.Profiles = svc.IsProjectService ? ["prod"] : ["dev", "prod"];
+                // Your own code (projects and Dockerfile builds) runs from source in dev.
+                svc.Profiles = resource.IsBuiltImage ? ["prod"] : ["dev", "prod"];
             }
 
             services.Add(svc);

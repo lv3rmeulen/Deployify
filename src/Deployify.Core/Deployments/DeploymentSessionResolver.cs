@@ -92,6 +92,16 @@ public static class DeploymentSessionResolver
                 // Read-only runs still work from the local copy.
                 reporter.Warn($"Could not read remote state ({ex.Message}); using the local copy.");
             }
+
+            // Digests of published images, so artifacts pin exactly what was pushed.
+            try
+            {
+                await PublishedImageStore.LoadIntoAsync(state, config.PublishedImages, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                reporter.Warn($"Could not read published image digests ({ex.Message}); images are referenced by tag.");
+            }
         }
         catch
         {

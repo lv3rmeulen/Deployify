@@ -18,4 +18,15 @@ public sealed class ImageTagCheckTests
     [InlineData(null, null, false)]
     public void IsMutable(string? image, string? tag, bool expected)
         => ImageTagCheck.IsMutable(image, tag).ShouldBe(expected);
+
+    [Theory]
+    [InlineData("latest", true)]
+    [InlineData("LATEST", true)]
+    [InlineData(" latest ", true)]
+    [InlineData("", true)]
+    [InlineData(null, true)]
+    [InlineData("1.4.2", false)]
+    [InlineData("3f2a9c1e5b7d", false)]
+    public void IsMutableTag(string? tag, bool expected)
+        => ImageTagCheck.IsMutableTag(tag).ShouldBe(expected);
 }

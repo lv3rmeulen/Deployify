@@ -33,4 +33,8 @@
     <ProjectReference Include="..\..\src\Deployify.Target.NomadConsul\Deployify.Target.NomadConsul.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\Shared\FakeProcessRunner.cs" Link="Shared\FakeProcessRunner.cs" />
+  </ItemGroup>
+
 </Project>

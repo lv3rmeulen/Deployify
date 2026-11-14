@@ -69,12 +69,12 @@ public static class PublishCommand
 
             if (dryRun)
             {
-                AnsiConsole.MarkupLine("[yellow]Dry-run: would publish the following project services:[/]");
+                AnsiConsole.MarkupLine("[yellow]Dry-run: would publish the following services:[/]");
                 foreach (var (name, res) in manifest.Resources)
                 {
-                    if (res.IsProject)
+                    if (res.IsBuiltImage)
                     {
-                        AnsiConsole.MarkupLineInterpolated($"  [cyan]{name}[/]");
+                        AnsiConsole.MarkupLineInterpolated($"  [cyan]{name}[/] [dim]({(res.IsProject ? "project" : "Dockerfile")})[/]");
                     }
                 }
 
@@ -83,6 +83,12 @@ public static class PublishCommand
 
             await ConsoleStatus.RunAsync("Publishing...",
                 () => target.PublishAsync(manifest, config, resolved.AppHostDirectory, ct));
+            await resolved.RecordPublishedImagesAsync(manifest, ct);
+
+            foreach (var (reference, image) in config.PublishedImages.Recorded)
+            {
+                AnsiConsole.MarkupLineInterpolated($"[dim]  {reference} → {image.Digest}[/]");
+            }
 
             AnsiConsole.MarkupLine("[green]Publish complete.[/]");
 

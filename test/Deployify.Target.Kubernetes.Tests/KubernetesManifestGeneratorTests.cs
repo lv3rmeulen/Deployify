@@ -152,4 +152,57 @@ public sealed class KubernetesManifestGeneratorTests
         var svcs = await _sut.GenerateAsync(Fixtures.SingleService("redis", "container.v0"), Fixtures.KubernetesConfig(), DefaultKubernetesConfig(), TestContext.Current.CancellationToken);
         svcs[0].Image.ShouldBe("nginx:latest");
     }
+
+    private const string Digest = "sha256:" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    private static AspireManifest DockerfileManifest(string name = "frontend") => new()
+    {
+        Resources = new System.Collections.Generic.Dictionary<string, AspireResource>
+        {
+            [name] = new()
+            {
+                Type = "dockerfile.v0", Path = "/src/frontend/Dockerfile", Context = "/src/frontend",
+                Bindings = new System.Collections.Generic.Dictionary<string, AspireBinding> { ["http"] = new() { ContainerPort = 3000, Protocol = "http" } }
+            }
+        }
+    };
+
+    [Fact]
+    public async Task Generate_PinsThePublishedDigest_ForTheServicesTag()
+    {
+        var config = Fixtures.KubernetesConfig();
+        config.ContainerRegistry = "registry.example.com/app";
+        config.ImageTag = "v2";
+        config.PublishedImages.Record("registry.example.com/app/api", "v2", Digest, System.DateTimeOffset.UnixEpoch);
+
+        var services = await _sut.GenerateAsync(Fixtures.SingleService("api"), config, DefaultKubernetesConfig(), TestContext.Current.CancellationToken);
+
+        services[0].Image.ShouldBe($"registry.example.com/app/api@{Digest}");
+        KubernetesManifestGenerator.Render(services[0]).ShouldContain(f => f.Content.Contains($"registry.example.com/app/api@{Digest}"));
+    }
+
+    [Fact]
+    public async Task Generate_UsesTheTag_WhenTheDigestBelongsToAnotherTag()
+    {
+        var config = Fixtures.KubernetesConfig();
+        config.ContainerRegistry = "registry.example.com/app";
+        config.ImageTag = "v3";
+        config.PublishedImages.Record("registry.example.com/app/api", "v2", Digest, System.DateTimeOffset.UnixEpoch);
+
+        var services = await _sut.GenerateAsync(Fixtures.SingleService("api"), config, DefaultKubernetesConfig(), TestContext.Current.CancellationToken);
+
+        services[0].Image.ShouldBe("registry.example.com/app/api");
+        services[0].ImageTag.ShouldBe("v3");
+    }
+
+    [Fact]
+    public async Task Generate_NamesDockerfileBuilds_LikeProjects()
+    {
+        var config = Fixtures.KubernetesConfig();
+        config.ContainerRegistry = "registry.example.com/app";
+
+        var services = await _sut.GenerateAsync(DockerfileManifest(), config, DefaultKubernetesConfig(), TestContext.Current.CancellationToken);
+
+        services.ShouldHaveSingleItem().Image.ShouldBe("registry.example.com/app/frontend");
+    }
 }

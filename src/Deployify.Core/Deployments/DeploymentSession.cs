@@ -124,6 +124,32 @@ public sealed record DeploymentSession(
     }
 
     /// <summary>
+    /// After a publish: stores the image digests it recorded in deployment state, then
+    /// regenerates the artifacts so they reference the images by those digests. Several targets
+    /// apply the files on disk, which were written before the images existed. Failing to store
+    /// the digests is only a warning: this run's artifacts still pin them, and later runs fall
+    /// back to the tag.
+    /// </summary>
+    public async Task RecordPublishedImagesAsync(AspireManifest manifest, CancellationToken ct = default)
+    {
+        if (!Config.PublishedImages.HasChanges)
+        {
+            return;
+        }
+
+        try
+        {
+            await PublishedImageStore.SaveAsync(State, Config.PublishedImages, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Reporter.Warn($"Could not record published image digests in state ({State.Backend.Description}): {ex.Message}");
+        }
+
+        await Target.GenerateAsync(manifest, Config, OutputDirectory, ct);
+    }
+
+    /// <summary>
     /// Human-readable address/location for the active target, e.g. the Nomad address,
     /// Kubernetes context, AWS region, or ACA location. Used in status lines.
     /// </summary>
@@ -188,8 +214,10 @@ public sealed record DeploymentSession(
             AspireManifest manifest;
             if (ManifestPath is not null)
             {
+                var directory = Path.GetDirectoryName(Path.GetFullPath(ManifestPath))!;
                 manifest = (await reader.ReadAsync(ManifestPath, ct))
-                    .WithProjectPathsRelativeTo(Path.GetDirectoryName(Path.GetFullPath(ManifestPath))!);
+                    .WithProjectPathsRelativeTo(directory)
+                    .WithBuildPathsRelativeTo(directory);
             }
             else
             {
@@ -199,7 +227,8 @@ public sealed record DeploymentSession(
                     path = await reader.GenerateAsync(AppHostDirectory, OutputDirectory, ct);
                 }
 
-                manifest = await reader.ReadAsync(path, ct);
+                manifest = (await reader.ReadAsync(path, ct))
+                    .WithBuildPathsRelativeTo(Path.GetDirectoryName(Path.GetFullPath(path))!);
             }
 
             manifest = manifest

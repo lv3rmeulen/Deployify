@@ -1,6 +1,6 @@
 ---
 title: deployify ci
-description: "Run the full generate → validate → plan → apply pipeline for CI/CD."
+description: "Run the full generate → validate → plan → publish → apply pipeline for CI/CD."
 sidebar:
   label: ci
   order: 9
@@ -10,7 +10,7 @@ sidebar:
 Generated from the command definitions by `tools/Deployify.DocGen`; don't edit by hand. Run `dotnet run --project tools/Deployify.DocGen` after changing a command.
 :::
 
-Run the full generate → validate → plan → apply pipeline for CI/CD.
+Run the full generate → validate → plan → publish → apply pipeline for CI/CD.
 
 ```
 deployify ci [options]
@@ -24,7 +24,10 @@ deployify ci [options]
 | `--env`, `-e` | Environment to use, overriding the active environment (e.g. local, prod). |  |
 | `--target`, `-t` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| ovhcloud \| compose \| awsecs \| azurecontainerapps \| nomadconsul \| iis, or the ID of a plugin target. |  |
 | `--skip-validate` | Skip the validate step (useful when the cluster is not reachable during CI). | `false` |
-| `--skip-apply` | Stop after plan — generate and validate but do not deploy. | `false` |
+| `--skip-apply` | Stop after plan — generate and validate but do not publish or deploy. | `false` |
+| `--no-publish` | Don't build and push project images; deploy images that were published elsewhere. | `false` |
+| `--image-tag`, `-i` | Tag for this run's images. Defaults to the configured tag, or the commit SHA when that is 'latest'. |  |
+| `--allow-mutable-tag` | Publish and deploy with 'latest' when no commit SHA is available. Rollbacks then can't restore the previous image. | `false` |
 | `--fail-on-changes` | Exit non-zero if the plan detects any create/update/delete changes (drift gating). | `false` |
 | `--auto-approve` | Deploy without asking for confirmation. Required when there is no interactive terminal. | `false` |
 | `--strict` | Fail when the manifest has resources Deployify won't deploy, even if nothing depends on them (list the ones you expect under ignoreResources). | `false` |

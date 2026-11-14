@@ -19,7 +19,7 @@ Generated from the command definitions by `tools/Deployify.DocGen`; don't edit b
 | [`apply`](./apply/) | Deploy to the target. |
 | [`publish`](./publish/) | Build and push service images or artifacts. |
 | [`package`](./package/) | Zip build output and upload to the artifact store (raw_exec Nomad deployments only). |
-| [`ci`](./ci/) | Run the full generate → validate → plan → apply pipeline for CI/CD. |
+| [`ci`](./ci/) | Run the full generate → validate → plan → publish → apply pipeline for CI/CD. |
 | [`watch`](./watch/) | Watch for source changes and automatically re-run generate + plan. |
 | [`explain`](./explain/) | Display a human-readable summary of all services. |
 | [`graph`](./graph/) | Display a dependency graph of all services. |

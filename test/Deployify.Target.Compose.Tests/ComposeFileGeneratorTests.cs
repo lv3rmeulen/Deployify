@@ -311,4 +311,20 @@ public sealed class ComposeFileGeneratorTests
         var path = await _sut.WriteServiceFileAsync(svcs[0], dir.Path, cfg, TestContext.Current.CancellationToken);
         (await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken)).ShouldContain("myproj");
     }
+
+    [Fact]
+    public async Task Generate_PutsDockerfileBuilds_InTheProdProfileOnly()
+    {
+        var manifest = new AspireManifest
+        {
+            Resources = new System.Collections.Generic.Dictionary<string, AspireResource>
+            {
+                ["frontend"] = new() { Type = "dockerfile.v0", Path = "/src/frontend/Dockerfile", Context = "/src/frontend" }
+            }
+        };
+
+        var svcs = await _sut.GenerateAsync(manifest, Fixtures.ComposeConfig(), Cfg(profiles: true), TestContext.Current.CancellationToken);
+
+        svcs.ShouldHaveSingleItem().Profiles.ShouldBe(["prod"]);
+    }
 }

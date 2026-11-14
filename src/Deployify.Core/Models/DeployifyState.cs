@@ -46,6 +46,13 @@ public sealed class EnvironmentConfig
     /// <summary>Default image tag applied to every service</summary>
     public string ImageTag { get; set; } = "latest";
 
+    /// <summary>
+    /// Digests of the images Deployify published, loaded from deployment state when a command
+    /// starts and added to by publish. Not part of the state file.
+    /// </summary>
+    [JsonIgnore]
+    public PublishedImages PublishedImages { get; set; } = new();
+
     /// <summary>Folder where generated output files are written (relative to AppHost dir)</summary>
     public string OutputPath { get; set; } = "deployify-output";
 
@@ -54,7 +61,7 @@ public sealed class EnvironmentConfig
 
     /// <summary>
     /// Manifest resources Deployify can't deploy (executables, Azure or AWS infrastructure,
-    /// Dockerfile builds, unknown types) that you know about and handle another way. Deployify
+    /// unknown types) that you know about and handle another way. Deployify
     /// reports every such resource; listing one here turns the warning, or the error that stops a
     /// deploy when a service depends on it, into an info line.
     /// </summary>

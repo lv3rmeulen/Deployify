@@ -66,11 +66,7 @@ public sealed class AcaManifestGenerator
                 IngressType = acaConfig.IngressType
             };
 
-            app.Image = app.IsProjectService
-                ? config.ContainerRegistry is not null
-                    ? $"{config.ContainerRegistry.TrimEnd('/')}/{name}"
-                    : name
-                : resource.Image;
+            app.Image = ServiceImage.For(name, resource, config);
 
             // Values that contain a secret parameter are kept apart and stored the target's own way.
             var env = await resolver.ResolveEnvironmentAsync(resource.Env, overrides?.Env, ct);

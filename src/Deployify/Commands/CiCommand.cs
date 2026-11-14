@@ -4,7 +4,11 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
+using Deployify.Core.Processes;
+using Deployify.Core.Rollouts;
+using Deployify.Core.Services;
 using Spectre.Console;
 
 namespace Deployify.Commands;
@@ -16,7 +20,12 @@ namespace Deployify.Commands;
 ///   1. generate — write artifacts from the manifest
 ///   2. validate — check artifacts against the target (skippable with --skip-validate)
 ///   3. plan — diff local artifacts against the live cluster
-///   4. apply — deploy to the target (skippable with --skip-apply)
+///   4. publish — build and push project images (skipped with --skip-apply or --no-publish)
+///   5. apply — deploy to the target (skippable with --skip-apply)
+///
+/// When ci publishes and the configured image tag is "latest" (or empty), it tags the images
+/// with the commit SHA instead, so each build deploys a new image and a rollback can return to
+/// the previous one. --image-tag sets the tag; --allow-mutable-tag keeps "latest".
 ///
 /// Any step failure aborts the pipeline and exits non-zero. With a health-gated rollout the
 /// exit code tells what happened: 1 failed, 2 failed and rolled back, 3 rollback incomplete.
@@ -32,7 +41,21 @@ public static class CiCommand
         };
         var skipApply = new Option<bool>("--skip-apply")
         {
-            Description = "Stop after plan — generate and validate but do not deploy.",
+            Description = "Stop after plan — generate and validate but do not publish or deploy.",
+            DefaultValueFactory = _ => false
+        };
+        var noPublish = new Option<bool>("--no-publish")
+        {
+            Description = "Don't build and push project images; deploy images that were published elsewhere.",
+            DefaultValueFactory = _ => false
+        };
+        var imageTag = new Option<string?>("--image-tag", "-i")
+        {
+            Description = "Tag for this run's images. Defaults to the configured tag, or the commit SHA when that is 'latest'."
+        };
+        var allowMutableTag = new Option<bool>("--allow-mutable-tag")
+        {
+            Description = "Publish and deploy with 'latest' when no commit SHA is available. Rollbacks then can't restore the previous image.",
             DefaultValueFactory = _ => false
         };
         var failOnChanges = new Option<bool>("--fail-on-changes")
@@ -47,12 +70,15 @@ public static class CiCommand
         };
 
         var cmd = new Command("ci",
-            "Run the full generate → validate → plan → apply pipeline for CI/CD.");
+            "Run the full generate → validate → plan → publish → apply pipeline for CI/CD.");
         cmd.Options.Add(GlobalOptions.ProjectPath);
         cmd.Options.Add(GlobalOptions.Environment);
         cmd.Options.Add(GlobalOptions.Target);
         cmd.Options.Add(skipValidate);
         cmd.Options.Add(skipApply);
+        cmd.Options.Add(noPublish);
+        cmd.Options.Add(imageTag);
+        cmd.Options.Add(allowMutableTag);
         cmd.Options.Add(failOnChanges);
         cmd.Options.Add(autoApprove);
         cmd.Options.Add(GlobalOptions.Strict);
@@ -68,6 +94,9 @@ public static class CiCommand
             var doSkipApply = parseResult.GetValue(skipApply);
             var doFailOnChanges = parseResult.GetValue(failOnChanges);
             var doAutoApprove = parseResult.GetValue(autoApprove);
+            var doNoPublish = parseResult.GetValue(noPublish);
+            var tagOverride = parseResult.GetValue(imageTag);
+            var doAllowMutableTag = parseResult.GetValue(allowMutableTag);
             var strict = parseResult.GetValue(GlobalOptions.Strict);
 
             ResolvedContext resolved;
@@ -95,8 +124,19 @@ public static class CiCommand
                 return 1;
             }
 
+            // The tag is settled before generate, so the artifacts and the plan use it.
+            var publishReason = doSkipApply ? "--skip-apply"
+                : doNoPublish ? "--no-publish"
+                : !manifest.Resources.Values.Any(r => r.IsBuiltImage) ? "no projects or Dockerfile builds"
+                : null;
+            if (!await SetImageTagAsync(config, tagOverride, publishes: publishReason is null, doAllowMutableTag,
+                    resolved.AppHostDirectory, ct))
+            {
+                return 1;
+            }
+
             // ── Step 1: Generate ───────────────────────────────────────────────
-            if (!await StepAsync("1/4 Generate", async stepCt =>
+            if (!await StepAsync("1/5 Generate", async stepCt =>
             {
                 var paths = await target.GenerateAsync(manifest, config, outputDir, stepCt);
                 AnsiConsole.MarkupLineInterpolated($"[dim] {paths.Count} artifact(s) written to {outputDir}[/]");
@@ -108,9 +148,9 @@ public static class CiCommand
             // ── Step 2: Validate ───────────────────────────────────────────────
             if (doSkipValidate)
             {
-                AnsiConsole.MarkupLine("[dim]2/4 Validate — skipped[/]");
+                AnsiConsole.MarkupLine("[dim]2/5 Validate — skipped[/]");
             }
-            else if (!await StepAsync("2/4 Validate", async stepCt =>
+            else if (!await StepAsync("2/5 Validate", async stepCt =>
             {
                 var results = await target.ValidateAsync(manifest, config, outputDir, stepCt);
                 var invalid = results.Where(r => !r.IsValid).ToList();
@@ -135,7 +175,7 @@ public static class CiCommand
 
             // ── Step 3: Plan ───────────────────────────────────────────────────
             PlanResult? plan = null;
-            if (!await StepAsync("3/4 Plan", async stepCt =>
+            if (!await StepAsync("3/5 Plan", async stepCt =>
             {
                 plan = resolved.WithSkipped(await target.PlanAsync(manifest, config, outputDir, stepCt));
                 AnsiConsole.MarkupLine(
@@ -161,14 +201,16 @@ public static class CiCommand
                 return 1;
             }
 
-            // ── Step 4: Apply ──────────────────────────────────────────────────
+            // ── Steps 4 and 5: Publish, Apply ──────────────────────────────────
+            // Publishing waits for approval, so a declined run pushes nothing.
             if (doSkipApply)
             {
-                AnsiConsole.MarkupLine("[dim]4/4 Apply — skipped[/]");
+                AnsiConsole.MarkupLine("[dim]4/5 Publish — skipped[/]");
+                AnsiConsole.MarkupLine("[dim]5/5 Apply — skipped[/]");
             }
             else if (!doAutoApprove && (Console.IsInputRedirected || !AnsiConsole.Profile.Capabilities.Interactive))
             {
-                AnsiConsole.MarkupLine("[red]✗[/] 4/4 Apply needs confirmation, but there is no interactive terminal. " +
+                AnsiConsole.MarkupLine("[red]✗[/] Publishing and deploying need confirmation, but there is no interactive terminal. " +
                     "Pass [cyan]--auto-approve[/] to deploy from CI, or [cyan]--skip-apply[/] to stop after plan.");
                 return 1;
             }
@@ -177,13 +219,17 @@ public static class CiCommand
                 AnsiConsole.MarkupLine("[yellow]Apply cancelled.[/]");
                 return 0;
             }
+            else if (!await PublishStepAsync(publishReason, resolved, manifest, ct))
+            {
+                return 1;
+            }
             else if (!await StateCli.RecordDeploymentAsync(resolved, manifest, ct))
             {
                 return 1;
             }
             else if (await RolloutCli.ResolveAsync(parseResult, target, config, ct) is { } gated)
             {
-                AnsiConsole.MarkupLine("[bold] 4/4 Apply (health-gated)[/]");
+                AnsiConsole.MarkupLine("[bold] 5/5 Apply (health-gated)[/]");
                 try
                 {
                     await resolved.SaveGeneratedSecretsAsync(ct);
@@ -210,7 +256,7 @@ public static class CiCommand
                     return rolloutResult.ExitCode;
                 }
             }
-            else if (!await StepAsync("4/4 Apply", async stepCt =>
+            else if (!await StepAsync("5/5 Apply", async stepCt =>
             {
                 await resolved.SaveGeneratedSecretsAsync(stepCt);
                 var results = await target.ApplyAsync(manifest, config, outputDir, stepCt);
@@ -252,6 +298,91 @@ public static class CiCommand
         });
 
         return cmd;
+    }
+
+    /// <summary>
+    /// Settles the image tag for this run. --image-tag wins. When the run publishes and the tag
+    /// would be "latest" (or empty), the commit SHA is used instead; with no SHA available the
+    /// run stops unless <paramref name="allowMutableTag"/> is set. Returns false to stop.
+    /// </summary>
+    internal static async Task<bool> SetImageTagAsync(
+        EnvironmentConfig config, string? tagOverride, bool publishes, bool allowMutableTag, string directory,
+        CancellationToken ct, Func<string, string?>? getEnvironmentVariable = null, IProcessRunner? runner = null)
+    {
+        if (!string.IsNullOrWhiteSpace(tagOverride))
+        {
+            config.ImageTag = tagOverride.Trim();
+        }
+
+        if (!publishes)
+        {
+            return true;
+        }
+
+        if (!ImageTagCheck.IsMutableTag(config.ImageTag))
+        {
+            AnsiConsole.MarkupLineInterpolated($"[dim]Image tag: {config.ImageTag}[/]");
+            return true;
+        }
+
+        var shown = string.IsNullOrWhiteSpace(config.ImageTag) ? "(none)" : config.ImageTag;
+        if (!string.IsNullOrWhiteSpace(tagOverride))
+        {
+            if (allowMutableTag)
+            {
+                AnsiConsole.MarkupLineInterpolated(
+                    $"[yellow]![/] Publishing with the mutable tag [cyan]{shown}[/]: a rollback can't restore the previous image.");
+                return true;
+            }
+
+            AnsiConsole.MarkupLineInterpolated(
+                $"[red]✗[/] --image-tag {shown} is overwritten by every build, so a rollback can't restore the previous image. Use a tag that is unique to this build, or add --allow-mutable-tag.");
+            return false;
+        }
+
+        var (commit, reason) = await CommitImageTag.ResolveAsync(directory, getEnvironmentVariable, runner, ct);
+        if (commit is not null)
+        {
+            config.ImageTag = commit.Tag;
+            AnsiConsole.MarkupLineInterpolated($"[dim]Image tag: {commit.Tag} (commit SHA from {commit.Source})[/]");
+            return true;
+        }
+
+        if (allowMutableTag)
+        {
+            AnsiConsole.MarkupLineInterpolated(
+                $"[yellow]![/] Publishing with the mutable tag [cyan]{shown}[/] ({reason}): a rollback can't restore the previous image.");
+            return true;
+        }
+
+        AnsiConsole.MarkupLineInterpolated(
+            $"[red]✗[/] ci publishes images, but the image tag is [cyan]{shown}[/] and no commit SHA is available: {reason}. Pass [cyan]--image-tag <tag>[/], or [cyan]--allow-mutable-tag[/] to publish {shown} anyway.");
+        return false;
+    }
+
+    /// <summary>
+    /// Builds and pushes the images Deployify owns, then pins their digests in the artifacts;
+    /// or says why that step is skipped.
+    /// </summary>
+    private static Task<bool> PublishStepAsync(
+        string? skipReason, ResolvedContext resolved, AspireManifest manifest, CancellationToken ct)
+    {
+        if (skipReason is not null)
+        {
+            AnsiConsole.MarkupLineInterpolated($"[dim]4/5 Publish — skipped ({skipReason})[/]");
+            return Task.FromResult(true);
+        }
+
+        return StepAsync("4/5 Publish", async stepCt =>
+        {
+            await resolved.Target.PublishAsync(manifest, resolved.Config, resolved.AppHostDirectory, stepCt);
+            await resolved.RecordPublishedImagesAsync(manifest, stepCt);
+            var pinned = resolved.Config.PublishedImages.Recorded.Count;
+            if (pinned > 0)
+            {
+                AnsiConsole.MarkupInterpolated($"[dim]{pinned} image(s) pinned by digest[/] ");
+            }
+        }, ct);
     }
 
     private static async Task<bool> StepAsync(string label, Func<CancellationToken, Task> step, CancellationToken ct)

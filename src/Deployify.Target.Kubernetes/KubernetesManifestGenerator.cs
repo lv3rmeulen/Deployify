@@ -60,11 +60,7 @@ public sealed class KubernetesManifestGenerator
                 Dependencies = resource.References?.Select(r => r.Name).ToList() ?? [],
                 HealthCheckType = kubernetesConfig.HealthCheckType.ToLowerInvariant(),
                 HealthCheckPath = kubernetesConfig.HealthCheckPath,
-                Image = resource.IsProject
-                    ? config.ContainerRegistry is not null
-                        ? $"{config.ContainerRegistry.TrimEnd('/')}/{name}"
-                        : name
-                    : resource.Image
+                Image = ServiceImage.For(name, resource, config)
             };
 
             ApplyImagePullSecrets(svc, config, kubernetesConfig);

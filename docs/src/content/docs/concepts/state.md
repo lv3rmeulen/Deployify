@@ -10,6 +10,7 @@ Next to the configuration in `deployify-state.json` (which you commit), Deployif
 |---|---|
 | `{prefix}/{env}/inventory.json` | every service Deployify deployed, with its dependencies (what destroy and prune work from) |
 | `{prefix}/{env}/lock.json` | who is changing the environment right now |
+| `{prefix}/{env}/images.json` | digests of the images Deployify pushed, so artifacts [pin them](/guides/publishing-images/#pinning-images-by-digest) |
 | `{prefix}/{env}/parameters.json` | generated parameter values (remote backends only; locally they are `deployify-parameters.json`) |
 | `{prefix}/{env}/rollouts/{id}.json` | rollout, prune and destroy journals (remote backends only; locally `.deployify/rollouts/`) |
 

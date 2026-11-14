@@ -26,6 +26,7 @@ public sealed class ManifestAuditTests
         "statestore":{ "type": "dapr.component.v0", "daprComponent": { "type": "state" } },
         "frontend":  { "type": "dockerfile.v0", "path": "frontend/Dockerfile", "context": "frontend" },
         "built":     { "type": "container.v1", "build": { "context": "x", "dockerfile": "x/Dockerfile" } },
+        "noimage":   { "type": "container.v1", "env": { "X": "1" } },
         "npm":       { "type": "executable.v0", "command": "npm", "args": ["run", "start"] },
         "storage":   { "type": "azure.bicep.v0", "path": "storage.bicep" },
         "stack":     { "type": "aws.cloudformation.stack.v0" },
@@ -49,8 +50,9 @@ public sealed class ManifestAuditTests
     [InlineData("text", ResourceKind.Input)]
     [InlineData("sidecar", ResourceKind.Folded)]
     [InlineData("statestore", ResourceKind.Folded)]
-    [InlineData("frontend", ResourceKind.Unsupported)]
-    [InlineData("built", ResourceKind.Unsupported)]
+    [InlineData("frontend", ResourceKind.Workload)]
+    [InlineData("built", ResourceKind.Workload)]
+    [InlineData("noimage", ResourceKind.Unsupported)]
     [InlineData("npm", ResourceKind.Unsupported)]
     [InlineData("storage", ResourceKind.Unsupported)]
     [InlineData("stack", ResourceKind.Unsupported)]
@@ -67,7 +69,7 @@ public sealed class ManifestAuditTests
         var manifest = Parse(EveryType);
 
         manifest.Resources.Where(r => r.Value.IsDeployable).Select(r => r.Key).Order()
-            .ShouldBe(["api", "cache", "pg", "web"]);
+            .ShouldBe(["api", "built", "cache", "frontend", "pg", "web"]);
     }
 
     [Fact]
@@ -83,8 +85,8 @@ public sealed class ManifestAuditTests
 
         result.HasErrors.ShouldBeFalse();
         result.Diagnostics.Where(d => d.Severity == ManifestDiagnosticSeverity.Warning).Select(d => d.Resource)
-            .ShouldBe(["built", "frontend", "future", "mystery", "npm", "stack", "storage"]);
-        result.Skipped.Select(s => s.Name).ShouldBe(["built", "frontend", "future", "mystery", "npm", "stack", "storage"]);
+            .ShouldBe(["future", "mystery", "noimage", "npm", "stack", "storage"]);
+        result.Skipped.Select(s => s.Name).ShouldBe(["future", "mystery", "noimage", "npm", "stack", "storage"]);
         result.Blocks(strict: false).ShouldBeFalse();
         result.Blocks(strict: true).ShouldBeTrue();
     }
