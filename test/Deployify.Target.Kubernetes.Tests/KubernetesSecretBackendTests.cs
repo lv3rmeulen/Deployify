@@ -141,7 +141,7 @@ public sealed class KubernetesSecretModeTests
     {
         var svc = (await _sut.GenerateAsync(SecretManifests.Manifest(), config, _cfg, TestContext.Current.CancellationToken)).Single(s => s.ServiceName == service);
         var files = await _sut.WriteYamlAsync(svc, dir.Path, TestContext.Current.CancellationToken);
-        return (svc, files.ToDictionary(Path.GetFileName, File.ReadAllText)!);
+        return (svc, files.ToDictionary(f => Path.GetFileName(f), File.ReadAllText));
     }
 
     [Fact]
@@ -230,7 +230,7 @@ public sealed class VaultModeTests
         var svc = (await _sut.GenerateAsync(SecretManifests.Manifest(), SecretManifests.Config(SecretBackendType.Vault), _cfg, TestContext.Current.CancellationToken))
             .Single(s => s.ServiceName == service);
         var files = await _sut.WriteYamlAsync(svc, dir.Path, TestContext.Current.CancellationToken);
-        return (svc, files.ToDictionary(Path.GetFileName, File.ReadAllText)!);
+        return (svc, files.ToDictionary(f => Path.GetFileName(f), File.ReadAllText));
     }
 
     [Fact]

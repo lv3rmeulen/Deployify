@@ -20,7 +20,11 @@ public sealed class ConsoleSetupTests
         {
             Ansi = AnsiSupport.No,
             Interactive = InteractionSupport.No,
-            Out = new NoTerminalOutput(output)
+            Out = new NoTerminalOutput(output),
+
+            // Spectre recognizes CI runners (GITHUB_ACTIONS and others) and turns ANSI colors back
+            // on there, which would make these tests depend on where they run.
+            Enrichment = new ProfileEnrichment { UseDefaultEnrichers = false }
         });
         return (console, output);
     }
