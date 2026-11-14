@@ -18,6 +18,12 @@ public sealed class NomadJob
     /// and written the target's own secret way rather than into plain-text artifacts.
     /// </summary>
     public Dictionary<string, ResolvedValue> SecretEnv { get; set; } = [];
+
+    /// <summary>
+    /// Env vars that hold another service's address (see <see cref="ServiceDiscovery"/>).
+    /// They are written by the task's template block, which looks the address up at runtime.
+    /// </summary>
+    public Dictionary<string, string> DiscoveredEnv { get; set; } = [];
     public List<NomadPort> Ports { get; set; } = [];
     public List<string> Dependencies { get; set; } = [];
 
@@ -29,7 +35,8 @@ public sealed class NomadJob
 
     /// <summary>
     /// When true the task uses host networking (network_mode = "host"): ports are bound
-    /// directly on the host and services reach each other on localhost.
+    /// directly on the host. Services find each other through the service catalog
+    /// (see <see cref="ServiceDiscovery"/>).
     /// </summary>
     public bool UseHostNetwork { get; set; }
 

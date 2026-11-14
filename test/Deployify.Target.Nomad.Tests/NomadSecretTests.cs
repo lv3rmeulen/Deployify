@@ -62,7 +62,7 @@ public sealed class NomadSecretTests
         hcl.ShouldNotContain(Secret);
         hcl.ShouldContain("template {");
         hcl.ShouldContain("nomadVar \\\"nomad/jobs/api\\\"");
-        hcl.ShouldContain("ConnectionStrings__db={{ index . \\\"ConnectionStrings__db\\\" }}");
+        hcl.ShouldContain("ConnectionStrings__db={{ index . \\\"ConnectionStrings__db\\\" | replaceAll \\\"@@deployify-svc:pg@@\\\" $svc0 }}");
         hcl.ShouldContain("env         = true");
         hcl.ShouldContain("destination = \"secrets/deployify.env\"");
         hcl.ShouldContain("\"PLAIN\" = \"hello\"");
@@ -74,7 +74,7 @@ public sealed class NomadSecretTests
     {
         var api = (await _sut.GenerateAsync(Manifest(), Config(), TestContext.Current.CancellationToken)).Single(j => j.Name == "api");
 
-        api.SecretEnv["ConnectionStrings__db"].ToString().ShouldBe($"Host=localhost;Password={Secret};Opt=a$b");
+        api.SecretEnv["ConnectionStrings__db"].ToString().ShouldBe($"Host=@@deployify-svc:pg@@;Password={Secret};Opt=a$b");
         api.Env.Keys.ShouldBe(new[] { "PLAIN" });
     }
 

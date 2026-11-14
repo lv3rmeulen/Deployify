@@ -14,9 +14,12 @@ namespace Deployify.Target.Nomad;
 
 /// <summary>Generates Nomad HCL job files from an <see cref="AspireManifest"/>.</summary>
 /// <remarks>
-/// Every Docker task runs with host networking and a fixed port, so services reach each
-/// other on <c>localhost:&lt;port&gt;</c>. That matches a single Nomad client; for a
-/// multi-node cluster use the NomadConsul target, which routes through Consul Connect.
+/// Every Docker task runs with host networking and a fixed port. A reference to another
+/// service gets that service's address from the service catalog at runtime (see
+/// <see cref="ServiceDiscovery"/>), so services can run on different nodes. With
+/// <c>registerServices: false</c> nothing is registered to look up, and services reach
+/// each other on <c>localhost:&lt;port&gt;</c>, which only works on a single node.
+/// For mTLS between services use the NomadConsul target, which routes through Consul Connect.
 /// </remarks>
 public sealed class JobGenerator(ILogger<JobGenerator> logger)
 {
@@ -34,8 +37,16 @@ public sealed class JobGenerator(ILogger<JobGenerator> logger)
     {
         var nc = ReadConfig(config);
         var ports = ServicePorts.Assign(manifest, nc.BasePort);
+        // Only services that get a service {} block can be looked up; anything else stays on localhost.
+        var discoverable = nc.RegisterServices
+            ? manifest.Resources
+                .Where(r => r.Value.IsDeployable && r.Value.Bindings is { Count: > 0 })
+                .Select(r => r.Key)
+                .ToHashSet(StringComparer.Ordinal)
+            : [];
         var resolver = new PlaceholderResolver(manifest, ports,
-            new EndpointStrategy { Host = _ => "localhost" }, ParameterResolution.For(config));
+            new EndpointStrategy { Host = n => discoverable.Contains(n) ? ServiceDiscovery.Token(n) : "localhost" },
+            ParameterResolution.For(config));
 
         var jobs = new List<NomadJob>();
 
@@ -71,14 +82,28 @@ public sealed class JobGenerator(ILogger<JobGenerator> logger)
 
             // Values that contain a secret parameter are kept apart and stored the target's own way.
             var env = await resolver.ResolveEnvironmentAsync(resource.Env, overrides?.Env, ct);
-            job.Env = env.Plain;
+            // Values with another service's address are written by the template, which looks it up.
+            job.Env = env.Plain.Where(kv => !ServiceDiscovery.HasReference(kv.Value))
+                .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
+            job.DiscoveredEnv = env.Plain.Where(kv => ServiceDiscovery.HasReference(kv.Value))
+                .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
             job.SecretEnv = env.Secrets;
 
             var argsHaveSecret = false;
             foreach (var arg in ReadArgs(resource))
             {
                 var resolved = await resolver.Expressions.ResolveAsync(arg, ct);
-                job.Args.Add(resolved.ToString());
+                var text = resolved.ToString();
+                if (ServiceDiscovery.HasReference(text))
+                {
+                    // Nomad renders templates into files and env vars, not into args.
+                    logger.LogWarning(
+                        "An argument of {Service} refers to another service's address; it is set to localhost, " +
+                        "which only works on a single node. Pass it as an environment variable instead.", name);
+                    text = ServiceDiscovery.Replace(text, _ => "localhost");
+                }
+
+                job.Args.Add(text);
                 argsHaveSecret |= resolved.IsSecret;
             }
 
@@ -318,9 +343,11 @@ public sealed class JobGenerator(ILogger<JobGenerator> logger)
             sb.AppendLine("      }");
         }
 
-        if (job.SecretEnv.Count > 0)
+        if (job.SecretEnv.Count > 0 || job.DiscoveredEnv.Count > 0)
         {
-            NomadVariables.AppendTemplate(sb, job.Name, job.SecretEnv.Keys, "      ");
+            ServiceDiscovery.AppendTemplate(sb, job.Name, job.DiscoveredEnv,
+                job.SecretEnv.ToDictionary(kv => kv.Key, kv => kv.Value.ToString(), StringComparer.Ordinal),
+                nc.ServiceProvider, "      ");
         }
 
         sb.AppendLine();

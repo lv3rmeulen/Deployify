@@ -284,7 +284,8 @@ public sealed class NomadDeploymentTarget(
                 Image = j.Image,
                 ImageTag = j.ImageTag ?? config.ImageTag,
                 Count = j.Count,
-                Env = ResolvedEnvironment.ForDisplay(j.Env, j.SecretEnv),
+                Env = ResolvedEnvironment.ForDisplay(j.Env.Concat(j.DiscoveredEnv).ToDictionary(), j.SecretEnv)
+                    .ToDictionary(kv => kv.Key, kv => ServiceDiscovery.ForDisplay(kv.Value)),
                 Ports = [.. j.Ports.Select(p => p.To.HasValue ? $"{p.Label}:{p.To}" : p.Label)],
                 Dependencies = j.Dependencies,
                 AdditionalInfo = new Dictionary<string, string> { ["namespace"] = cfg.Namespace, ["datacenters"] = string.Join(", ", cfg.Datacenters), ["mode"] = cfg.DeploymentMode.ToString() }

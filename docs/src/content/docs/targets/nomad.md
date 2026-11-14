@@ -27,8 +27,15 @@ Init flags: `--nomad-address`, `--nomad-token`, `--nomad-namespace`, `--nomad-da
 Notes:
 
 - **Networking.** Docker tasks use host networking and each service gets its own static port
-  (starting at `basePort`, default 8080). Services find each other at `localhost:<port>`, which
-  assumes a single Nomad client node. For multi-node clusters use the `NomadConsul` target.
+  (starting at `basePort`, default 8080). Services find each other through the service catalog,
+  so jobs can run on different nodes: a reference such as `{api.bindings.http.url}` is written
+  into the task's `template` block, which looks up the node `api` is registered on
+  (`nomadService`, or Consul's `service` when `serviceProvider` is `consul`) when the task
+  starts. If a dependency moves, the task restarts with its new address. This needs
+  `registerServices` (on by default) and Nomad 1.4 or later. With `registerServices: false`,
+  services reach each other on `localhost:<port>`, which only works on a single node.
+  Container `args` can't be templated, so a service address in `args` stays on `localhost`;
+  pass it as an environment variable instead. For mTLS between services use the `NomadConsul` target.
 - **Health checks.** `healthCheckType` is `tcp` (default), `http` (uses `healthCheckPath`,
   default `/health`) or `none`. Aspire's `MapDefaultEndpoints()` only maps `/health` in the
   Development environment, so `http` checks fail in production unless you map it yourself.
