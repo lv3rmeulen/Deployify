@@ -88,3 +88,18 @@ deployify state push [options]
 | `--target`, `-t` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| ovhcloud \| compose \| awsecs \| azurecontainerapps \| nomadconsul \| iis, or the ID of a plugin target. |  |
 | `--force` | Replace remote state even when it belongs to another lineage or is newer. | `false` |
 
+## `state migrate-secrets`
+
+Replace tokens and passwords stored as plain text in deployify-state.json with env:NAME references.
+
+```
+deployify state migrate-secrets [options]
+```
+
+**Options**
+
+| Option | Description | Default |
+|---|---|---|
+| `--project-path`, `-p` | Path to the Aspire AppHost .csproj or its directory. | current directory |
+| `--dry-run` | Show what would change without writing the file or printing secret values. | `false` |
+

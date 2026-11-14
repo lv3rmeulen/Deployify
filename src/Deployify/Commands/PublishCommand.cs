@@ -81,9 +81,8 @@ public static class PublishCommand
                 return 0;
             }
 
-            await AnsiConsole.Status().Spinner(Spinner.Known.Dots2)
-                .StartAsync("Publishing...", async _ =>
-                    await target.PublishAsync(manifest, config, resolved.AppHostDirectory, ct));
+            await ConsoleStatus.RunAsync("Publishing...",
+                () => target.PublishAsync(manifest, config, resolved.AppHostDirectory, ct));
 
             AnsiConsole.MarkupLine("[green]Publish complete.[/]");
 

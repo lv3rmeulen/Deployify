@@ -47,8 +47,8 @@ internal static class SecretsWarning
             AnsiConsole.MarkupLineInterpolated($"    [yellow]{path}[/]");
         }
 
-        AnsiConsole.MarkupLine("  Store a reference instead, e.g. [cyan]\"env:NOMAD_TOKEN\"[/], and set the variable " +
-                               "in your shell or CI secrets.");
+        AnsiConsole.MarkupLine("  Run [cyan]deployify state migrate-secrets[/] to replace them with environment variable " +
+                               "references, e.g. [cyan]\"env:NOMAD_TOKEN\"[/].");
 
         if (await IsTrackedByGitAsync(directory, "deployify-state.json", ct) is true)
         {
@@ -58,7 +58,7 @@ internal static class SecretsWarning
     }
 
     /// <summary>True when <paramref name="fileName"/> is inside a git repo and not ignored; null if unknown.</summary>
-    private static async Task<bool?> IsTrackedByGitAsync(string directory, string fileName, CancellationToken ct)
+    internal static async Task<bool?> IsTrackedByGitAsync(string directory, string fileName, CancellationToken ct)
     {
         try
         {

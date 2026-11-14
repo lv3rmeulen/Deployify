@@ -41,14 +41,14 @@ deployify init [options]
 | `--dashboard-tag` | Image tag for mcr.microsoft.com/dotnet/aspire-dashboard. | `latest` |
 | `--dashboard-port` | Host port for the dashboard UI. | `18888` |
 | `--dashboard-otlp-port` | Host port for the OTLP gRPC endpoint. | `18889` |
-| `--dashboard-token` | Browser auth token (omit for unauthenticated). |  |
+| `--dashboard-token` | Browser auth token as env:NAME (omit for unauthenticated). |  |
 | `--nomad-address` | Nomad cluster address. | `http://localhost:4646` |
-| `--nomad-token` | Nomad ACL token. |  |
+| `--nomad-token` | Nomad ACL token as env:NAME. Default: NOMAD_TOKEN at run time. |  |
 | `--nomad-namespace` | Nomad namespace. | `default` |
 | `--nomad-datacenter` | Nomad datacenter. | `dc1` |
 | `--nomad-mode` | Nomad deployment mode: Docker (default) \| RawExec. | `Docker` |
 | `--nomad-registry-username` | Docker registry username for private image pulls. |  |
-| `--nomad-registry-password` | Docker registry password or access token. |  |
+| `--nomad-registry-password` | Docker registry password or access token as env:NAME. Default: DEPLOYIFY_REGISTRY_PASSWORD at run time. |  |
 | `--nomad-register-services` | Register services in Nomad/Consul service catalog. | `true` |
 | `--nomad-service-provider` | Service registration provider: nomad (default) \| consul. | `nomad` |
 | `--nomad-health-check-path` | HTTP path for service health checks. | `/health` |
@@ -79,10 +79,11 @@ deployify init [options]
 | `--aca-environment` | Container Apps environment name. | `deployify-env` |
 | `--aca-acr` | Azure Container Registry login server. |  |
 | `--nc-nomad-address` | Nomad address (Consul mesh target). | `http://localhost:4646` |
-| `--nc-nomad-token` | Nomad ACL token (Consul mesh target). |  |
+| `--nc-nomad-token` | Nomad ACL token as env:NAME (Consul mesh target). Default: NOMAD_TOKEN at run time. |  |
 | `--nc-nomad-namespace` | Nomad namespace (Consul mesh target). | `default` |
 | `--nc-datacenter` | Nomad/Consul datacenter. | `dc1` |
 | `--nc-consul-address` | Consul address. | `http://localhost:8500` |
-| `--nc-consul-token` | Consul ACL token. |  |
+| `--nc-consul-token` | Consul ACL token as env:NAME. Default: CONSUL_HTTP_TOKEN at run time. |  |
 | `--nc-ingress-gateway` | Enable Consul Ingress Gateway for HTTP services. | `false` |
+| `--allow-plaintext-secrets` | Allow secret flags (tokens, passwords) to take literal values, which are saved as plain text in deployify-state.json. By default they must be env:NAME references. | `false` |
 

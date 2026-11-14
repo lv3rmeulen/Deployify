@@ -54,6 +54,27 @@ public sealed class GenerateCommandTests
     }
 
     [Fact]
+    public async Task Generate_TwoRunsAtOnce_BothSucceed()
+    {
+        // Test classes run in parallel and share AnsiConsole. A Spectre spinner around the work
+        // made the second concurrent run fail ("interactive functions concurrently").
+        var ct = TestContext.Current.CancellationToken;
+        using var a = new TempDir();
+        using var b = new TempDir();
+        foreach (var dir in new[] { a, b })
+        {
+            await Harness.WriteNomadStateAsync(dir.Path, ct: ct);
+            await Harness.WriteManifestAsync(dir.Path, ct: ct);
+        }
+
+        var codes = await Task.WhenAll(
+            Root().InvokeAsync(["generate", "--project-path", a.Path], ct),
+            Root().InvokeAsync(["generate", "--project-path", b.Path], ct));
+
+        codes.ShouldBe([0, 0]);
+    }
+
+    [Fact]
     public async Task Generate_ProducesOneFilePerService()
     {
         using var dir = new TempDir();

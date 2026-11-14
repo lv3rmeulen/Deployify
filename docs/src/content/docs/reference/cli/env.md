@@ -79,12 +79,13 @@ deployify env add <name> [options]
 | `--nomad-address` | Nomad address. |  |
 | `--nomad-namespace` | Nomad namespace. |  |
 | `--nomad-datacenter` | Nomad datacenter. |  |
-| `--nomad-token` | Nomad ACL token. |  |
+| `--nomad-token` | Nomad ACL token as env:NAME. Default: NOMAD_TOKEN at run time. |  |
 | `--kubernetes-context` | kubectl context. |  |
 | `--kubernetes-namespace-prefix` | Namespace prefix. |  |
 | `--kubernetes-ingress-domain` | Ingress base domain. |  |
 | `--compose-project` | Docker Compose project name. |  |
 | `--compose-restart` | Restart policy. |  |
+| `--allow-plaintext-secrets` | Allow secret flags (tokens, passwords) to take literal values, which are saved as plain text in deployify-state.json. By default they must be env:NAME references. | `false` |
 
 ## `env set`
 
@@ -110,11 +111,11 @@ deployify env set <name> [options]
 | `--container-os` | Target OS for container images (e.g. linux). |  |
 | `--container-arch` | Target CPU architecture: x64 \| arm64 \| arm. |  |
 | `--nomad-address` | Update Nomad address. |  |
-| `--nomad-token` | Update Nomad token. |  |
+| `--nomad-token` | Update the Nomad token reference (env:NAME). |  |
 | `--nomad-namespace` | Update Nomad namespace. |  |
 | `--nomad-datacenter` | Update Nomad datacenter. |  |
 | `--nomad-registry-username` | Docker registry username (empty string to remove). |  |
-| `--nomad-registry-password` | Docker registry password or token (empty string to remove). |  |
+| `--nomad-registry-password` | Docker registry password or token as env:NAME (empty string to remove). |  |
 | `--nomad-register-services` | Enable (true) or disable (false) service registration. |  |
 | `--nomad-service-provider` | Service provider: nomad \| consul. |  |
 | `--nomad-health-check-path` | HTTP path for service health checks. |  |
@@ -122,12 +123,13 @@ deployify env set <name> [options]
 | `--dashboard-tag` | Image tag for the Aspire Dashboard. |  |
 | `--dashboard-port` | Host port for the dashboard UI. |  |
 | `--dashboard-otlp-port` | Host port for the OTLP gRPC endpoint. |  |
-| `--dashboard-token` | Browser auth token (empty string to remove). |  |
+| `--dashboard-token` | Browser auth token as env:NAME (empty string to remove). |  |
 | `--deploy-dapr` | Enable (true) or disable (false) Dapr sidecar injection. |  |
 | `--dapr-version` | Dapr sidecar image tag. |  |
 | `--dapr-components-path` | Path to Dapr components directory. |  |
 | `--dapr-config-path` | Path to Dapr config file. |  |
 | `--dapr-log-level` | Dapr sidecar log level. |  |
+| `--allow-plaintext-secrets` | Allow secret flags (tokens, passwords) to take literal values, which are saved as plain text in deployify-state.json. By default they must be env:NAME references. | `false` |
 
 ## `env remove`
 

@@ -150,7 +150,7 @@ public static class EnvCommand
         };
         var nomadTokOpt = new Option<string?>("--nomad-token")
         {
-            Description = "Nomad ACL token."
+            Description = "Nomad ACL token as env:NAME. Default: NOMAD_TOKEN at run time."
         };
         // Kubernetes
         var kubernetesCtxOpt = new Option<string?>("--kubernetes-context")
@@ -182,7 +182,7 @@ public static class EnvCommand
             targetOpt, activateOpt, registryOpt, tagOpt, containerOsOpt, containerArchOpt,
             nomadAddrOpt, nomadNsOpt, nomadDcOpt, nomadTokOpt,
             kubernetesCtxOpt, kubernetesPrefOpt, kubernetesDomOpt,
-            cmpProjOpt, cmpRestOpt
+            cmpProjOpt, cmpRestOpt, PlaintextSecretFlags.AllowOption
         ];
         foreach (var o in addOptions)
         {
@@ -217,6 +217,11 @@ public static class EnvCommand
             if (nonInteractive)
             {
                 var pr = parseResult;
+                if (!PlaintextSecretFlags.Check(pr, (nomadTokOpt, "NOMAD_TOKEN", true)))
+                {
+                    return 1;
+                }
+
                 var target = pr.GetValue(targetOpt);
                 config = new EnvironmentConfig
                 {
@@ -289,7 +294,7 @@ public static class EnvCommand
         };
         var nomadTokOpt = new Option<string?>("--nomad-token")
         {
-            Description = "Update Nomad token."
+            Description = "Update the Nomad token reference (env:NAME)."
         };
         var nomadNsOpt = new Option<string?>("--nomad-namespace")
         {
@@ -305,7 +310,7 @@ public static class EnvCommand
         };
         var nomadRegPassOpt = new Option<string?>("--nomad-registry-password")
         {
-            Description = "Docker registry password or token (empty string to remove)."
+            Description = "Docker registry password or token as env:NAME (empty string to remove)."
         };
         var nomadRegisterOpt = new Option<bool?>("--nomad-register-services")
         {
@@ -337,7 +342,7 @@ public static class EnvCommand
         };
         var dashboardTokenOpt = new Option<string?>("--dashboard-token")
         {
-            Description = "Browser auth token (empty string to remove)."
+            Description = "Browser auth token as env:NAME (empty string to remove)."
         };
         var deployDaprOpt = new Option<bool?>("--deploy-dapr")
         {
@@ -367,7 +372,8 @@ public static class EnvCommand
             nomadRegUserOpt, nomadRegPassOpt,
             nomadRegisterOpt, nomadProviderOpt, nomadHealthPathOpt,
             deployDashboardOpt, dashboardTagOpt, dashboardPortOpt, dashboardOtlpPortOpt, dashboardTokenOpt,
-            deployDaprOpt, daprVersionOpt, daprComponentsOpt, daprConfigPathOpt, daprLogLevelOpt })
+            deployDaprOpt, daprVersionOpt, daprComponentsOpt, daprConfigPathOpt, daprLogLevelOpt,
+            PlaintextSecretFlags.AllowOption })
         {
             cmd.Options.Add(o);
         }
@@ -382,6 +388,14 @@ public static class EnvCommand
             if (!stateFile.Environments.TryGetValue(name, out var config))
             {
                 AnsiConsole.MarkupLineInterpolated($"[red]✗[/] Environment '{name}' not found.");
+                return 1;
+            }
+
+            if (!PlaintextSecretFlags.Check(parseResult,
+                    (nomadTokOpt, "NOMAD_TOKEN", true),
+                    (nomadRegPassOpt, "DEPLOYIFY_REGISTRY_PASSWORD", true),
+                    (dashboardTokenOpt, "DEPLOYIFY_DASHBOARD_TOKEN", false)))
+            {
                 return 1;
             }
 

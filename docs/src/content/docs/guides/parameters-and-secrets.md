@@ -40,6 +40,30 @@ stores them its own way:
 
 To pass a literal `{name.property}` through without resolving it, double the braces: `{{name.property}}`.
 
+## Credentials Deployify uses
+
+Tokens and passwords Deployify itself needs (a Nomad or Consul ACL token, a registry password, the
+dashboard's browser token) are read from environment variables, not stored in `deployify-state.json`:
+
+| Setting | Variable read when the setting is empty |
+|---|---|
+| Nomad ACL token | `NOMAD_TOKEN` |
+| Consul ACL token | `CONSUL_HTTP_TOKEN` |
+| Registry password (Nomad, NomadConsul) | `DEPLOYIFY_REGISTRY_PASSWORD` |
+| IIS password | `IIS_PASSWORD` |
+
+To read a different variable, store a reference such as `"token": "env:PROD_NOMAD_TOKEN"`.
+
+`deployify init` and `deployify env add` ask where each credential comes from instead of asking for
+the value: the default variable, another variable, or (after a confirmation) plain text in the state
+file. Their flags (`--nomad-token`, `--nomad-registry-password`, `--nc-nomad-token`,
+`--nc-consul-token`, `--dashboard-token`) take `env:NAME` references; a literal value is refused unless
+you pass `--allow-plaintext-secrets`.
+
+If an older state file already holds plain-text credentials, `deployify state migrate-secrets` replaces
+each one with an `env:NAME` reference and prints the commands to set those variables. Run it with
+`--dry-run` first to see what it would change. If the file was ever committed, rotate the old values.
+
 ## Secret backends: keeping values out of output and state
 
 The table above is the default `Inline` backend: secret values end up in files in

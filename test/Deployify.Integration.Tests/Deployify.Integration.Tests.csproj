@@ -17,6 +17,7 @@
     </PackageReference>
     <PackageReference Include="NSubstitute" />
     <PackageReference Include="Shouldly" />
+    <PackageReference Include="Spectre.Console.Testing" />
     <PackageReference Include="GitHubActionsTestLogger" />
     <PackageReference Include="System.CommandLine" />
   </ItemGroup>

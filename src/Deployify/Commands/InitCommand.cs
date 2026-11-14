@@ -130,7 +130,7 @@ public static class InitCommand
         };
         var dashboardTokenOpt = new Option<string?>("--dashboard-token")
         {
-            Description = "Browser auth token (omit for unauthenticated)."
+            Description = "Browser auth token as env:NAME (omit for unauthenticated)."
         };
 
         // Nomad-specific
@@ -141,7 +141,7 @@ public static class InitCommand
         };
         var nomadTokenOpt = new Option<string?>("--nomad-token")
         {
-            Description = "Nomad ACL token."
+            Description = "Nomad ACL token as env:NAME. Default: NOMAD_TOKEN at run time."
         };
         var nomadNsOpt = new Option<string>("--nomad-namespace")
         {
@@ -159,7 +159,7 @@ public static class InitCommand
         };
         var nomadRegPassOpt = new Option<string?>("--nomad-registry-password")
         {
-            Description = "Docker registry password or access token."
+            Description = "Docker registry password or access token as env:NAME. Default: DEPLOYIFY_REGISTRY_PASSWORD at run time."
         };
         var nomadRegisterOpt = new Option<bool>("--nomad-register-services")
         {
@@ -320,7 +320,7 @@ public static class InitCommand
         };
         var ncNomadTokenOpt = new Option<string?>("--nc-nomad-token")
         {
-            Description = "Nomad ACL token (Consul mesh target)."
+            Description = "Nomad ACL token as env:NAME (Consul mesh target). Default: NOMAD_TOKEN at run time."
         };
         var ncNomadNsOpt = new Option<string>("--nc-nomad-namespace")
         {
@@ -339,7 +339,7 @@ public static class InitCommand
         };
         var ncConsulTokenOpt = new Option<string?>("--nc-consul-token")
         {
-            Description = "Consul ACL token."
+            Description = "Consul ACL token as env:NAME. Default: CONSUL_HTTP_TOKEN at run time."
         };
         var ncIngressOpt = new Option<bool>("--nc-ingress-gateway")
         {
@@ -410,6 +410,7 @@ public static class InitCommand
         cmd.Options.Add(ncConsulAddrOpt);
         cmd.Options.Add(ncConsulTokenOpt);
         cmd.Options.Add(ncIngressOpt);
+        cmd.Options.Add(PlaintextSecretFlags.AllowOption);
 
         cmd.SetAction(async (parseResult, ct) =>
         {
@@ -427,6 +428,16 @@ public static class InitCommand
             if (nonInteractive)
             {
                 var pr = parseResult;
+                if (!PlaintextSecretFlags.Check(pr,
+                        (dashboardTokenOpt, "DEPLOYIFY_DASHBOARD_TOKEN", false),
+                        (nomadTokenOpt, "NOMAD_TOKEN", true),
+                        (nomadRegPassOpt, "DEPLOYIFY_REGISTRY_PASSWORD", true),
+                        (ncNomadTokenOpt, "NOMAD_TOKEN", true),
+                        (ncConsulTokenOpt, "CONSUL_HTTP_TOKEN", true)))
+                {
+                    return 1;
+                }
+
                 var target = pr.GetValue(targetOpt) ?? DeploymentTargetType.Nomad;
                 var name = pr.GetValue(envNameOpt)!;
                 var config = new EnvironmentConfig
@@ -530,6 +541,7 @@ public static class InitCommand
             AnsiConsole.MarkupLine("Next steps:");
             AnsiConsole.MarkupLine("  [cyan]deployify plan --target <nomad|kubernetes|compose|awsecs|azurecontainerapps|ovhcloud|iis>[/]");
             AnsiConsole.MarkupLine("  [cyan]deployify apply --target <nomad|kubernetes|compose|awsecs|azurecontainerapps|ovhcloud|iis>[/]");
+            return 0;
         });
 
         return cmd;
@@ -633,10 +645,11 @@ public static class InitCommand
         {
             dashboardConfig.Port = await ConsolePrompts.AskAsync("Dashboard UI port:", 18888, ct);
             dashboardConfig.OtlpPort = await ConsolePrompts.AskAsync("Dashboard OTLP port:", 18889, ct);
-            var token = await ConsolePrompts.AskSecretAsync("Browser auth token [dim](blank for none)[/]:", ct);
-            if (!string.IsNullOrWhiteSpace(token))
+            if (await ConsolePrompts.ConfirmAsync("Require a browser token to open the dashboard?", defaultValue: false, ct))
             {
-                dashboardConfig.BrowserToken = token;
+                // An empty value means "no login", so the default variable is stored as a reference.
+                dashboardConfig.BrowserToken = await SecretPrompts.AskSourceAsync(
+                    "dashboard browser token", "DEPLOYIFY_DASHBOARD_TOKEN", directory, ct, storeDefaultReference: true);
             }
         }
 
@@ -670,7 +683,7 @@ public static class InitCommand
                 nomadAddr = await ConsolePrompts.AskAsync("Nomad address:", "http://localhost:4646", ct);
                 nomadNs = await ConsolePrompts.AskAsync("Namespace:", "default", ct);
                 nomadDc = await ConsolePrompts.AskAsync("Datacenter:", "dc1", ct);
-                nomadToken = await ConsolePrompts.AskSecretAsync("ACL token [dim](blank to skip, or env:VAR_NAME)[/]:", ct);
+                nomadToken = await SecretPrompts.AskSourceAsync("Nomad ACL token", "NOMAD_TOKEN", directory, ct) ?? string.Empty;
                 nomadMode = await ConsolePrompts.PromptAsync(
                     new SelectionPrompt<NomadDeploymentMode>()
                         .Title("Deployment mode:")
@@ -678,7 +691,8 @@ public static class InitCommand
                 if (await ConsolePrompts.ConfirmAsync("Authenticate with a private Docker registry?", defaultValue: false, ct))
                 {
                     nomadRegUser = await ConsolePrompts.AskAsync<string>("Registry username:", ct);
-                    nomadRegPass = await ConsolePrompts.AskSecretAsync("Registry password / token [dim](or env:VAR_NAME)[/]:", ct);
+                    nomadRegPass = await SecretPrompts.AskSourceAsync(
+                        "registry password", "DEPLOYIFY_REGISTRY_PASSWORD", directory, ct);
                 }
 
                 nomadRegisterServices = await ConsolePrompts.ConfirmAsync("Register services in service catalog?", defaultValue: true, ct);
@@ -774,9 +788,9 @@ public static class InitCommand
                 ncNomadAddr = await ConsolePrompts.AskAsync("Nomad address:", "http://localhost:4646", ct);
                 ncNomadNs = await ConsolePrompts.AskAsync("Nomad namespace:", "default", ct);
                 ncNomadDc = await ConsolePrompts.AskAsync("Datacenter:", "dc1", ct);
-                ncNomadToken = await ConsolePrompts.AskSecretAsync("Nomad ACL token [dim](blank to skip, or env:VAR_NAME)[/]:", ct);
+                ncNomadToken = await SecretPrompts.AskSourceAsync("Nomad ACL token", "NOMAD_TOKEN", directory, ct);
                 ncConsulAddr = await ConsolePrompts.AskAsync("Consul address:", "http://localhost:8500", ct);
-                ncConsulToken = await ConsolePrompts.AskSecretAsync("Consul ACL token [dim](blank to skip, or env:VAR_NAME)[/]:", ct);
+                ncConsulToken = await SecretPrompts.AskSourceAsync("Consul ACL token", "CONSUL_HTTP_TOKEN", directory, ct);
                 ncIngress = await ConsolePrompts.ConfirmAsync("Enable Ingress Gateway for HTTP services?", defaultValue: false, ct);
                 break;
         }
@@ -967,6 +981,6 @@ public static class InitCommand
             _ => []
         };
 
-    private static string ResolveDirectory(string p)
+    internal static string ResolveDirectory(string p)
         => File.Exists(p) ? Path.GetDirectoryName(Path.GetFullPath(p))! : Path.GetFullPath(p);
 }

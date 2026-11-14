@@ -14,13 +14,16 @@ deployify init --non-interactive --target Nomad --deploy-dashboard
 # Or update an existing environment
 deployify env set local --deploy-dashboard true
 
-# With a browser auth token
+# With a browser auth token, read from DEPLOYIFY_DASHBOARD_TOKEN at deploy time
 deployify init --non-interactive --target Nomad \
     --deploy-dashboard \
     --dashboard-port 18888 \
     --dashboard-otlp-port 18889 \
-    --dashboard-token my-secret-token
+    --dashboard-token env:DEPLOYIFY_DASHBOARD_TOKEN
 ```
+
+`--dashboard-token` takes an `env:NAME` reference, so the token stays out of
+`deployify-state.json`. A literal token is refused unless you pass `--allow-plaintext-secrets`.
 
 ## How it works
 
@@ -42,7 +45,7 @@ The dashboard is configured with:
         "imageTag": "latest",
         "port": 18888,
         "otlpPort": 18889,
-        "browserToken": "my-secret-token"
+        "browserToken": "env:DEPLOYIFY_DASHBOARD_TOKEN"
       }
     }
   }
@@ -57,4 +60,4 @@ The dashboard is configured with:
 | `dashboard.imageTag` | `latest` | Tag for `mcr.microsoft.com/dotnet/aspire-dashboard` |
 | `dashboard.port` | `18888` | Host port for the dashboard UI |
 | `dashboard.otlpPort` | `18889` | Host port for the OTLP gRPC endpoint |
-| `dashboard.browserToken` | `null` | Auth token (omit for unauthenticated) |
+| `dashboard.browserToken` | `null` | Auth token as `"env:NAME"` (omit for unauthenticated) |

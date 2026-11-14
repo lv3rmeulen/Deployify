@@ -153,11 +153,11 @@ public sealed class DashboardIntegrationTests
         using var dir = new TempDir();
         await Root().InvokeAsync([
             "init", "--project-path", dir.Path, "--non-interactive",
-            "--target", "Nomad", "--deploy-dashboard", "--dashboard-token", "my-token"
+            "--target", "Nomad", "--deploy-dashboard", "--dashboard-token", "env:MY_TOKEN"
         ], TestContext.Current.CancellationToken);
 
         var json = await File.ReadAllTextAsync(Path.Combine(dir.Path, "deployify-state.json"), TestContext.Current.CancellationToken);
-        json.ShouldContain("my-token");
+        json.ShouldContain("env:MY_TOKEN");
     }
 
     // ── CI pipeline with dashboard ─────────────────────────────────────────────

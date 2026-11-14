@@ -47,9 +47,8 @@ public static class GenerateCommand
             IReadOnlyList<string> paths;
             try
             {
-                paths = await AnsiConsole.Status().Spinner(Spinner.Known.Dots2)
-                    .StartAsync("Generating artifacts...",
-                        _ => target.GenerateAsync(manifest, config, outputDir, ct));
+                paths = await ConsoleStatus.RunAsync("Generating artifacts...",
+                    () => target.GenerateAsync(manifest, config, outputDir, ct));
             }
             catch (Exception ex)
             {
