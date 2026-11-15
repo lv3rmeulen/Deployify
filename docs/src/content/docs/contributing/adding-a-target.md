@@ -18,3 +18,7 @@ To support a platform without changing Deployify, write a [plugin](/Deployify/ex
 6. For `destroy` and `apply --prune`, also implement `IResourceLifecycle`: put an ownership marker
    on everything the target creates, list what carries it (throwing when the platform can't be
    asked), and delete one service. Which services may be deleted is decided for you.
+7. For [`deployify dashboard`](/Deployify/guides/resource-server/), also implement `IResourceSourceProvider`:
+   return an `IResourceSource` (usually a `PollingResourceSource` that lists the deployed services and
+   their instances as `ResourceSnapshot`s, streams their logs and runs start/stop/restart). The
+   resource server turns it into what the Aspire Dashboard expects.

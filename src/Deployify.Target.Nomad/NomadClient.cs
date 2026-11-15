@@ -279,6 +279,105 @@ public sealed class NomadClient : IDisposable
         await EnsureSuccessAsync(resp, $"delete variable {path}", ct);
     }
 
+    // ── Resource server ───────────────────────────────────────────────────────
+
+    /// <summary>Raw JSON of every job in the namespace with its meta (GET /v1/jobs?meta=true). Throws when Nomad can't be reached.</summary>
+    public async Task<string> GetJobListJsonAsync(CancellationToken ct = default)
+    {
+        var resp = await _http.GetAsync($"v1/jobs?{Ns}&meta=true", ct);
+        await EnsureSuccessAsync(resp, "list jobs", ct);
+        return await resp.Content.ReadAsStringAsync(ct);
+    }
+
+    /// <summary>Raw JSON of one job (GET /v1/job/:id), or null when Nomad doesn't know it.</summary>
+    public async Task<string?> GetJobJsonAsync(string jobId, CancellationToken ct = default)
+    {
+        var resp = await _http.GetAsync($"v1/job/{Uri.EscapeDataString(jobId)}?{Ns}", ct);
+        if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+
+        await EnsureSuccessAsync(resp, $"read job {jobId}", ct);
+        return await resp.Content.ReadAsStringAsync(ct);
+    }
+
+    /// <summary>
+    /// Raw JSON of every allocation in the namespace, with task states and allocated ports
+    /// (GET /v1/allocations?resources=true): one request however many jobs there are.
+    /// </summary>
+    public async Task<string> GetAllocationsJsonAsync(CancellationToken ct = default)
+    {
+        var resp = await _http.GetAsync($"v1/allocations?{Ns}&resources=true&task_states=true", ct);
+        await EnsureSuccessAsync(resp, "list allocations", ct);
+        return await resp.Content.ReadAsStringAsync(ct);
+    }
+
+    /// <summary>
+    /// Lines of a task's stdout or stderr (GET /v1/client/fs/logs/:alloc_id, plain text). Starts
+    /// about <paramref name="tailBytes"/> before the end (the first, partial line is dropped), or
+    /// at the start of the oldest log file when it is 0;
+    /// with <paramref name="follow"/> keeps streaming until cancelled.
+    /// </summary>
+    public async IAsyncEnumerable<string> StreamTaskLogsAsync(
+        string allocId, string task, bool stderr, bool follow, long tailBytes,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    {
+        var url = $"v1/client/fs/logs/{Uri.EscapeDataString(allocId)}?{Ns}&task={Uri.EscapeDataString(task)}" +
+                  $"&type={(stderr ? "stderr" : "stdout")}&follow={(follow ? "true" : "false")}" +
+                  (tailBytes > 0
+                      ? $"&origin=end&offset={tailBytes.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+                      : "&origin=start&offset=0") + "&plain=true";
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        // Headers only: the body is a stream that stays open while following.
+        using var resp = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        await EnsureSuccessAsync(resp, $"read logs of allocation {allocId}", ct);
+        await using var body = await resp.Content.ReadAsStreamAsync(ct);
+        using var reader = new StreamReader(body, Encoding.UTF8);
+        var first = tailBytes > 0;
+        while (await reader.ReadLineAsync(ct) is { } line)
+        {
+            if (first)
+            {
+                // Starting mid-file almost always means starting mid-line.
+                first = false;
+                continue;
+            }
+
+            yield return line;
+        }
+    }
+
+    /// <summary>Restarts every task of an allocation in place (POST /v1/client/allocation/:id/restart).</summary>
+    public async Task RestartAllocationAsync(string allocId, CancellationToken ct = default)
+    {
+        var resp = await _http.PostAsJsonAsync($"v1/client/allocation/{Uri.EscapeDataString(allocId)}/restart?{Ns}",
+            new { AllTasks = true }, ct);
+        await EnsureSuccessAsync(resp, $"restart allocation {allocId}", ct);
+    }
+
+    /// <summary>Stops an allocation so the scheduler places a replacement (POST /v1/allocation/:id/stop).</summary>
+    public async Task StopAllocationAsync(string allocId, CancellationToken ct = default)
+    {
+        var resp = await _http.PostAsync($"v1/allocation/{Uri.EscapeDataString(allocId)}/stop?{Ns}", null, ct);
+        await EnsureSuccessAsync(resp, $"stop allocation {allocId}", ct);
+    }
+
+    /// <summary>
+    /// Starts a stopped job again by registering its current spec with <c>Stop = false</c>, which is
+    /// what <c>nomad job start</c> does.
+    /// </summary>
+    public async Task StartJobAsync(string jobId, CancellationToken ct = default)
+    {
+        var json = await GetJobJsonAsync(jobId, ct)
+                   ?? throw new HttpRequestException($"Nomad doesn't know job {jobId}.");
+        var job = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();
+        job["Stop"] = false;
+        var resp = await _http.PostAsync($"v1/jobs?{Ns}",
+            new StringContent(new System.Text.Json.Nodes.JsonObject { ["Job"] = job }.ToJsonString(), Encoding.UTF8, "application/json"), ct);
+        await EnsureSuccessAsync(resp, $"start job {jobId}", ct);
+    }
+
     private static string EscapePath(string path) => string.Join('/', path.Split('/').Select(Uri.EscapeDataString));
 
     public void Dispose() => _http.Dispose();

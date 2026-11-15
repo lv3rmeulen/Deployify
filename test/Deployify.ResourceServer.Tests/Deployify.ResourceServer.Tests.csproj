@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Shouldly" />
+    <PackageReference Include="GitHubActionsTestLogger" />
+    <PackageReference Include="Grpc.Net.Client" />
+    <PackageReference Include="Grpc.Tools" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The same contract the Aspire dashboard's client is generated from. Generated into its own
+         namespace so it doesn't clash with the server's internal copy. -->
+    <Protobuf Include="..\..\src\Deployify.ResourceServer\Protos\dashboard_service.proto" GrpcServices="Client" Link="Protos\dashboard_service.proto" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Deployify.Core\Deployify.Core.csproj" />
+    <ProjectReference Include="..\..\src\Deployify.ResourceServer\Deployify.ResourceServer.csproj" />
+  </ItemGroup>
+</Project>

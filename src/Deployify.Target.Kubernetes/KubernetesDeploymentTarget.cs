@@ -9,6 +9,7 @@ using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
 using Deployify.Core.Processes;
+using Deployify.Core.ResourceSources;
 using Deployify.Core.SecretBackends;
 using Deployify.Core.SecretBackends.KeyVault;
 using Deployify.Core.SecretBackends.Vault;
@@ -18,7 +19,8 @@ namespace Deployify.Target.Kubernetes;
 
 public sealed class KubernetesDeploymentTarget(
     IPublisher publisher,
-    ILogger<KubernetesDeploymentTarget> logger) : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget, IResourceLifecycle
+    ILogger<KubernetesDeploymentTarget> logger)
+    : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget, IResourceLifecycle, IResourceSourceProvider
 {
     private readonly KubernetesManifestGenerator _generator = new();
 
@@ -536,6 +538,16 @@ public sealed class KubernetesDeploymentTarget(
         => await KubectlAvailableAsync(ct)
             ? Kubectl(cfg)
             : throw new InvalidOperationException("Destroy and prune on Kubernetes need kubectl on PATH.");
+
+    // ── Resource server ───────────────────────────────────────────────────────
+
+    /// <summary>The environment's Deployments and pods, for <c>deployify dashboard</c>.</summary>
+    public IResourceSource CreateResourceSource(EnvironmentConfig config, ResourceSourceOptions options, ILoggerFactory loggers)
+    {
+        var sourceLogger = loggers.CreateLogger<KubernetesResourceSource>();
+        var cfg = GetConfig(config);
+        return new KubernetesResourceSource(cfg, Kubectl(cfg, sourceLogger), options, sourceLogger);
+    }
 
     // ── Rollout (health-gated apply) ──────────────────────────────────────────
 

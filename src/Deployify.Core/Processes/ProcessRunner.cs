@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 
@@ -80,6 +82,79 @@ public sealed class ProcessRunner : IProcessRunner
             }
 
             return new ProcessResult(proc.ExitCode, Read(stdout), Read(stderr));
+        }
+    }
+
+    public async IAsyncEnumerable<ProcessOutputLine> StreamAsync(
+        ProcessSpec spec, [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        var psi = CreateStartInfo(spec);
+        Process proc;
+        try
+        {
+            proc = Process.Start(psi) ?? throw new InvalidOperationException($"Could not start '{spec.FileName}'.");
+        }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == 2) // ENOENT / ERROR_FILE_NOT_FOUND
+        {
+            throw new ToolNotFoundException(spec.FileName, ex);
+        }
+
+        using (proc)
+        {
+            // Both streams write into one channel; it completes when both have ended.
+            var lines = Channel.CreateUnbounded<ProcessOutputLine>(new UnboundedChannelOptions { SingleReader = true });
+            var open = 2;
+            proc.OutputDataReceived += (_, e) => Receive(e.Data, false);
+            proc.ErrorDataReceived += (_, e) => Receive(e.Data, true);
+            proc.BeginOutputReadLine();
+            proc.BeginErrorReadLine();
+
+            try
+            {
+                if (spec.Stdin is not null)
+                {
+                    try
+                    {
+                        await proc.StandardInput.WriteAsync(spec.Stdin.AsMemory(), ct);
+                        proc.StandardInput.Close();
+                    }
+                    catch (IOException)
+                    {
+                        // The program exited without reading all of its input.
+                    }
+                }
+
+                await foreach (var line in lines.Reader.ReadAllAsync(ct))
+                {
+                    yield return line;
+                }
+            }
+            finally
+            {
+                // The consumer stopped early or was cancelled: don't leave e.g. 'kubectl logs -f' running.
+                Kill(proc);
+            }
+
+            void Receive(string? data, bool isStdErr)
+            {
+                if (data is null)
+                {
+                    if (Interlocked.Decrement(ref open) == 0)
+                    {
+                        lines.Writer.TryComplete();
+                    }
+
+                    return;
+                }
+
+                if (!spec.Sensitive)
+                {
+                    spec.Log?.LogDebug("[{Tag}{Stream}] {Line}",
+                        spec.LogTag ?? Path.GetFileNameWithoutExtension(spec.FileName), isStdErr ? " stderr" : "", data);
+                }
+
+                lines.Writer.TryWrite(new ProcessOutputLine(data, isStdErr));
+            }
         }
     }
 

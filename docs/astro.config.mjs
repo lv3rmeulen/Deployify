@@ -40,6 +40,7 @@ export default defineConfig({
 						'guides/aspire-deploy',
 						'guides/dapr',
 						'guides/dashboard',
+						'guides/resource-server',
 						'guides/nomad-raw-exec',
 					],
 				},

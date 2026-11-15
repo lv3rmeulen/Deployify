@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
+using Deployify.Core.ResourceSources;
 using Microsoft.Extensions.Logging;
 
 namespace Deployify.Target.Nomad;
@@ -20,7 +21,7 @@ public sealed class NomadDeploymentTarget(
     JobGenerator jobGenerator,
     IPublisher publisher,
     ILogger<NomadDeploymentTarget> logger,
-    ILoggerFactory loggerFactory) : IDeploymentTarget, IRolloutTarget, IResourceLifecycle
+    ILoggerFactory loggerFactory) : IDeploymentTarget, IRolloutTarget, IResourceLifecycle, IResourceSourceProvider
 {
     private readonly NomadRollout _rollout = new(logger);
 
@@ -306,6 +307,13 @@ public sealed class NomadDeploymentTarget(
         string outputDirectory,
         CancellationToken ct = default)
         => await CompareWithClusterAsync(manifest, config, GetConfig(config), outputDirectory, ct);
+
+    /// <summary>The environment's jobs and allocations, for <c>deployify dashboard</c>.</summary>
+    public IResourceSource CreateResourceSource(EnvironmentConfig config, ResourceSourceOptions options, ILoggerFactory loggers)
+    {
+        var cfg = GetConfig(config);
+        return new NomadResourceSource(BuildClient(cfg), cfg, options, loggers.CreateLogger<NomadResourceSource>());
+    }
 
     private static NomadTargetConfig GetConfig(EnvironmentConfig config)
     {

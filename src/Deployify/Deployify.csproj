@@ -27,6 +27,7 @@
     <ProjectReference Include="..\Deployify.Core\Deployify.Core.csproj" />
     <ProjectReference Include="..\Deployify.Targets\Deployify.Targets.csproj" />
     <ProjectReference Include="..\Deployify.Plugins\Deployify.Plugins.csproj" />
+    <ProjectReference Include="..\Deployify.ResourceServer\Deployify.ResourceServer.csproj" />
   </ItemGroup>
 
   <ItemGroup>

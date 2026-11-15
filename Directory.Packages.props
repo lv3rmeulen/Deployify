@@ -30,6 +30,12 @@
     <!-- Pinned: Deployify.Hosting builds on Aspire's experimental pipeline APIs (ASPIREPIPELINES001). -->
     <PackageVersion Include="Aspire.Hosting" Version="13.6.5" />
   </ItemGroup>
+  <ItemGroup Label="Resource server">
+    <!-- Serves Aspire's dashboard_service.proto (src/Deployify.ResourceServer/Protos). -->
+    <PackageVersion Include="Grpc.AspNetCore" Version="2.85.0" />
+    <PackageVersion Include="Grpc.Tools" Version="2.85.0" />
+    <PackageVersion Include="Grpc.Net.Client" Version="2.85.0" />
+  </ItemGroup>
   <ItemGroup Label="Testing">
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
     <PackageVersion Include="xunit.v3" Version="4.0.2" />

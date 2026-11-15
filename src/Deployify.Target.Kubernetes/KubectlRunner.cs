@@ -323,6 +323,80 @@ public sealed class KubectlRunner(KubernetesTargetConfig config, ILogger logger,
         return data;
     }
 
+    // ── Resource server ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Every namespace, Deployment, Service, Ingress and ConfigMap Deployify manages, across all
+    /// namespaces, as one <c>List</c> (each item carries its <c>kind</c>). Throws when kubectl
+    /// can't ask the cluster.
+    /// </summary>
+    public async Task<string> GetManagedObjectsJsonAsync(CancellationToken ct = default)
+    {
+        var result = await RunAsync(ct, "get", "namespaces,deployments,services,ingresses,configmaps",
+            "--all-namespaces", "-l", ManagedBySelector, "-o", "json");
+        if (!result.Ok)
+        {
+            throw new InvalidOperationException($"kubectl could not list Deployify's resources: {result.Stderr.Trim()}");
+        }
+
+        return result.Stdout;
+    }
+
+    /// <summary>
+    /// Pods carrying an <c>app</c> label, in every namespace. Deployify's pods only carry
+    /// <c>app</c> (the Deployment's selector), so the caller keeps those in its own namespaces.
+    /// </summary>
+    public async Task<string> GetAppPodsJsonAsync(CancellationToken ct = default)
+    {
+        var result = await RunAsync(ct, "get", "pods", "--all-namespaces", "-l", "app", "-o", "json");
+        if (!result.Ok)
+        {
+            throw new InvalidOperationException($"kubectl could not list pods: {result.Stderr.Trim()}");
+        }
+
+        return result.Stdout;
+    }
+
+    /// <summary>
+    /// <c>kubectl logs</c> of a pod (<paramref name="pod"/>) or of every pod of a service
+    /// (<paramref name="appLabel"/>), with timestamps, all containers, the last
+    /// <paramref name="tail"/> lines, and with <paramref name="follow"/> new lines until cancelled.
+    /// </summary>
+    public IAsyncEnumerable<ProcessOutputLine> StreamLogsAsync(
+        string namespaceName, string? pod, string? appLabel, bool follow, int tail, CancellationToken ct = default)
+    {
+        var args = new List<string>(_contextArgs) { "logs", "-n", namespaceName };
+        if (pod is not null)
+        {
+            args.Add(pod);
+        }
+        else
+        {
+            // Several pods: prefix each line with the pod it came from.
+            args.AddRange(["-l", $"app={appLabel}", "--prefix", "--max-log-requests=20"]);
+        }
+
+        args.AddRange(["--all-containers", "--timestamps", $"--tail={tail.ToString(System.Globalization.CultureInfo.InvariantCulture)}"]);
+        if (follow)
+        {
+            args.Add("--follow");
+        }
+
+        // Logs can hold anything an app prints: never copy them into Deployify's own log.
+        return _runner.StreamAsync(new ProcessSpec("kubectl", args) { Sensitive = true }, ct);
+    }
+
+    /// <summary>Sets an annotation on an object, or removes it when <paramref name="value"/> is null.</summary>
+    public async Task AnnotateAsync(string kind, string name, string namespaceName, string key, string? value, CancellationToken ct = default)
+    {
+        var result = await RunAsync(ct, "annotate", $"{kind}/{name}", "-n", namespaceName,
+            value is null ? $"{key}-" : $"{key}={value}", "--overwrite");
+        if (!result.Ok)
+        {
+            throw new InvalidOperationException($"kubectl could not annotate {kind} {namespaceName}/{name}: {result.Stderr.Trim()}");
+        }
+    }
+
     private Task<ProcessResult> RunAsync(CancellationToken ct, params string[] args)
         => _runner.RunAsync(new ProcessSpec("kubectl", [.. _contextArgs, .. args]) { Log = logger, LogTag = "kubectl" }, ct);
 

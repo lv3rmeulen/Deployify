@@ -25,6 +25,7 @@
     <Project Path="src/Deployify.Plugin.Sdk/Deployify.Plugin.Sdk.csproj" />
     <Project Path="src/Deployify.Plugin.Testing/Deployify.Plugin.Testing.csproj" />
     <Project Path="src/Deployify.Plugins/Deployify.Plugins.csproj" />
+    <Project Path="src/Deployify.ResourceServer/Deployify.ResourceServer.csproj" />
     <Project Path="src/Deployify.Target.AwsEcs/Deployify.Target.AwsEcs.csproj" />
     <Project Path="src/Deployify.Target.AzureContainerApps/Deployify.Target.AzureContainerApps.csproj" />
     <Project Path="src/Deployify.Target.Compose/Deployify.Target.Compose.csproj" />
@@ -47,6 +48,7 @@
     <Project Path="test/Deployify.Hosting.Tests/Deployify.Hosting.Tests.csproj" />
     <Project Path="test/Deployify.Integration.Tests/Deployify.Integration.Tests.csproj" />
     <Project Path="test/Deployify.Plugins.Tests/Deployify.Plugins.Tests.csproj" />
+    <Project Path="test/Deployify.ResourceServer.Tests/Deployify.ResourceServer.Tests.csproj" />
     <Project Path="test/Deployify.Target.AwsEcs.Tests/Deployify.Target.AwsEcs.Tests.csproj" />
     <Project Path="test/Deployify.Target.AzureContainerApps.Tests/Deployify.Target.AzureContainerApps.Tests.csproj" />
     <Project Path="test/Deployify.Target.Compose.Tests/Deployify.Target.Compose.Tests.csproj" />

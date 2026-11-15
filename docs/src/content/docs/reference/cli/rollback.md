@@ -3,7 +3,7 @@ title: deployify rollback
 description: "Undo a rollout: restore the revisions that ran before it."
 sidebar:
   label: rollback
-  order: 16
+  order: 17
 ---
 
 :::note
