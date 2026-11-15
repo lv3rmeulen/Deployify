@@ -1,0 +1,125 @@
+name: Aspire preview
+
+# Builds and tests Deployify against the newest Aspire daily build, so a coming Aspire release
+# that breaks something shows up before it ships. Not a required check, so it never blocks a PR:
+# a failing scheduled run opens (or updates) an issue labelled aspire-preview, and the first
+# passing run closes it.
+
+on:
+  schedule:
+    - cron: '41 2 * * *'
+  workflow_dispatch:
+    inputs:
+      aspire-version:
+        description: Aspire version to test (empty = newest daily build)
+        required: false
+
+concurrency:
+  group: aspire-preview
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+  # Aspire's daily builds; the Aspire CLI's own "daily" channel uses this feed.
+  DAILY_FEED: https://pkgs.dev.azure.com/dnceng/public/_packaging/dotnet9/nuget/v3/index.json
+
+jobs:
+  preview:
+    name: Build + test against the Aspire daily build
+    if: github.repository == 'lv3rmeulen/Deployify'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.aspire.outputs.version }}
+      pinned: ${{ steps.aspire.outputs.pinned }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # MinVer needs the full history and tags
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Pick the Aspire version
+        id: aspire
+        env:
+          REQUESTED: ${{ inputs.aspire-version }}
+        run: |
+          pinned=$(bash tools/aspire-version.sh)
+          v=$REQUESTED
+          if [ -z "$v" ]; then
+            base=$(curl -fsSL "$DAILY_FEED" | jq -r '.resources[] | select(."@type" == "PackageBaseAddress/3.0.0") | ."@id"' | head -n1)
+            v=$(curl -fsSL "${base%/}/aspire.hosting/index.json" | jq -r '.versions[]' | sort -V | tail -n1)
+          fi
+          [ -n "$v" ] || { echo "::error::Could not find an Aspire.Hosting version on the daily feed"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "pinned=$pinned" >> "$GITHUB_OUTPUT"
+          echo "### Aspire $v (pinned: $pinned)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Move every Aspire pin to that version
+        run: |
+          dotnet nuget add source "$DAILY_FEED" --name aspire-daily --configfile nuget.config
+          bash tools/aspire-version.sh '${{ steps.aspire.outputs.version }}'
+
+      - name: Restore tools
+        run: dotnet tool restore
+
+      - name: Build
+        run: dotnet build Deployify.slnx --configuration Release
+
+      - name: Test
+        run: dotnet test --solution Deployify.slnx --configuration Release --no-build --report-github
+
+      - name: Samples build and generate
+        run: |
+          for sample in hello-aspire/HelloAspire aspire-deploy/AspireDeploy; do
+            echo "::group::$sample"
+            dotnet build "samples/$sample.slnx" -c Release
+            dotnet src/Deployify/bin/Release/net10.0/deployify.dll generate --project-path "samples/$sample.AppHost"
+            echo "::endgroup::"
+          done
+
+      # Deployify.ResourceServer serves a copy of Aspire's dashboard contract. A change upstream
+      # isn't necessarily breaking, so it warns instead of failing the run.
+      - name: Dashboard contract still matches Aspire's
+        run: |
+          ours=src/Deployify.ResourceServer/Protos/dashboard_service.proto
+          curl -fsSL -o upstream.proto \
+            https://raw.githubusercontent.com/microsoft/aspire/main/src/Aspire.Hosting/Dashboard/proto/dashboard_service.proto
+          strip() { tr -d '\r' < "$1" | grep -vE '^[[:space:]]*(//.*)?$'; }
+          if ! diff -u <(strip "$ours") <(strip upstream.proto) > proto.diff; then
+            echo "::warning::dashboard_service.proto differs from Aspire main; see the job summary"
+            { echo '### dashboard_service.proto differs from Aspire main'; echo '```diff'; cat proto.diff; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  report:
+    needs: preview
+    if: always() && github.event_name == 'schedule' && github.repository == 'lv3rmeulen/Deployify'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RESULT: ${{ needs.preview.result }}
+      VERSION: ${{ needs.preview.outputs.version }}
+      PINNED: ${{ needs.preview.outputs.pinned }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Open, update or close the aspire-preview issue
+        run: |
+          gh label create aspire-preview --color FBCA04 --description "Breaks on the next Aspire release" --force
+          issue=$(gh issue list --label aspire-preview --state open --json number --jq '.[0].number // empty')
+          if [ "$RESULT" = failure ]; then
+            body="Deployify fails against Aspire ${VERSION:-daily} (pinned: $PINNED): $RUN_URL"
+            if [ -z "$issue" ]; then
+              gh issue create --label aspire-preview --title "The next Aspire release breaks Deployify" --body "$body"
+            else
+              gh issue comment "$issue" --body "Still failing. $body"
+            fi
+          elif [ "$RESULT" = success ] && [ -n "$issue" ]; then
+            gh issue close "$issue" --comment "Passes again against Aspire $VERSION: $RUN_URL"
+          fi

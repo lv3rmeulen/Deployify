@@ -11,3 +11,6 @@
 *.exe binary
 *.pdb binary
 *.snk binary
+
+# Shell scripts run on Linux runners: keep them LF.
+*.sh text eol=lf
