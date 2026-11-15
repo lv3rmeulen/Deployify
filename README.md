@@ -63,6 +63,7 @@ deployify ci --skip-validate
 | [State and locking](https://lv3rmeulen.github.io/Deployify/concepts/state/) | Inventory, ownership, the environment lock, remote state |
 | [Writing target plugins](https://lv3rmeulen.github.io/Deployify/extending/plugins/) | Add any platform as an out-of-process plugin |
 | [CLI reference](https://lv3rmeulen.github.io/Deployify/reference/cli/) | Every command and option |
+| [Stability and versioning](https://lv3rmeulen.github.io/Deployify/reference/stability/) | What 1.x promises not to break |
 
 ## Samples
 
@@ -71,6 +72,9 @@ Runnable apps in [`samples/`](samples/), built on every pull request and deploye
 [plugin](samples/Deployify.Plugin.Sample.Compose/).
 
 ## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md), and [SECURITY.md](SECURITY.md) to report a vulnerability.
+Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
 The docs site lives in [`docs/`](docs/) (Astro Starlight); see
 [Working on the docs and samples](https://lv3rmeulen.github.io/Deployify/contributing/docs/). The repository layout and how to

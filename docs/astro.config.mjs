@@ -66,6 +66,7 @@ export default defineConfig({
 					label: 'Reference',
 					items: [
 						'reference/state-file',
+						'reference/stability',
 						{ label: 'CLI', collapsed: true, items: [{ autogenerate: { directory: 'reference/cli' } }] },
 					],
 				},
