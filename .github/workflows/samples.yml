@@ -45,7 +45,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: '10.0.x'
+          global-json-file: global.json
 
       - name: Build Deployify
         run: dotnet build src/Deployify/Deployify.csproj -c Release
@@ -83,7 +83,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: '10.0.x'
+          global-json-file: global.json
 
       - name: Build Deployify
         working-directory: .
@@ -142,7 +142,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: '10.0.x'
+          global-json-file: global.json
 
       # Same version as Aspire.AppHost.Sdk in the sample and Aspire.Hosting in Directory.Packages.props.
       - name: Install the Aspire CLI
