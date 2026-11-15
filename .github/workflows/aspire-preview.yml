@@ -21,7 +21,8 @@ concurrency:
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: '1'
   DOTNET_NOLOGO: '1'
-  # Aspire's daily builds; the Aspire CLI's own "daily" channel uses this feed.
+  # Aspire's daily builds (the aspire-daily source in nuget.config); the Aspire CLI's own
+  # "daily" channel uses this feed too.
   DAILY_FEED: https://pkgs.dev.azure.com/dnceng/public/_packaging/dotnet9/nuget/v3/index.json
 
 jobs:
@@ -61,7 +62,6 @@ jobs:
 
       - name: Move every Aspire pin to that version
         run: |
-          dotnet nuget add source "$DAILY_FEED" --name aspire-daily --configfile nuget.config
           bash tools/aspire-version.sh '${{ steps.aspire.outputs.version }}'
 
       - name: Restore tools
