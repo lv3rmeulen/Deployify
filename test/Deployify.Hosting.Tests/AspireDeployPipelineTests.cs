@@ -124,7 +124,8 @@ public sealed class AspireDeployPipelineTests : IDisposable
         var logs = new CapturingLoggerProvider();
         builder.Services.AddSingleton<ILoggerProvider>(logs);
         builder.AddProject("api", apiProject);
-        builder.AddDeployify().Resource.ConfigureServices =
+        // A fixed tag, so the run doesn't depend on finding a commit SHA.
+        builder.AddDeployify(configure: o => o.ImageTag = "build-42").Resource.ConfigureServices =
             s => s.AddSingleton<IDeploymentTargetFactory>(new DeploymentTargetFactory([target]));
 
         // The host logs the failed step and stops; it doesn't rethrow.
@@ -133,6 +134,33 @@ public sealed class AspireDeployPipelineTests : IDisposable
         logs.Messages.ShouldContain(m => m.Contains("Step 'deployify-deploy' failed") && m.Contains("Deployify__AutoApprove"));
         await target.Received(1).PlanAsync(Arg.Any<AspireManifest>(), Arg.Any<EnvironmentConfig>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
         await target.DidNotReceiveWithAnyArgs().PublishAsync(default!, default!, default!, ct);
+        await target.DidNotReceiveWithAnyArgs().ApplyAsync(default!, default!, default!, ct);
+    }
+
+    [Fact]
+    public async Task DeployStep_WithRequireDigest_AndImagesPublishedElsewhere_StopsWhenNoDigestIsRecorded()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var apiProject = WriteProject("Api");
+        await WriteStateAsync(ct);
+        var target = FakeTarget();
+
+        var builder = CreateBuilder(["--operation", "publish", "--step", "deployify-deploy"]);
+        var logs = new CapturingLoggerProvider();
+        builder.Services.AddSingleton<ILoggerProvider>(logs);
+        builder.AddProject("api", apiProject);
+        builder.AddDeployify(configure: o =>
+        {
+            o.AutoApprove = true;
+            o.Publish = false;
+            o.ImageTag = "build-42";
+            o.RequireDigest = true;
+        }).Resource.ConfigureServices = s => s.AddSingleton<IDeploymentTargetFactory>(new DeploymentTargetFactory([target]));
+
+        await RunAsync(builder, ct);
+
+        logs.Messages.ShouldContain(m => m.Contains("Step 'deployify-deploy' failed") && m.Contains("no published digest for tag build-42"));
+        await target.DidNotReceiveWithAnyArgs().PlanAsync(default!, default!, default!, ct);
         await target.DidNotReceiveWithAnyArgs().ApplyAsync(default!, default!, default!, ct);
     }
 

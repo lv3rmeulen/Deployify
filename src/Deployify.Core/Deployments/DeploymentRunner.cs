@@ -28,6 +28,13 @@ public sealed class DeploymentRunOptions
     public bool Strict { get; init; }
 
     /// <summary>
+    /// Stop instead of deploying a built image by tag when no published digest is recorded for
+    /// it, like <c>deployify ci --require-digest</c>. Checked only when the run doesn't publish:
+    /// a run that publishes pins what it pushes.
+    /// </summary>
+    public bool RequireDigest { get; init; }
+
+    /// <summary>
     /// Asked once the plan is known, before anything changes. Returning false stops the run
     /// without deploying. Null deploys without asking.
     /// </summary>
@@ -87,6 +94,17 @@ public sealed class DeploymentRunner(DeploymentSession session)
             return Failed(summary);
         }
 
+        // ── Digest check ───────────────────────────────────────────────────────
+        var publishes = options.Publish && manifest.Resources.Values.Any(r => r.IsBuiltImage);
+        if (options.RequireDigest && !publishes && ImagePromotion.Unpinned(manifest, config) is { Count: > 0 } unpinned)
+        {
+            var summary = $"RequireDigest is set, but {unpinned.Count} image(s) have no published digest for tag {config.ImageTag}: " +
+                          $"{string.Join(", ", unpinned.Select(u => $"{u.Service} ({u.Reference})"))}. " +
+                          "Publish them to this environment, or promote them with 'deployify promote'.";
+            Reporter.Error(summary);
+            return Failed(summary);
+        }
+
         // ── Plan ───────────────────────────────────────────────────────────────
         PlanResult plan;
         await using (var stage = await Reporter.BeginStageAsync($"Planning changes on {target.DisplayName}", ct))
@@ -129,7 +147,7 @@ public sealed class DeploymentRunner(DeploymentSession session)
         }
 
         // ── Publish ────────────────────────────────────────────────────────────
-        if (options.Publish && manifest.Resources.Values.Any(r => r.IsBuiltImage))
+        if (publishes)
         {
             await using var stage = await Reporter.BeginStageAsync(
                 $"Publishing images (tag {config.ImageTag}, {config.ContainerRuntime})", ct);

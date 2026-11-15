@@ -54,10 +54,55 @@ public sealed class DeploymentRunnerTests : IAsyncDisposable
         }
     }
 
-    private DeploymentRunner Runner() => new(new DeploymentSession(
-        Substitute.For<IServiceProvider>(), new EnvironmentConfig { Target = DeploymentTargetType.Compose },
+    private DeploymentRunner Runner(EnvironmentConfig? config = null) => new(new DeploymentSession(
+        Substitute.For<IServiceProvider>(), config ?? new EnvironmentConfig { Target = DeploymentTargetType.Compose },
         "dev", DeploymentTargetType.Compose, _target, _dir)
     { State = _state });
+
+    private static EnvironmentConfig TaggedConfig(bool withDigest)
+    {
+        var config = new EnvironmentConfig { Target = DeploymentTargetType.Compose, ContainerRegistry = "localhost:5000", ImageTag = "abc123" };
+        if (withDigest)
+        {
+            config.PublishedImages.Record(ServiceImage.Repository("api", config), "abc123",
+                "sha256:" + new string('a', 64), DateTimeOffset.UnixEpoch);
+        }
+
+        return config;
+    }
+
+    [Fact]
+    public async Task RequireDigest_WithoutPublishing_StopsBeforePlanning_WhenAnImageHasNoDigest()
+    {
+        var result = await Runner(TaggedConfig(withDigest: false)).RunAsync(
+            _manifest, new DeploymentRunOptions { Publish = false, RequireDigest = true }, Ct);
+
+        result.Outcome.ShouldBe(DeploymentRunOutcome.Failed);
+        result.Summary.ShouldContain("no published digest for tag abc123");
+        result.Summary.ShouldContain("api (localhost:5000/api:abc123)");
+        await _target.DidNotReceiveWithAnyArgs().PlanAsync(default!, default!, default!, Ct);
+        await _target.DidNotReceiveWithAnyArgs().ApplyAsync(default!, default!, default!, Ct);
+    }
+
+    [Fact]
+    public async Task RequireDigest_WithoutPublishing_Deploys_WhenEveryImageHasADigest()
+    {
+        var result = await Runner(TaggedConfig(withDigest: true)).RunAsync(
+            _manifest, new DeploymentRunOptions { Publish = false, RequireDigest = true }, Ct);
+
+        result.Outcome.ShouldBe(DeploymentRunOutcome.Deployed);
+        await _target.DidNotReceiveWithAnyArgs().PublishAsync(default!, default!, default!, Ct);
+    }
+
+    [Fact]
+    public async Task RequireDigest_IsNotChecked_WhenTheRunPublishes()
+    {
+        var result = await Runner(TaggedConfig(withDigest: false)).RunAsync(
+            _manifest, new DeploymentRunOptions { RequireDigest = true }, Ct);
+
+        result.Outcome.ShouldBe(DeploymentRunOutcome.Deployed);
+        await _target.ReceivedWithAnyArgs(1).PublishAsync(default!, default!, default!, Ct);
+    }
 
     [Fact]
     public async Task Deploys_AfterPublishing_AndRecordsTheServices()

@@ -19,7 +19,9 @@ Each release can have these sections: **Added**, **Changed**, **Deprecated**, **
 - Health-gated rollouts with automatic rollback, and the `rollback` command.
 - `destroy` and `apply --prune`, working from the environment's inventory.
 - Secret backends for parameters (Vault, Azure Key Vault, AWS SSM).
-- Running Deployify from `aspire deploy` with `builder.AddDeployify()`.
+- Running Deployify from `aspire deploy` with `builder.AddDeployify()`. It tags published images
+  with the commit SHA when the tag is `latest`, as `ci` does (`AllowMutableTag` keeps `latest`),
+  and `RequireDigest` stops a run that would deploy an image by tag, like `--require-digest`.
 - Out-of-process target plugins: plugin protocol 1.0, `Deployify.Plugin.Sdk`,
   `Deployify.Plugin.Testing`, and `deployify plugin list` / `plugin lock`. A plugin target only
   starts when `deployify-plugins.lock.json` has the SHA-256 of its files for the platform; use

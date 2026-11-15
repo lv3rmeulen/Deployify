@@ -26,7 +26,9 @@ public class DeployifyOptionsTests
             HealthGate = false,
             AutoRollback = false,
             HealthTimeout = TimeSpan.FromMinutes(3),
-            AutoApprove = true
+            AutoApprove = true,
+            AllowMutableTag = true,
+            RequireDigest = true
         };
 
         var resolved = DeployifyDeployStep.Resolve(code, Section([]));
@@ -39,6 +41,8 @@ public class DeployifyOptionsTests
         resolved.AutoRollback.ShouldBeFalse();
         resolved.HealthTimeout.ShouldBe(TimeSpan.FromMinutes(3));
         resolved.AutoApprove.ShouldBeTrue();
+        resolved.AllowMutableTag.ShouldBeTrue();
+        resolved.RequireDigest.ShouldBeTrue();
     }
 
     [Fact]
@@ -51,7 +55,9 @@ public class DeployifyOptionsTests
             ["Deployify:Publish"] = "false",
             ["Deployify:ImageTag"] = "abc123",
             ["Deployify:HealthTimeoutSeconds"] = "90",
-            ["Deployify:AutoApprove"] = "TRUE"
+            ["Deployify:AutoApprove"] = "TRUE",
+            ["Deployify:AllowMutableTag"] = "true",
+            ["Deployify:RequireDigest"] = "true"
         }));
 
         resolved.Environment.ShouldBe("staging");
@@ -60,10 +66,22 @@ public class DeployifyOptionsTests
         resolved.ImageTag.ShouldBe("abc123");
         resolved.HealthTimeout.ShouldBe(TimeSpan.FromSeconds(90));
         resolved.AutoApprove.ShouldBeTrue();
+        resolved.AllowMutableTag.ShouldBeTrue();
+        resolved.RequireDigest.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Resolve_LeavesMutableTagsAndDigestsToTheDefaults()
+    {
+        var resolved = DeployifyDeployStep.Resolve(new DeployifyDeployOptions(), Section([]));
+
+        resolved.AllowMutableTag.ShouldBeFalse();
+        resolved.RequireDigest.ShouldBeFalse();
     }
 
     [Theory]
     [InlineData("Deployify:AutoApprove", "yes", "true or false")]
+    [InlineData("Deployify:RequireDigest", "on", "true or false")]
     [InlineData("Deployify:Target", "not a target!", "not a valid target ID")]
     [InlineData("Deployify:HealthTimeoutSeconds", "-5", "positive number")]
     public void Resolve_RejectsBadValues(string key, string value, string message)

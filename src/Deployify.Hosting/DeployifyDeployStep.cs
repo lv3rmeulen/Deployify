@@ -1,6 +1,7 @@
 using System;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Aspire.Hosting;
@@ -8,6 +9,7 @@ using Aspire.Hosting.Pipelines;
 using Deployify.Core.Deployments;
 using Deployify.Core.Models;
 using Deployify.Core.Rollouts;
+using Deployify.Core.Services;
 using Deployify.Plugins;
 using Deployify.Targets;
 using Microsoft.Extensions.Configuration;
@@ -53,15 +55,19 @@ internal static class DeployifyDeployStep
             Reporter = reporter
         }, ct);
 
-        if (options.ImageTag is { Length: > 0 } tag)
-        {
-            session.Config.ImageTag = tag;
-        }
-
         reporter.Info($"Environment: {session.EnvName}  Target: {session.Target.DisplayName} ({session.DisplayAddress})");
 
         var manifest = await session.LoadManifestAsync(ct)
             ?? throw new InvalidOperationException("Deployify could not load the Aspire manifest; see the errors above.");
+
+        // The tag is settled before the plan, so the plan and the published images use it.
+        var publishes = options.Publish && manifest.Resources.Values.Any(r => r.IsBuiltImage);
+        var tag = await ImageTagPolicy.ApplyAsync(session.Config, options.ImageTag, publishes, options.AllowMutableTag,
+            session.AppHostDirectory, ct: ct);
+        if (!ReportImageTag(tag, reporter))
+        {
+            throw new InvalidOperationException($"Deployify deploy to '{session.EnvName}' stopped: see the image tag error above.");
+        }
 
         var interaction = context.Services.GetService<IInteractionService>();
         var autoApprove = options.AutoApprove || pipelineOptions.SkipConfirmation;
@@ -70,6 +76,7 @@ internal static class DeployifyDeployStep
             Publish = options.Publish,
             HealthGate = options.HealthGate,
             Strict = options.Strict,
+            RequireDigest = options.RequireDigest,
             Rollout = new RolloutOptions
             {
                 AutoRollback = options.AutoRollback,
@@ -123,6 +130,40 @@ internal static class DeployifyDeployStep
         return !result.Canceled && result.Data;
     }
 
+    /// <summary>
+    /// Reports the image tag the deploy uses, worded for <c>aspire deploy</c> settings. Returns
+    /// false when the deploy must stop.
+    /// </summary>
+    internal static bool ReportImageTag(ImageTagDecision decision, IDeploymentReporter reporter)
+    {
+        var shown = decision.Tag.Length == 0 ? "(none)" : decision.Tag;
+        switch (decision.Outcome)
+        {
+            case ImageTagOutcome.NotPublishing:
+                return true;
+            case ImageTagOutcome.Immutable:
+                reporter.Info($"Image tag: {decision.Tag}");
+                return true;
+            case ImageTagOutcome.CommitSha:
+                reporter.Info($"Image tag: {decision.Tag} (commit SHA from {decision.CommitSource})");
+                return true;
+            case ImageTagOutcome.MutableAllowed:
+                reporter.Warn($"Publishing with the mutable tag {shown}" +
+                              (decision.Reason is null ? "" : $" ({decision.Reason})") +
+                              ": a rollback can't restore the previous image.");
+                return true;
+            case ImageTagOutcome.MutableOverrideRefused:
+                reporter.Error($"Deployify:ImageTag {shown} is overwritten by every build, so a rollback can't restore " +
+                               "the previous image. Use a tag that is unique to this build, or set Deployify:AllowMutableTag=true.");
+                return false;
+            default:
+                reporter.Error($"aspire deploy publishes images, but the image tag is {shown} and no commit SHA is available: " +
+                               $"{decision.Reason}. Set Deployify:ImageTag (environment variable Deployify__ImageTag), or " +
+                               $"Deployify:AllowMutableTag=true to publish {shown} anyway.");
+                return false;
+        }
+    }
+
     /// <summary>Code settings, overridden by whatever configuration under Deployify: sets.</summary>
     internal static DeployifyDeployOptions Resolve(DeployifyDeployOptions code, IConfiguration section)
     {
@@ -146,6 +187,8 @@ internal static class DeployifyDeployStep
                     ? TimeSpan.FromSeconds(s)
                     : throw new InvalidOperationException($"Deployify:HealthTimeoutSeconds '{seconds}' is not a positive number of seconds.")
                 : code.HealthTimeout,
+            AllowMutableTag = Bool(section, "AllowMutableTag") ?? code.AllowMutableTag,
+            RequireDigest = Bool(section, "RequireDigest") ?? code.RequireDigest,
             AutoApprove = Bool(section, "AutoApprove") ?? code.AutoApprove,
             Strict = Bool(section, "Strict") ?? code.Strict,
             AllowUnverifiedPlugins = Bool(section, "AllowUnverifiedPlugins") ?? code.AllowUnverifiedPlugins

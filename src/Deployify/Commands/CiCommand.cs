@@ -319,55 +319,36 @@ public static class CiCommand
         EnvironmentConfig config, string? tagOverride, bool publishes, bool allowMutableTag, string directory,
         CancellationToken ct, Func<string, string?>? getEnvironmentVariable = null, IProcessRunner? runner = null)
     {
-        if (!string.IsNullOrWhiteSpace(tagOverride))
+        var decision = await ImageTagPolicy.ApplyAsync(
+            config, tagOverride, publishes, allowMutableTag, directory, getEnvironmentVariable, runner, ct);
+        var shown = decision.Tag.Length == 0 ? "(none)" : decision.Tag;
+        switch (decision.Outcome)
         {
-            config.ImageTag = tagOverride.Trim();
-        }
-
-        if (!publishes)
-        {
-            return true;
-        }
-
-        if (!ImageTagCheck.IsMutableTag(config.ImageTag))
-        {
-            AnsiConsole.MarkupLineInterpolated($"[dim]Image tag: {config.ImageTag}[/]");
-            return true;
-        }
-
-        var shown = string.IsNullOrWhiteSpace(config.ImageTag) ? "(none)" : config.ImageTag;
-        if (!string.IsNullOrWhiteSpace(tagOverride))
-        {
-            if (allowMutableTag)
-            {
+            case ImageTagOutcome.NotPublishing:
+                return true;
+            case ImageTagOutcome.Immutable:
+                AnsiConsole.MarkupLineInterpolated($"[dim]Image tag: {decision.Tag}[/]");
+                return true;
+            case ImageTagOutcome.CommitSha:
+                AnsiConsole.MarkupLineInterpolated($"[dim]Image tag: {decision.Tag} (commit SHA from {decision.CommitSource})[/]");
+                return true;
+            case ImageTagOutcome.MutableAllowed when decision.FromOverride:
                 AnsiConsole.MarkupLineInterpolated(
                     $"[yellow]![/] Publishing with the mutable tag [cyan]{shown}[/]: a rollback can't restore the previous image.");
                 return true;
-            }
-
-            AnsiConsole.MarkupLineInterpolated(
-                $"[red]✗[/] --image-tag {shown} is overwritten by every build, so a rollback can't restore the previous image. Use a tag that is unique to this build, or add --allow-mutable-tag.");
-            return false;
+            case ImageTagOutcome.MutableAllowed:
+                AnsiConsole.MarkupLineInterpolated(
+                    $"[yellow]![/] Publishing with the mutable tag [cyan]{shown}[/] ({decision.Reason}): a rollback can't restore the previous image.");
+                return true;
+            case ImageTagOutcome.MutableOverrideRefused:
+                AnsiConsole.MarkupLineInterpolated(
+                    $"[red]✗[/] --image-tag {shown} is overwritten by every build, so a rollback can't restore the previous image. Use a tag that is unique to this build, or add --allow-mutable-tag.");
+                return false;
+            default:
+                AnsiConsole.MarkupLineInterpolated(
+                    $"[red]✗[/] ci publishes images, but the image tag is [cyan]{shown}[/] and no commit SHA is available: {decision.Reason}. Pass [cyan]--image-tag <tag>[/], or [cyan]--allow-mutable-tag[/] to publish {shown} anyway.");
+                return false;
         }
-
-        var (commit, reason) = await CommitImageTag.ResolveAsync(directory, getEnvironmentVariable, runner, ct);
-        if (commit is not null)
-        {
-            config.ImageTag = commit.Tag;
-            AnsiConsole.MarkupLineInterpolated($"[dim]Image tag: {commit.Tag} (commit SHA from {commit.Source})[/]");
-            return true;
-        }
-
-        if (allowMutableTag)
-        {
-            AnsiConsole.MarkupLineInterpolated(
-                $"[yellow]![/] Publishing with the mutable tag [cyan]{shown}[/] ({reason}): a rollback can't restore the previous image.");
-            return true;
-        }
-
-        AnsiConsole.MarkupLineInterpolated(
-            $"[red]✗[/] ci publishes images, but the image tag is [cyan]{shown}[/] and no commit SHA is available: {reason}. Pass [cyan]--image-tag <tag>[/], or [cyan]--allow-mutable-tag[/] to publish {shown} anyway.");
-        return false;
     }
 
     /// <summary>

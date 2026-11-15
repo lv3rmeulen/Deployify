@@ -49,7 +49,9 @@ Set in code, or per run through configuration under `Deployify:` (environment va
 | `ProjectPath` | `Deployify:ProjectPath` | AppHost directory (state file searched upward) |
 | `Target` | `Deployify:Target` | the environment's target |
 | `Publish` | `Deployify:Publish` | `true` — Deployify builds and pushes project images |
-| `ImageTag` | `Deployify:ImageTag` | the environment's `ImageTag` |
+| `ImageTag` | `Deployify:ImageTag` | the environment's `ImageTag`; when that is `latest` (or empty) and the run publishes, the commit SHA, as with `deployify ci` |
+| `AllowMutableTag` | `Deployify:AllowMutableTag` | `false`; when `true`, a run that publishes may use `latest` when no commit SHA is available, or when `ImageTag` asks for it, instead of stopping |
+| `RequireDigest` | `Deployify:RequireDigest` | `false`; when `true` and the run doesn't publish, a built image with no published digest for its tag stops the run instead of being deployed by tag |
 | `HealthGate` | `Deployify:HealthGate` | `true` |
 | `AutoRollback` | `Deployify:AutoRollback` | `true` |
 | `HealthTimeout` | `Deployify:HealthTimeoutSeconds` | 10 minutes |
@@ -62,7 +64,26 @@ builder.AddDeployify(configure: o =>
 {
     o.Environment = "prod";
     o.Publish = false;      // images are built elsewhere
+    o.RequireDigest = true; // and must be pinned by digest
 });
+```
+
+### Image tags
+
+A run that publishes tags its images the way `deployify ci` does: `ImageTag` wins, and a tag of
+`latest` (or no tag) is replaced with the commit SHA, from the CI system's commit variable
+(`GITHUB_SHA` and the like) or from `git` when the working tree is clean. Every build then pushes
+a new image, so a rollback can return to the previous one. With no SHA available the run stops;
+set `ImageTag`, or `AllowMutableTag` to publish `latest` anyway.
+
+A run that doesn't publish deploys the tag it's given. With `RequireDigest`, each built image must
+have a digest recorded for that tag in this environment, by `deployify publish` or
+`deployify promote`, and is deployed by that digest:
+
+```bash
+deployify publish --image-tag "$GITHUB_SHA"
+Deployify__Publish=false Deployify__ImageTag="$GITHUB_SHA" Deployify__RequireDigest=true \
+  Deployify__AutoApprove=true aspire deploy --non-interactive
 ```
 
 ## Notes

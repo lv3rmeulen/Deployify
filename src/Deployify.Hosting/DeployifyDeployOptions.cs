@@ -31,8 +31,28 @@ public sealed class DeployifyDeployOptions
     /// </summary>
     public bool Publish { get; set; } = true;
 
-    /// <summary>Overrides the image tag for this deploy (key <c>Deployify:ImageTag</c>).</summary>
+    /// <summary>
+    /// Overrides the image tag for this deploy (key <c>Deployify:ImageTag</c>). Without it, a
+    /// deploy that publishes images replaces a configured tag of "latest" (or no tag) with the
+    /// commit SHA, like <c>deployify ci</c>, so a rollback can return to the previous image.
+    /// </summary>
     public string? ImageTag { get; set; }
+
+    /// <summary>
+    /// Publish with "latest" (or no tag) when no commit SHA is available, or when
+    /// <see cref="ImageTag"/> asks for "latest" (key <c>Deployify:AllowMutableTag</c>), like
+    /// <c>deployify ci --allow-mutable-tag</c>. Off: such a deploy stops, because a rollback
+    /// couldn't restore the previous image.
+    /// </summary>
+    public bool AllowMutableTag { get; set; }
+
+    /// <summary>
+    /// Stop instead of deploying a built image by tag when no published digest is recorded for
+    /// it (key <c>Deployify:RequireDigest</c>), like <c>deployify ci --require-digest</c>.
+    /// Checked when this deploy doesn't publish (<see cref="Publish"/> off): the images must have
+    /// been published to this environment, or promoted to it with <c>deployify promote</c>.
+    /// </summary>
+    public bool RequireDigest { get; set; }
 
     /// <summary>
     /// Use a health-gated rollout with automatic rollback when the target supports one

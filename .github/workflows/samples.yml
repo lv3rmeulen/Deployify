@@ -133,8 +133,16 @@ jobs:
     defaults:
       run:
         working-directory: samples/aspire-deploy/AspireDeploy.AppHost
+    # Images go through a registry, so publishing records digests that the deploy can require.
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
     env:
       DEPLOYIFY: dotnet ${{ github.workspace }}/src/Deployify/bin/Release/net10.0/deployify.dll
+      # The .NET SDK pushes to the job's registry over plain HTTP.
+      DOTNET_CONTAINER_INSECURE_REGISTRIES: localhost:5000
     steps:
       - uses: actions/checkout@v6
         with:
@@ -152,11 +160,35 @@ jobs:
         working-directory: .
         run: dotnet build src/Deployify/Deployify.csproj -c Release
 
+      - name: Use the job's registry
+        run: |
+          jq '.Environments.local.ContainerRegistry = "localhost:5000"' deployify-state.json > deployify-state.tmp
+          mv deployify-state.tmp deployify-state.json
+
+      # Built elsewhere than aspire deploy, as in a pipeline that builds once and deploys later.
+      - name: Publish the images with the commit tag
+        run: $DEPLOYIFY publish --image-tag ${{ github.sha }}
+
       - name: aspire deploy
         run: aspire deploy --non-interactive
         env:
           Deployify__AutoApprove: 'true'
           Deployify__HealthTimeoutSeconds: '180'
+          Deployify__Publish: 'false'
+          Deployify__ImageTag: ${{ github.sha }}
+          Deployify__RequireDigest: 'true'
+
+      - name: The api runs the commit's image, pinned by digest
+        run: |
+          image=$(docker ps --filter label=com.docker.compose.project=aspire-deploy-sample \
+            --filter label=com.docker.compose.service=api --format '{{.Image}}')
+          echo "api image: $image"
+          case "$image" in
+            localhost:5000/api@sha256:*) ;;
+            *) echo "::error::The api is not running localhost:5000/api by digest: '$image'"; exit 1 ;;
+          esac
+          curl -fsS http://localhost:5000/v2/api/tags/list | tee /dev/stderr | grep -q '"${{ github.sha }}"' \
+            || { echo "::error::The registry has no api image tagged ${{ github.sha }}"; exit 1; }
 
       - name: Smoke test
         run: |
