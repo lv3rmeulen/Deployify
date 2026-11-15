@@ -19,7 +19,7 @@ namespace Deployify.Commands;
 /// Zips the published build output for each project service and uploads the zip
 /// to the configured artifact store. The artifact URL is written back to
 /// <c>deployify-state.json</c> so the next <c>generate</c>/<c>plan</c> picks it up
-/// and emits the correct <c>artifact { source = "..." }</c> block in the HCL.
+/// and adds the artifact that downloads it to the Nomad job.
 ///
 /// Only applicable when the active environment targets Nomad with
 /// <c>deploymentMode: RawExec</c> and an <c>artifactStore</c> is configured.
@@ -179,7 +179,7 @@ public static class PackageCommand
                     // Write artifact URLs back into state so generate/plan picks them up
                     await WriteArtifactUrlsToStateAsync(directory, envName, uploadedUrls, config, ct);
                     AnsiConsole.MarkupLine("\n[green]✓[/] Artifact URLs saved to deployify-state.json.");
-                    AnsiConsole.MarkupLine("[dim]Run [cyan]deployify generate[/] or [cyan]deployify plan[/] to update the HCL.[/]");
+                    AnsiConsole.MarkupLine("[dim]Run [cyan]deployify generate[/] or [cyan]deployify plan[/] to update the job files.[/]");
                 }
             }
             finally

@@ -35,6 +35,8 @@
 
   <ItemGroup>
     <Compile Include="..\Shared\FakeProcessRunner.cs" Link="Shared\FakeProcessRunner.cs" />
+    <Compile Include="..\Shared\Snapshot.cs" Link="Shared\Snapshot.cs" />
+    <Compile Include="..\Shared\NomadJobJson.cs" Link="Shared\NomadJobJson.cs" />
   </ItemGroup>
 
 </Project>

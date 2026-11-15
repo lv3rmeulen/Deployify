@@ -3,6 +3,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
+using Deployify.Tests.Shared;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Shouldly;
@@ -35,7 +36,7 @@ public sealed class NomadConsulDeploymentTargetTests
     // ── GenerateAsync ─────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task GenerateAsync_WritesOneHclFilePerService()
+    public async Task GenerateAsync_WritesOneJobFilePerService()
     {
         using var dir = new Fixtures.TempDir();
         var paths = await Target().GenerateAsync(
@@ -49,7 +50,7 @@ public sealed class NomadConsulDeploymentTargetTests
     }
 
     [Fact]
-    public async Task GenerateAsync_FilesEndWith_JobHcl()
+    public async Task GenerateAsync_FilesEndWith_NomadJson()
     {
         using var dir = new Fixtures.TempDir();
         var paths = await Target().GenerateAsync(
@@ -57,7 +58,7 @@ public sealed class NomadConsulDeploymentTargetTests
 
         foreach (var p in paths)
         {
-            p.ShouldEndWith(".job.hcl");
+            p.ShouldEndWith(".nomad.json");
         }
     }
 
@@ -67,44 +68,44 @@ public sealed class NomadConsulDeploymentTargetTests
         using var dir = new Fixtures.TempDir();
         await Target().GenerateAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), dir.Path, TestContext.Current.CancellationToken);
 
-        var files = Directory.GetFiles(dir.Path, "*.job.hcl")
+        var files = Directory.GetFiles(dir.Path, "*.nomad.json")
             .Select(Path.GetFileName).ToList();
-        files.ShouldContain("api.job.hcl");
-        files.ShouldContain("worker.job.hcl");
-        files.ShouldContain("redis.job.hcl");
+        files.ShouldContain("api.nomad.json");
+        files.ShouldContain("worker.nomad.json");
+        files.ShouldContain("redis.nomad.json");
     }
 
     [Fact]
-    public async Task GenerateAsync_HclFiles_ContainBridgeNetworkMode()
+    public async Task GenerateAsync_JobFiles_ContainBridgeNetworkMode()
     {
         using var dir = new Fixtures.TempDir();
         await Target().GenerateAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), dir.Path, TestContext.Current.CancellationToken);
 
-        foreach (var file in Directory.GetFiles(dir.Path, "*.job.hcl"))
+        foreach (var file in Directory.GetFiles(dir.Path, "*.nomad.json"))
         {
-            (await File.ReadAllTextAsync(file, TestContext.Current.CancellationToken)).ShouldContain("mode = \"bridge\"");
+            ((string?)(await NomadJobJson.ReadAsync(file)).Network!["Mode"]).ShouldBe("bridge");
         }
     }
 
     [Fact]
-    public async Task GenerateAsync_HclFiles_ContainConnectBlock()
+    public async Task GenerateAsync_JobFiles_ContainConnectBlock()
     {
         using var dir = new Fixtures.TempDir();
         // Only services with ports get a service+connect block; api has port 8080
         await Target().GenerateAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), dir.Path, TestContext.Current.CancellationToken);
 
-        var apiHcl = await File.ReadAllTextAsync(Path.Combine(dir.Path, "api.job.hcl"), TestContext.Current.CancellationToken);
-        apiHcl.ShouldContain("connect {");
+        var api = await NomadJobJson.ReadAsync(Path.Combine(dir.Path, "api.nomad.json"));
+        api.Service!["Connect"]!["SidecarService"].ShouldNotBeNull();
     }
 
     [Fact]
-    public async Task GenerateAsync_WorkerHcl_ContainsUpstreamForApi()
+    public async Task GenerateAsync_WorkerJob_ContainsUpstreamForApi()
     {
         using var dir = new Fixtures.TempDir();
         await Target().GenerateAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), dir.Path, TestContext.Current.CancellationToken);
 
-        var workerHcl = await File.ReadAllTextAsync(Path.Combine(dir.Path, "worker.job.hcl"), TestContext.Current.CancellationToken);
-        workerHcl.ShouldContain("destination_name = \"api\"");
+        var worker = await NomadJobJson.ReadAsync(Path.Combine(dir.Path, "worker.nomad.json"));
+        ((string?)worker.Service!["Connect"]!["SidecarService"]!["Proxy"]!["Upstreams"]![0]!["DestinationName"]).ShouldBe("api");
     }
 
     [Fact]
@@ -115,7 +116,7 @@ public sealed class NomadConsulDeploymentTargetTests
         await target.GenerateAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), dir.Path, TestContext.Current.CancellationToken);
         await target.GenerateAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), dir.Path, TestContext.Current.CancellationToken);
 
-        Directory.GetFiles(dir.Path, "*.job.hcl").Length.ShouldBe(3);
+        Directory.GetFiles(dir.Path, "*.nomad.json").Length.ShouldBe(3);
     }
 
     // ── ValidateAsync ─────────────────────────────────────────────────────────
@@ -131,7 +132,7 @@ public sealed class NomadConsulDeploymentTargetTests
     }
 
     [Fact]
-    public async Task ValidateAsync_ArtifactNames_EndWith_JobHcl()
+    public async Task ValidateAsync_ArtifactNames_EndWith_NomadJson()
     {
         using var dir = new Fixtures.TempDir();
         var results = await Target().ValidateAsync(
@@ -139,7 +140,7 @@ public sealed class NomadConsulDeploymentTargetTests
 
         foreach (var r in results)
         {
-            r.ArtifactName.ShouldEndWith(".job.hcl");
+            r.ArtifactName.ShouldEndWith(".nomad.json");
         }
     }
 
@@ -158,13 +159,13 @@ public sealed class NomadConsulDeploymentTargetTests
     // ── PlanAsync ─────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task PlanAsync_WritesHclFilesBeforeQueryingCluster()
+    public async Task PlanAsync_WritesJobFilesBeforeQueryingCluster()
     {
         using var dir = new Fixtures.TempDir();
         // Nomad unreachable — plan catches the error and assumes all-new
         await Target().PlanAsync(Fixtures.SimpleManifest(), Fixtures.EnvConfig(), dir.Path, TestContext.Current.CancellationToken);
 
-        Directory.GetFiles(dir.Path, "*.job.hcl").Length.ShouldBe(3);
+        Directory.GetFiles(dir.Path, "*.nomad.json").Length.ShouldBe(3);
     }
 
     [Fact]
@@ -203,7 +204,7 @@ public sealed class NomadConsulDeploymentTargetTests
     }
 
     [Fact]
-    public async Task ApplyAsync_ReturnsFailure_WithClearMessage_WhenHclFileMissing()
+    public async Task ApplyAsync_ReturnsFailure_WithClearMessage_WhenJobFileMissing()
     {
         using var dir = new Fixtures.TempDir();
         var results = await Target().ApplyAsync(
@@ -217,7 +218,7 @@ public sealed class NomadConsulDeploymentTargetTests
     }
 
     [Fact]
-    public async Task ApplyAsync_AfterPlan_FindsHclFilesOnDisk()
+    public async Task ApplyAsync_AfterPlan_FindsJobFilesOnDisk()
     {
         using var dir = new Fixtures.TempDir();
         var target = Target();

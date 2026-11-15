@@ -1,0 +1,72 @@
+{
+  "FormatVersion": 1,
+  "ActiveEnvironment": "prod",
+  "Environments": {
+    "prod": {
+      "Target": "NomadConsul",
+      "ImageTag": "latest",
+      "OutputPath": "deployify-output",
+      "ServiceOverrides": {},
+      "IgnoreResources": [],
+      "Parameters": {},
+      "ContainerRuntime": "Docker",
+      "DeployDashboard": false,
+      "Dashboard": {
+        "ImageTag": "latest",
+        "Port": 18888,
+        "OtlpPort": 18889,
+        "Cpu": "100m",
+        "Memory": "128Mi"
+      },
+      "AppHostPath": "<dir>",
+      "ContainerOs": "linux",
+      "ContainerArch": "x64",
+      "DeployDapr": false,
+      "Dapr": {
+        "DaprVersion": "latest",
+        "DaprHttpPort": 3500,
+        "DaprGrpcPort": 50001,
+        "LogLevel": "info"
+      },
+      "Secrets": {
+        "Backend": "Inline",
+        "Vault": {
+          "Mount": "secret",
+          "PathPrefix": "deployify",
+          "AuthMount": "kubernetes",
+          "ManageAuth": true,
+          "SecretsFileName": "appsettings.secrets.json",
+          "AgentAnnotations": {}
+        },
+        "KeyVault": {
+          "KubernetesIdentity": "WorkloadIdentity"
+        },
+        "References": {}
+      },
+      "TargetConfig": {
+        "nomadconsul": {
+          "NomadAddress": "http://localhost:4646",
+          "NomadNamespace": "default",
+          "Datacenters": [
+            "dc1"
+          ],
+          "ConsulAddress": "http://localhost:8500",
+          "UpstreamBasePort": 20000,
+          "EnableIngressGateway": false,
+          "IngressGatewayName": "ingress-gateway",
+          "DefaultCpu": 256,
+          "DefaultMemory": 256,
+          "RegisterServices": true,
+          "HealthCheckType": "tcp",
+          "AutoRevert": true,
+          "BasePort": 8080,
+          "HealthCheckPath": "/health",
+          "HealthCheckInterval": "10s",
+          "HealthCheckTimeout": "2s"
+        }
+      },
+      "Protected": false,
+      "Prune": false
+    }
+  }
+}

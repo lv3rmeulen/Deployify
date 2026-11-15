@@ -3,6 +3,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Deployify.Core.Models;
+using Deployify.Tests.Shared;
 using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
 using Xunit;
@@ -51,22 +52,23 @@ public sealed class NomadSecretTests
     }
 
     [Fact]
-    public async Task Hcl_HasTemplateAndNoSecret()
+    public async Task Job_HasTemplateAndNoSecret()
     {
         using var dir = new TempDir();
         var config = Config();
         var api = (await _sut.GenerateAsync(Manifest(), config, TestContext.Current.CancellationToken)).Single(j => j.Name == "api");
 
-        var hcl = await File.ReadAllTextAsync(await _sut.WriteHclAsync(api, config, dir.Path, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
+        var file = await NomadJobJson.ReadAsync(await _sut.WriteJobAsync(api, config, dir.Path, TestContext.Current.CancellationToken));
 
-        hcl.ShouldNotContain(Secret);
-        hcl.ShouldContain("template {");
-        hcl.ShouldContain("nomadVar \\\"nomad/jobs/api\\\"");
-        hcl.ShouldContain("ConnectionStrings__db={{ index . \\\"ConnectionStrings__db\\\" | replaceAll \\\"@@deployify-svc:pg@@\\\" $svc0 }}");
-        hcl.ShouldContain("env         = true");
-        hcl.ShouldContain("destination = \"secrets/deployify.env\"");
-        hcl.ShouldContain("\"PLAIN\" = \"hello\"");
-        hcl.ShouldNotContain("\"ConnectionStrings__db\" =");
+        file.Text.ShouldNotContain(Secret);
+        var template = file.Template().ShouldNotBeNull();
+        var data = (string)template["EmbeddedTmpl"]!;
+        data.ShouldContain("nomadVar \"nomad/jobs/api\"");
+        data.ShouldContain("ConnectionStrings__db={{ index . \"ConnectionStrings__db\" | replaceAll \"@@deployify-svc:pg@@\" $svc0 }}");
+        ((bool?)template["Envvars"]).ShouldBe(true);
+        ((string?)template["DestPath"]).ShouldBe("secrets/deployify.env");
+        ((string?)file.Env()!["PLAIN"]).ShouldBe("hello");
+        file.Env()!.ContainsKey("ConnectionStrings__db").ShouldBeFalse();
     }
 
     [Fact]
@@ -79,15 +81,16 @@ public sealed class NomadSecretTests
     }
 
     [Fact]
-    public async Task Hcl_WithoutSecrets_HasNoTemplate()
+    public async Task Job_WithoutSecrets_HasNoTemplate()
     {
         using var dir = new TempDir();
         var config = Fixtures.NomadConfig();
         var job = (await _sut.GenerateAsync(Fixtures.SingleService(), config, TestContext.Current.CancellationToken))[0];
 
-        var hcl = await File.ReadAllTextAsync(await _sut.WriteHclAsync(job, config, dir.Path, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
+        var file = await NomadJobJson.ReadAsync(await _sut.WriteJobAsync(job, config, dir.Path, TestContext.Current.CancellationToken));
 
-        hcl.ShouldNotContain("nomadVar");
+        file.Template().ShouldBeNull();
+        file.Text.ShouldNotContain("nomadVar");
     }
 
     [Fact]

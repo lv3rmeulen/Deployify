@@ -30,6 +30,10 @@
     <!-- Pinned: Deployify.Hosting builds on Aspire's experimental pipeline APIs (ASPIREPIPELINES001). -->
     <PackageVersion Include="Aspire.Hosting" Version="13.6.5" />
   </ItemGroup>
+  <ItemGroup Label="Kubernetes">
+    <!-- Writes the Kubernetes target's manifests from typed models. -->
+    <PackageVersion Include="YamlDotNet" Version="18.1.0" />
+  </ItemGroup>
   <ItemGroup Label="Resource server">
     <!-- Serves Aspire's dashboard_service.proto (src/Deployify.ResourceServer/Protos). -->
     <PackageVersion Include="Grpc.AspNetCore" Version="2.85.0" />

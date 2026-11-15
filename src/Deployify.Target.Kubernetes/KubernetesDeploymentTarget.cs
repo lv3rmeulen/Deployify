@@ -893,12 +893,7 @@ public sealed class KubernetesDeploymentTarget(
     }
 
     private static (string Kind, string ApiVersion, string Name, string? Ns) ExtractMeta(string yaml)
-    {
-        var lines = yaml.Split('\n');
-        string Get(string key) => lines.FirstOrDefault(l => l.StartsWith(key + ":"))?.Split(':', 2).Last().Trim() ?? "";
-        string GetInMeta(string key) => lines.SkipWhile(l => !l.TrimStart().StartsWith(key + ":")).FirstOrDefault()?.Split(':', 2).Last().Trim() ?? "";
-        return (Get("kind"), Get("apiVersion"), GetInMeta("name"), GetInMeta("namespace") is "" or null ? null : GetInMeta("namespace"));
-    }
+        => Manifests.KubernetesYaml.ReadMetadata(yaml);
 
     internal static KubernetesTargetConfig GetConfig(EnvironmentConfig config)
     {

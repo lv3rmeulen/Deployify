@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pg
+  namespace: shop-pg
+  labels:
+    app: pg
+    app.kubernetes.io/managed-by: deployify
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: pg
+  template:
+    metadata:
+      labels:
+        app: pg
+    spec:
+      containers:
+        - name: pg
+          image: "postgres:17"
+          imagePullPolicy: Always
+          ports:
+            - name: tcp
+              containerPort: 5432
+              protocol: TCP
+          envFrom:
+            - secretRef:
+                name: pg-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            tcpSocket:
+              port: tcp
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            tcpSocket:
+              port: tcp
+            initialDelaySeconds: 5
+            periodSeconds: 10

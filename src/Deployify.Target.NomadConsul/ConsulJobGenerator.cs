@@ -1,26 +1,27 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Expressions;
 using Deployify.Core.Models;
 using Deployify.Target.Nomad;
+using Deployify.Target.Nomad.Api;
 using Microsoft.Extensions.Logging;
 
 namespace Deployify.Target.NomadConsul;
 
 /// <summary>
-/// Converts an Aspire manifest into Nomad HCL job files that use Consul Connect
+/// Converts an Aspire manifest into Nomad job files (the job API's JSON) that use Consul Connect
 /// service mesh for all inter-service communication.
 ///
 /// Key conventions:
-/// - Every job uses <c>network { mode = "bridge" }</c> (required by Connect).
+/// - Every job uses a bridge network (required by Connect).
 /// - Each service registers one port with Consul (its HTTP binding when it has one).
-/// - Dependencies become <c>upstreams</c> inside <c>sidecar_service</c>, each bound to
+/// - Dependencies become upstreams of the Connect sidecar service, each bound to
 ///   an incrementing loopback port, and Aspire placeholders such as
 ///   <c>{api.bindings.http.url}</c> resolve to <c>http://localhost:&lt;upstream port&gt;</c>.
 /// - Upstream addresses are also injected as <c>NOMAD_UPSTREAM_ADDR_&lt;NAME&gt;</c>.
@@ -187,286 +188,205 @@ public sealed class ConsulJobGenerator(ILogger<ConsulJobGenerator> logger)
         return jobs;
     }
 
-    // ── HCL writing ───────────────────────────────────────────────────────────
-
-    public async Task<string> WriteHclAsync(
+    /// <summary>Writes <c>{job}.nomad.json</c> to <paramref name="outputDirectory"/> and returns its path.</summary>
+    public async Task<string> WriteJobAsync(
         ConsulJob job,
         EnvironmentConfig config,
         NomadConsulTargetConfig consulCfg,
         string outputDirectory,
         CancellationToken ct = default)
     {
-        Directory.CreateDirectory(outputDirectory);
-        var filePath = Path.Combine(outputDirectory, $"{job.Name}.job.hcl");
-        await File.WriteAllTextAsync(filePath, RenderHcl(job, config, consulCfg), new UTF8Encoding(false), ct);
-        job.HclPath = filePath;
-        logger.LogDebug("Written Consul Connect HCL to '{FilePath}'.", filePath);
+        var filePath = await NomadJobFile.WriteAsync(BuildJob(job, config, consulCfg), outputDirectory, ct);
+        job.JobFilePath = filePath;
+        logger.LogDebug("Written Consul Connect job to '{FilePath}'.", filePath);
         return filePath;
     }
 
-    // ── HCL renderer ──────────────────────────────────────────────────────────
+    // ── Job spec ──────────────────────────────────────────────────────────────
 
-    internal static string RenderHcl(ConsulJob job, EnvironmentConfig config, NomadConsulTargetConfig cfg)
+    internal static NomadApiJob BuildJob(ConsulJob job, EnvironmentConfig config, NomadConsulTargetConfig cfg)
     {
-        var sb = new StringBuilder();
-        var dcs = string.Join(", ", cfg.Datacenters.Select(Hcl.Quote));
         var driver = config.ContainerRuntime == ContainerRuntime.Podman ? "podman" : "docker";
-
-        sb.AppendLine($"job {Hcl.Quote(job.Name)} {{");
-        sb.AppendLine($"  namespace = {Hcl.Quote(cfg.NomadNamespace)}");
-        sb.AppendLine($"  datacenters = [{dcs}]");
-        sb.AppendLine("  type = \"service\"");
-        sb.AppendLine();
-        sb.AppendLine("  meta = {");
-        sb.AppendLine($"    {Hcl.Quote(NomadClient.ManagedMetaKey)} = \"true\"");
-        sb.AppendLine("  }");
-        sb.AppendLine();
-        sb.AppendLine($"  group {Hcl.Quote(job.Name)} {{");
-        sb.AppendLine($"    count = {job.Count}");
-        sb.AppendLine();
-
-        if (job.IsIngressGateway)
+        return new NomadApiJob
         {
-            RenderIngressGateway(sb, job);
-        }
-        else
-        {
-            RenderService(sb, job, config, cfg, driver);
-        }
-
-        sb.AppendLine("  }");
-        sb.AppendLine("}");
-        return sb.ToString();
+            Id = job.Name,
+            Name = job.Name,
+            Namespace = cfg.NomadNamespace,
+            Datacenters = [.. cfg.Datacenters],
+            Meta = new Dictionary<string, string>(StringComparer.Ordinal) { [NomadClient.ManagedMetaKey] = "true" },
+            TaskGroups = [job.IsIngressGateway ? IngressGatewayGroup(job) : ServiceGroup(job, config, cfg, driver)]
+        };
     }
 
-    private static void RenderService(
-        StringBuilder sb, ConsulJob job, EnvironmentConfig config, NomadConsulTargetConfig cfg, string driver)
+    private static NomadTaskGroup ServiceGroup(
+        ConsulJob job, EnvironmentConfig config, NomadConsulTargetConfig cfg, string driver)
     {
-        sb.AppendLine("    update {");
-        sb.AppendLine("      min_healthy_time = \"30s\"");
-        sb.AppendLine("      healthy_deadline = \"10m\"");
-        sb.AppendLine("      progress_deadline = \"15m\"");
-        sb.AppendLine($"      auto_revert = {(cfg.AutoRevert ? "true" : "false")}");
-        sb.AppendLine("    }");
-        sb.AppendLine();
+        var tasks = new List<NomadTask> { MainTask(job, config, cfg, driver) };
 
-        // ── network (bridge mode required for Connect) ─────────────────────
-        sb.AppendLine("    network {");
-        sb.AppendLine("      mode = \"bridge\"");
-        foreach (var port in job.Ports)
+        // Dapr sidecar task (bridge network: reaches the app on localhost).
+        if (job.DaprEnabled)
         {
-            sb.AppendLine($"      port {Hcl.Quote(port.Label)} {{ to = {port.ContainerPort} }}");
+            tasks.Add(DaprSidecar.Task(job.Name, job.DaprAppId, job.DaprAppPort, job.DaprHttpPort, job.DaprGrpcPort,
+                job.DaprVersion, config.Dapr, driver, hostNetwork: false));
         }
 
-        sb.AppendLine("    }");
-        sb.AppendLine();
-
-        // ── Consul service + Connect sidecar (one block per service) ───────
-        if (job.Ports.Count > 0 || job.Upstreams.Count > 0)
+        return new NomadTaskGroup
         {
-            sb.AppendLine("    service {");
-            sb.AppendLine($"      name = {Hcl.Quote(job.Name)}");
-            if (job.Ports.Count > 0)
-            {
-                // Connect proxies to the container port, so register the number itself.
-                sb.AppendLine($"      port = {Hcl.Quote(job.Ports[0].ContainerPort.ToString())}");
-            }
-
-            if (cfg.RegisterServices && job.Ports.Count > 0)
-            {
-                var servicePort = job.Ports[0];
-                var checkType = !servicePort.IsHttp ? "tcp" : cfg.HealthCheckType.ToLowerInvariant();
-                if (checkType != "none")
+            Name = job.Name,
+            Count = job.Count,
+            Update = JobGenerator.UpdateStrategy(cfg.AutoRevert),
+            // Bridge mode is required for Connect.
+            Networks =
+            [
+                new NomadNetwork
                 {
-                    sb.AppendLine();
-                    sb.AppendLine("      check {");
-                    sb.AppendLine($"        type = {Hcl.Quote(checkType == "http" ? "http" : "tcp")}");
-                    if (checkType == "http")
-                    {
-                        sb.AppendLine($"        path = {Hcl.Quote(cfg.HealthCheckPath)}");
-                        // Route the check through the sidecar so it works in bridge mode.
-                        sb.AppendLine("        expose = true");
-                    }
-                    else
-                    {
-                        sb.AppendLine($"        port = {Hcl.Quote(servicePort.Label)}");
-                    }
-
-                    sb.AppendLine($"        interval = {Hcl.Quote(cfg.HealthCheckInterval)}");
-                    sb.AppendLine($"        timeout = {Hcl.Quote(cfg.HealthCheckTimeout)}");
-                    sb.AppendLine();
-                    sb.AppendLine("        check_restart {");
-                    sb.AppendLine("          limit = 3");
-                    sb.AppendLine("          grace = \"30s\"");
-                    sb.AppendLine("        }");
-                    sb.AppendLine("      }");
+                    Mode = "bridge",
+                    DynamicPorts = job.Ports.Count > 0
+                        ? [.. job.Ports.Select(p => new NomadNetworkPort { Label = p.Label, To = p.ContainerPort })]
+                        : null
                 }
-            }
+            ],
+            // Consul service + Connect sidecar (one per service).
+            Services = job.Ports.Count > 0 || job.Upstreams.Count > 0 ? [Service(job, cfg)] : null,
+            Tasks = tasks
+        };
+    }
 
-            sb.AppendLine();
-            sb.AppendLine("      connect {");
-            sb.AppendLine("        sidecar_service {");
-            if (job.Upstreams.Count > 0)
+    private static NomadService Service(ConsulJob job, NomadConsulTargetConfig cfg)
+    {
+        NomadServiceCheck? check = null;
+        if (cfg.RegisterServices && job.Ports.Count > 0)
+        {
+            var servicePort = job.Ports[0];
+            var checkType = !servicePort.IsHttp ? "tcp" : cfg.HealthCheckType.ToLowerInvariant();
+            if (checkType != "none")
             {
-                sb.AppendLine("          proxy {");
-                foreach (var up in job.Upstreams)
+                var http = checkType == "http";
+                check = new NomadServiceCheck
                 {
-                    sb.AppendLine("            upstreams {");
-                    sb.AppendLine($"              destination_name = {Hcl.Quote(up.DestinationName)}");
-                    sb.AppendLine($"              local_bind_port = {up.LocalBindPort}");
-                    sb.AppendLine("            }");
-                }
-
-                sb.AppendLine("          }");
+                    Type = http ? "http" : "tcp",
+                    Path = http ? cfg.HealthCheckPath : null,
+                    // An HTTP check is routed through the sidecar so it works in bridge mode.
+                    Expose = http,
+                    PortLabel = http ? null : servicePort.Label,
+                    Interval = NomadDuration.Parse(cfg.HealthCheckInterval),
+                    Timeout = NomadDuration.Parse(cfg.HealthCheckTimeout),
+                    CheckRestart = JobGenerator.CheckRestart()
+                };
             }
-
-            sb.AppendLine("        }");
-            sb.AppendLine("      }");
-            sb.AppendLine("    }");
-            sb.AppendLine();
         }
 
-        // ── task ──────────────────────────────────────────────────────────
-        sb.AppendLine($"    task {Hcl.Quote(job.Name)} {{");
-        sb.AppendLine($"      driver = {Hcl.Quote(driver)}");
-        sb.AppendLine();
-        sb.AppendLine("      config {");
-        sb.AppendLine($"        image = {Hcl.Quote(ImageReference.Format(job.Image!, job.ImageTag))}");
+        return new NomadService
+        {
+            Name = job.Name,
+            // Connect proxies to the container port, so register the number itself.
+            PortLabel = job.Ports.Count > 0 ? job.Ports[0].ContainerPort.ToString(CultureInfo.InvariantCulture) : null,
+            Checks = check is null ? null : [check],
+            Connect = new NomadConsulConnect
+            {
+                SidecarService = new NomadSidecarService
+                {
+                    Proxy = job.Upstreams.Count > 0
+                        ? new NomadConsulProxy
+                        {
+                            Upstreams =
+                            [
+                                .. job.Upstreams.Select(u => new NomadConsulUpstream
+                                {
+                                    DestinationName = u.DestinationName,
+                                    LocalBindPort = u.LocalBindPort
+                                })
+                            ]
+                        }
+                        : null
+                }
+            }
+        };
+    }
+
+    private static NomadTask MainTask(ConsulJob job, EnvironmentConfig config, NomadConsulTargetConfig cfg, string driver)
+    {
+        var taskConfig = new Dictionary<string, object>(StringComparer.Ordinal)
+        {
+            ["image"] = ImageReference.Format(job.Image!, job.ImageTag)
+        };
         if (job.Args.Count > 0)
         {
-            sb.AppendLine($"        args = [{string.Join(", ", job.Args.Select(Hcl.Quote))}]");
+            taskConfig["args"] = job.Args.ToList();
         }
 
-        var registryPassword = Secrets.Resolve(cfg.RegistryPassword, "DEPLOYIFY_REGISTRY_PASSWORD");
-        if (cfg.RegistryUsername is not null && registryPassword is not null && !IsPublicRegistry(job.Image!))
+        if (JobGenerator.RegistryAuth(job.Image!, cfg.RegistryUsername, cfg.RegistryPassword, cfg.RegistryServer,
+                config.ContainerRegistry) is { } auth)
         {
-            var serverAddress = cfg.RegistryServer ?? DeriveServerAddress(job.Image!, config.ContainerRegistry);
-            sb.AppendLine("        auth {");
-            sb.AppendLine($"          username = {Hcl.Quote(cfg.RegistryUsername)}");
-            sb.AppendLine($"          password = {Hcl.Quote(Hcl.RegistryPasswordPlaceholder)}");
-            sb.AppendLine($"          server_address = {Hcl.Quote(serverAddress)}");
-            sb.AppendLine("        }");
+            taskConfig["auth"] = auth;
         }
 
         if (job.Ports.Count > 0)
         {
-            sb.AppendLine($"        ports = [{string.Join(", ", job.Ports.Select(p => Hcl.Quote(p.Label)))}]");
+            taskConfig["ports"] = job.Ports.Select(p => p.Label).ToList();
         }
 
-        sb.AppendLine("      }");
-
-        if (job.Env.Count > 0)
+        return new NomadTask
         {
-            sb.AppendLine();
-            sb.AppendLine("      env = {");
-            foreach (var (k, v) in job.Env)
-            {
-                sb.AppendLine($"        {Hcl.Quote(k)} = {Hcl.Quote(v)}");
-            }
-
-            sb.AppendLine("      }");
-        }
-
-        if (job.SecretEnv.Count > 0)
-        {
-            NomadVariables.AppendTemplate(sb, job.Name, job.SecretEnv.Keys, "      ");
-        }
-
-        sb.AppendLine();
-        sb.AppendLine("      resources {");
-        sb.AppendLine($"        cpu = {cfg.DefaultCpu}");
-        sb.AppendLine($"        memory = {cfg.DefaultMemory}");
-        sb.AppendLine("      }");
-        sb.AppendLine("    }");
-
-        // ── Dapr sidecar task (bridge network — reaches app via localhost) ──
-        if (job.DaprEnabled)
-        {
-            var daprArgs = new List<string>
-            {
-                "./daprd",
-                "--app-id", job.DaprAppId ?? job.Name,
-                "--dapr-http-port", job.DaprHttpPort.ToString(),
-                "--dapr-grpc-port", job.DaprGrpcPort.ToString(),
-                "--log-level", config.Dapr.LogLevel
-            };
-            if (job.DaprAppPort.HasValue)
-            {
-                daprArgs.AddRange(["--app-port", job.DaprAppPort.Value.ToString()]);
-            }
-
-            if (config.Dapr.ComponentsPath is not null)
-            {
-                daprArgs.AddRange(["--resources-path", config.Dapr.ComponentsPath]);
-            }
-
-            if (config.Dapr.ConfigPath is not null)
-            {
-                daprArgs.AddRange(["--config", config.Dapr.ConfigPath]);
-            }
-
-            sb.AppendLine();
-            sb.AppendLine($"    task {Hcl.Quote($"{job.Name}-dapr")} {{");
-            sb.AppendLine($"      driver = {Hcl.Quote(driver)}");
-            sb.AppendLine("      config {");
-            sb.AppendLine($"        image = {Hcl.Quote($"{DaprConstants.SidecarImage}:{job.DaprVersion}")}");
-            sb.AppendLine($"        args = [{string.Join(", ", daprArgs.Select(Hcl.Quote))}]");
-            sb.AppendLine("      }");
-            sb.AppendLine("      resources {");
-            sb.AppendLine("        cpu = 50");
-            sb.AppendLine("        memory = 64");
-            sb.AppendLine("      }");
-            sb.AppendLine("      lifecycle {");
-            sb.AppendLine("        hook = \"prestart\"");
-            sb.AppendLine("        sidecar = true");
-            sb.AppendLine("      }");
-            sb.AppendLine("    }");
-        }
+            Name = job.Name,
+            Driver = driver,
+            Config = taskConfig,
+            Env = job.Env.Count > 0 ? new Dictionary<string, string>(job.Env, StringComparer.Ordinal) : null,
+            Templates = job.SecretEnv.Count > 0 ? [NomadVariables.Template(job.Name, job.SecretEnv.Keys)] : null,
+            Resources = new NomadResources { Cpu = cfg.DefaultCpu, MemoryMB = cfg.DefaultMemory }
+        };
     }
 
     /// <summary>
-    /// Renders the ingress gateway group: one static host port and one TCP listener per
-    /// exposed service. TCP listeners work without extra Consul service-defaults entries.
+    /// The ingress gateway group: one static host port and one TCP listener per exposed
+    /// service. TCP listeners work without extra Consul service-defaults entries.
     /// </summary>
-    private static void RenderIngressGateway(StringBuilder sb, ConsulJob job)
+    private static NomadTaskGroup IngressGatewayGroup(ConsulJob job) => new()
     {
-        sb.AppendLine("    network {");
-        sb.AppendLine("      mode = \"bridge\"");
-        foreach (var l in job.IngressListeners)
-        {
-            sb.AppendLine($"      port {Hcl.Quote($"inbound_{SanitizeLabel(l.ServiceName)}")} {{");
-            sb.AppendLine($"        static = {l.Port}");
-            sb.AppendLine($"        to = {l.Port}");
-            sb.AppendLine("      }");
-        }
-
-        sb.AppendLine("    }");
-        sb.AppendLine();
-        sb.AppendLine("    service {");
-        sb.AppendLine($"      name = {Hcl.Quote(job.Name)}");
-        sb.AppendLine($"      port = {Hcl.Quote(job.IngressListeners[0].Port.ToString())}");
-        sb.AppendLine();
-        sb.AppendLine("      connect {");
-        sb.AppendLine("        gateway {");
-        sb.AppendLine("          proxy {}");
-        sb.AppendLine();
-        sb.AppendLine("          ingress {");
-        foreach (var l in job.IngressListeners)
-        {
-            sb.AppendLine("            listener {");
-            sb.AppendLine($"              port = {l.Port}");
-            sb.AppendLine("              protocol = \"tcp\"");
-            sb.AppendLine("              service {");
-            sb.AppendLine($"                name = {Hcl.Quote(l.ServiceName)}");
-            sb.AppendLine("              }");
-            sb.AppendLine("            }");
-        }
-
-        sb.AppendLine("          }");
-        sb.AppendLine("        }");
-        sb.AppendLine("      }");
-        sb.AppendLine("    }");
-    }
+        Name = job.Name,
+        Count = job.Count,
+        Networks =
+        [
+            new NomadNetwork
+            {
+                Mode = "bridge",
+                ReservedPorts =
+                [
+                    .. job.IngressListeners.Select(l => new NomadNetworkPort
+                    {
+                        Label = $"inbound_{SanitizeLabel(l.ServiceName)}", Value = l.Port, To = l.Port
+                    })
+                ]
+            }
+        ],
+        Services =
+        [
+            new NomadService
+            {
+                Name = job.Name,
+                PortLabel = job.IngressListeners[0].Port.ToString(CultureInfo.InvariantCulture),
+                Connect = new NomadConsulConnect
+                {
+                    Gateway = new NomadConsulGateway
+                    {
+                        Proxy = new NomadConsulGatewayProxy(),
+                        Ingress = new NomadConsulIngressConfig
+                        {
+                            Listeners =
+                            [
+                                .. job.IngressListeners.Select(l => new NomadConsulIngressListener
+                                {
+                                    Port = l.Port,
+                                    Protocol = "tcp",
+                                    Services = [new NomadConsulIngressService { Name = l.ServiceName }]
+                                })
+                            ]
+                        }
+                    }
+                }
+            }
+        ]
+    };
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -479,31 +399,4 @@ public sealed class ConsulJobGenerator(ILogger<ConsulJobGenerator> logger)
             args.ValueKind == JsonValueKind.Array
             ? args.EnumerateArray().Where(a => a.ValueKind == JsonValueKind.String).Select(a => a.GetString()!)
             : [];
-
-    private static bool IsPublicRegistry(string image)
-        => image.StartsWith("mcr.microsoft.com/", StringComparison.OrdinalIgnoreCase) ||
-            image.StartsWith("ghcr.io/", StringComparison.OrdinalIgnoreCase) ||
-            image.StartsWith("gcr.io/", StringComparison.OrdinalIgnoreCase) ||
-            image.StartsWith("quay.io/", StringComparison.OrdinalIgnoreCase) ||
-            image.StartsWith("daprio/", StringComparison.OrdinalIgnoreCase) ||
-            image.StartsWith("redis:", StringComparison.OrdinalIgnoreCase) ||
-            image.StartsWith("postgres:", StringComparison.OrdinalIgnoreCase) ||
-            image.StartsWith("nginx:", StringComparison.OrdinalIgnoreCase);
-
-    private static string DeriveServerAddress(string image, string? containerRegistry)
-    {
-        var firstSegment = (containerRegistry ?? image).Split('/')[0];
-        if (firstSegment.Contains('.') || firstSegment.Contains(':'))
-        {
-            if (firstSegment.Equals("docker.io", StringComparison.OrdinalIgnoreCase))
-            {
-                return "https://index.docker.io/v1/";
-            }
-
-            return firstSegment.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-                ? firstSegment : $"https://{firstSegment}";
-        }
-
-        return "https://index.docker.io/v1/";
-    }
 }

@@ -1,0 +1,76 @@
+{
+  "FormatVersion": 1,
+  "ActiveEnvironment": "prod",
+  "Environments": {
+    "prod": {
+      "Target": "AwsEcs",
+      "ContainerRegistry": "registry.example.com/team",
+      "ImageTag": "1.2.3",
+      "OutputPath": "out",
+      "ServiceOverrides": {},
+      "IgnoreResources": [],
+      "Parameters": {},
+      "ContainerRuntime": "Podman",
+      "DeployDashboard": true,
+      "Dashboard": {
+        "ImageTag": "latest",
+        "Port": 19888,
+        "OtlpPort": 19889,
+        "BrowserToken": "env:DASH_TOKEN",
+        "Cpu": "100m",
+        "Memory": "128Mi"
+      },
+      "AppHostPath": "<dir>",
+      "ContainerOs": "linux",
+      "ContainerArch": "arm64",
+      "DeployDapr": true,
+      "Dapr": {
+        "DaprVersion": "latest",
+        "DaprHttpPort": 3600,
+        "DaprGrpcPort": 50101,
+        "ComponentsPath": "./components",
+        "LogLevel": "info"
+      },
+      "Secrets": {
+        "Backend": "Inline",
+        "Vault": {
+          "Mount": "secret",
+          "PathPrefix": "deployify",
+          "AuthMount": "kubernetes",
+          "ManageAuth": true,
+          "SecretsFileName": "appsettings.secrets.json",
+          "AgentAnnotations": {}
+        },
+        "KeyVault": {
+          "KubernetesIdentity": "WorkloadIdentity"
+        },
+        "References": {}
+      },
+      "TargetConfig": {
+        "ecs": {
+          "Region": "eu-west-1",
+          "ClusterName": "shop",
+          "LaunchType": "Fargate",
+          "SubnetIds": [
+            "subnet-a",
+            "subnet-b"
+          ],
+          "SecurityGroupIds": [
+            "sg-1"
+          ],
+          "ExecutionRoleArn": "arn:aws:iam::1:role/exec",
+          "DefaultCpu": 256,
+          "DefaultMemory": 512,
+          "DefaultDesiredCount": 1,
+          "CreateLoadBalancer": false,
+          "AwsProfile": "prod",
+          "WaitForStable": true,
+          "DeploymentCircuitBreaker": true,
+          "BasePort": 8080
+        }
+      },
+      "Protected": false,
+      "Prune": false
+    }
+  }
+}

@@ -220,14 +220,6 @@ public sealed class PruneDestroyTests : IDisposable
                         Status = "running",
                         Meta = j.Value ? new Dictionary<string, string> { [NomadClient.ManagedMetaKey] = "true" } : null
                     })));
-                case ("POST", "/v1/jobs/parse"):
-                {
-                    // NomadClient posts it with web (camelCase) JSON names.
-                    var hcl = JsonDocument.Parse(body).RootElement.EnumerateObject()
-                        .First(p => p.Name.Equals("JobHCL", StringComparison.OrdinalIgnoreCase)).Value.GetString()!;
-                    var id = Regex.Match(hcl, "job \"([^\"]+)\"").Groups[1].Value;
-                    return (200, JsonSerializer.Serialize(new { ID = id, Meta = new Dictionary<string, string> { [NomadClient.ManagedMetaKey] = "true" } }));
-                }
                 case ("POST", "/v1/jobs"):
                 {
                     var id = JsonDocument.Parse(body).RootElement.GetProperty("Job").GetProperty("ID").GetString()!;

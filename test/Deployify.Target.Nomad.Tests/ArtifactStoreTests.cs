@@ -1,7 +1,9 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Deployify.Core.Models;
+using Deployify.Tests.Shared;
 using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
 using Xunit;
@@ -12,10 +14,10 @@ public sealed class ArtifactStoreTests
 {
     private readonly JobGenerator _sut = new(NullLogger<JobGenerator>.Instance);
 
-    // ── HCL artifact block ────────────────────────────────────────────────────
+    // ── Job artifact ────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task Hcl_ContainsArtifactBlock_WhenArtifactUrlSet()
+    public async Task Job_ContainsArtifactBlock_WhenArtifactUrlSet()
     {
         using var dir = new TempDir();
         var config = Fixtures.NomadConfigWithMode(NomadDeploymentMode.RawExec);
@@ -24,30 +26,30 @@ public sealed class ArtifactStoreTests
             ArtifactUrl = "https://artifacts.example.com/api-v1.0.0.zip"
         };
         var jobs = await _sut.GenerateAsync(Fixtures.SingleService(), config, TestContext.Current.CancellationToken);
-        var hcl = await File.ReadAllTextAsync(
-            await _sut.WriteHclAsync(jobs[0], config, dir.Path, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
+        var job = await NomadJobJson.ReadAsync(
+            await _sut.WriteJobAsync(jobs[0], config, dir.Path, TestContext.Current.CancellationToken));
 
-        hcl.ShouldContain("artifact {");
-        hcl.ShouldContain("source = \"https://artifacts.example.com/api-v1.0.0.zip\"");
-        hcl.ShouldContain("destination = \"local/\"");
+        var artifact = job.Task()["Artifacts"]!.AsArray().Single()!;
+        ((string?)artifact["GetterSource"]).ShouldBe("https://artifacts.example.com/api-v1.0.0.zip");
+        ((string?)artifact["RelativeDest"]).ShouldBe("local/");
         // go-getter takes the archive format here; "true" leaves the zip packed.
-        hcl.ShouldContain("archive = \"zip\"");
+        ((string?)artifact["GetterOptions"]!["archive"]).ShouldBe("zip");
     }
 
     [Fact]
-    public async Task Hcl_NoArtifactBlock_WhenArtifactUrlNotSet()
+    public async Task Job_NoArtifactBlock_WhenArtifactUrlNotSet()
     {
         using var dir = new TempDir();
         var config = Fixtures.NomadConfigWithMode(NomadDeploymentMode.RawExec);
         var jobs = await _sut.GenerateAsync(Fixtures.SingleService(), config, TestContext.Current.CancellationToken);
-        var hcl = await File.ReadAllTextAsync(
-            await _sut.WriteHclAsync(jobs[0], config, dir.Path, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
+        var job = await NomadJobJson.ReadAsync(
+            await _sut.WriteJobAsync(jobs[0], config, dir.Path, TestContext.Current.CancellationToken));
 
-        hcl.ShouldNotContain("artifact {");
+        job.Task().ContainsKey("Artifacts").ShouldBeFalse();
     }
 
     [Fact]
-    public async Task Hcl_CommandUsesLocalPath_WhenArtifactUrlSet()
+    public async Task Job_CommandUsesLocalPath_WhenArtifactUrlSet()
     {
         using var dir = new TempDir();
         var config = Fixtures.NomadConfigWithMode(NomadDeploymentMode.RawExec);
@@ -56,14 +58,14 @@ public sealed class ArtifactStoreTests
             ArtifactUrl = "https://artifacts.example.com/api-v1.0.0.zip"
         };
         var jobs = await _sut.GenerateAsync(Fixtures.SingleService(), config, TestContext.Current.CancellationToken);
-        var hcl = await File.ReadAllTextAsync(
-            await _sut.WriteHclAsync(jobs[0], config, dir.Path, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
+        var job = await NomadJobJson.ReadAsync(
+            await _sut.WriteJobAsync(jobs[0], config, dir.Path, TestContext.Current.CancellationToken));
 
-        hcl.ShouldContain("command = \"local/myapp\"");
+        ((string?)job.Config()["command"]).ShouldBe("local/myapp");
     }
 
     [Fact]
-    public async Task Hcl_ArtifactBlock_NotEmitted_ForDockerMode()
+    public async Task Job_ArtifactBlock_NotEmitted_ForDockerMode()
     {
         using var dir = new TempDir();
         var config = Fixtures.NomadConfig();
@@ -72,16 +74,16 @@ public sealed class ArtifactStoreTests
             ArtifactUrl = "https://artifacts.example.com/api-v1.0.0.zip"
         };
         var jobs = await _sut.GenerateAsync(Fixtures.SingleService(), config, TestContext.Current.CancellationToken);
-        var hcl = await File.ReadAllTextAsync(
-            await _sut.WriteHclAsync(jobs[0], config, dir.Path, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
+        var job = await NomadJobJson.ReadAsync(
+            await _sut.WriteJobAsync(jobs[0], config, dir.Path, TestContext.Current.CancellationToken));
 
-        // Docker mode should use image = not artifact + command =
-        hcl.ShouldNotContain("artifact {");
-        hcl.ShouldContain("image =");
+        // Docker mode uses the image, not an artifact and a command.
+        job.Task().ContainsKey("Artifacts").ShouldBeFalse();
+        job.Config().ContainsKey("image").ShouldBeTrue();
     }
 
     [Fact]
-    public async Task Hcl_ArtifactUrl_ReadFromServiceOverrides()
+    public async Task Job_ArtifactUrl_ReadFromServiceOverrides()
     {
         using var dir = new TempDir();
         var config = Fixtures.NomadConfigWithMode(NomadDeploymentMode.RawExec);

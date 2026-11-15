@@ -1,0 +1,78 @@
+{
+  "FormatVersion": 1,
+  "ActiveEnvironment": "prod",
+  "Environments": {
+    "prod": {
+      "Target": "NomadConsul",
+      "ContainerRegistry": "registry.example.com/team",
+      "ImageTag": "1.2.3",
+      "OutputPath": "out",
+      "ServiceOverrides": {},
+      "IgnoreResources": [],
+      "Parameters": {},
+      "ContainerRuntime": "Podman",
+      "DeployDashboard": true,
+      "Dashboard": {
+        "ImageTag": "9.0",
+        "Port": 19888,
+        "OtlpPort": 19889,
+        "BrowserToken": "env:DASH_TOKEN",
+        "Cpu": "100m",
+        "Memory": "128Mi"
+      },
+      "AppHostPath": "<dir>",
+      "ContainerOs": "linux",
+      "ContainerArch": "arm64",
+      "DeployDapr": true,
+      "Dapr": {
+        "DaprVersion": "1.14",
+        "DaprHttpPort": 3600,
+        "DaprGrpcPort": 50101,
+        "ComponentsPath": "./components",
+        "ConfigPath": "./dapr.yaml",
+        "LogLevel": "debug"
+      },
+      "Secrets": {
+        "Backend": "Inline",
+        "Vault": {
+          "Mount": "secret",
+          "PathPrefix": "deployify",
+          "AuthMount": "kubernetes",
+          "ManageAuth": true,
+          "SecretsFileName": "appsettings.secrets.json",
+          "AgentAnnotations": {}
+        },
+        "KeyVault": {
+          "KubernetesIdentity": "WorkloadIdentity"
+        },
+        "References": {}
+      },
+      "TargetConfig": {
+        "nomadconsul": {
+          "NomadAddress": "http://nc-nomad:4646",
+          "NomadToken": "env:NC_NOMAD",
+          "NomadNamespace": "mesh",
+          "Datacenters": [
+            "eu2"
+          ],
+          "ConsulAddress": "http://consul:8500",
+          "ConsulToken": "env:NC_CONSUL",
+          "UpstreamBasePort": 20000,
+          "EnableIngressGateway": true,
+          "IngressGatewayName": "ingress-gateway",
+          "DefaultCpu": 256,
+          "DefaultMemory": 256,
+          "RegisterServices": true,
+          "HealthCheckType": "tcp",
+          "AutoRevert": true,
+          "BasePort": 8080,
+          "HealthCheckPath": "/health",
+          "HealthCheckInterval": "10s",
+          "HealthCheckTimeout": "2s"
+        }
+      },
+      "Protected": false,
+      "Prune": false
+    }
+  }
+}

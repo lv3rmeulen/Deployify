@@ -79,63 +79,63 @@ public sealed class JobGeneratorTests
     }
 
     [Fact]
-    public async Task WriteHcl_CreatesFile_WithJobName()
+    public async Task WriteJob_CreatesFile_WithJobName()
     {
         using var dir = new TempDir();
         var jobs = await _sut.GenerateAsync(Fixtures.SingleService("myservice"), Fixtures.NomadConfig(), TestContext.Current.CancellationToken);
-        var path = await _sut.WriteHclAsync(jobs[0], Fixtures.NomadConfig(), dir.Path, TestContext.Current.CancellationToken);
+        var path = await _sut.WriteJobAsync(jobs[0], Fixtures.NomadConfig(), dir.Path, TestContext.Current.CancellationToken);
         File.Exists(path).ShouldBeTrue();
-        path.ShouldEndWith("myservice.job.hcl");
+        path.ShouldEndWith("myservice.nomad.json");
     }
 
     [Fact]
-    public async Task WriteHcl_ContainsJobName()
+    public async Task WriteJob_ContainsJobName()
     {
         using var dir = new TempDir();
         var jobs = await _sut.GenerateAsync(Fixtures.SingleService("myservice"), Fixtures.NomadConfig(), TestContext.Current.CancellationToken);
-        var path = await _sut.WriteHclAsync(jobs[0], Fixtures.NomadConfig(), dir.Path, TestContext.Current.CancellationToken);
+        var path = await _sut.WriteJobAsync(jobs[0], Fixtures.NomadConfig(), dir.Path, TestContext.Current.CancellationToken);
         (await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken)).ShouldContain("\"myservice\"");
     }
 
     [Fact]
-    public async Task WriteHcl_ContainsDatacenter()
+    public async Task WriteJob_ContainsDatacenter()
     {
         using var dir = new TempDir();
         var config = Fixtures.NomadConfig(dc: "us-east-1");
         var jobs = await _sut.GenerateAsync(Fixtures.SingleService(), config, TestContext.Current.CancellationToken);
-        var path = await _sut.WriteHclAsync(jobs[0], config, dir.Path, TestContext.Current.CancellationToken);
+        var path = await _sut.WriteJobAsync(jobs[0], config, dir.Path, TestContext.Current.CancellationToken);
         (await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken)).ShouldContain("us-east-1");
     }
 
     [Fact]
-    public async Task WriteHcl_ContainsNamespace()
+    public async Task WriteJob_ContainsNamespace()
     {
         using var dir = new TempDir();
         var config = Fixtures.NomadConfig(ns: "production");
         var jobs = await _sut.GenerateAsync(Fixtures.SingleService(), config, TestContext.Current.CancellationToken);
-        var path = await _sut.WriteHclAsync(jobs[0], config, dir.Path, TestContext.Current.CancellationToken);
+        var path = await _sut.WriteJobAsync(jobs[0], config, dir.Path, TestContext.Current.CancellationToken);
         (await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken)).ShouldContain("\"production\"");
     }
 
     [Fact]
-    public async Task WriteHcl_ContainsEnvVars()
+    public async Task WriteJob_ContainsEnvVars()
     {
         using var dir = new TempDir();
         var jobs = await _sut.GenerateAsync(Fixtures.SimpleManifest(), Fixtures.NomadConfig(), TestContext.Current.CancellationToken);
-        var path = await _sut.WriteHclAsync(jobs.Single(j => j.Name == "api"), Fixtures.NomadConfig(), dir.Path, TestContext.Current.CancellationToken);
+        var path = await _sut.WriteJobAsync(jobs.Single(j => j.Name == "api"), Fixtures.NomadConfig(), dir.Path, TestContext.Current.CancellationToken);
         (await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken)).ShouldContain("ASPNETCORE_ENVIRONMENT");
     }
 
     [Fact]
-    public async Task WriteHcl_GeneratesAllServices()
+    public async Task WriteJob_GeneratesAllServices()
     {
         using var dir = new TempDir();
         var config = Fixtures.NomadConfig();
         foreach (var job in await _sut.GenerateAsync(Fixtures.SimpleManifest(), config, TestContext.Current.CancellationToken))
         {
-            await _sut.WriteHclAsync(job, config, dir.Path, TestContext.Current.CancellationToken);
+            await _sut.WriteJobAsync(job, config, dir.Path, TestContext.Current.CancellationToken);
         }
 
-        Directory.GetFiles(dir.Path, "*.hcl").Length.ShouldBe(3);
+        Directory.GetFiles(dir.Path, "*.nomad.json").Length.ShouldBe(3);
     }
 }

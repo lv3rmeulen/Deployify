@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Deployify.Core.Models;
+using Deployify.Tests.Shared;
 using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
 using Xunit;
@@ -48,64 +49,66 @@ public sealed class ServiceDiscoveryTests
             address = "http://localhost:4646", datacenters = new[] { "dc1" }, deploymentMode = "Docker"
         });
 
-    private async Task<(NomadJob Job, string Hcl)> RenderAsync(string name, EnvironmentConfig config)
+    private async Task<(NomadJob Job, NomadJobJson File)> RenderAsync(string name, EnvironmentConfig config)
     {
         using var dir = new TempDir();
         var ct = TestContext.Current.CancellationToken;
         var job = (await _sut.GenerateAsync(Manifest(), config, ct)).Single(j => j.Name == name);
-        var hcl = await File.ReadAllTextAsync(await _sut.WriteHclAsync(job, config, dir.Path, ct), ct);
-        return (job, hcl);
+        return (job, await NomadJobJson.ReadAsync(await _sut.WriteJobAsync(job, config, dir.Path, ct)));
     }
 
     [Fact]
     public async Task Reference_MovesToTemplate_WithNomadServiceLookup()
     {
-        var (job, hcl) = await RenderAsync("web", Config());
+        var (job, file) = await RenderAsync("web", Config());
 
         job.Env.Keys.ShouldBe(new[] { "LITERAL" });
         job.DiscoveredEnv["services__api__http__0"].ShouldBe($"http://{ServiceDiscovery.Token("api")}:8080");
 
-        hcl.ShouldNotContain("\"services__api__http__0\" =");
-        hcl.ShouldContain("template {");
-        hcl.ShouldContain("range nomadService 1 (env \\\"NOMAD_ALLOC_ID\\\") \\\"api\\\"");
-        hcl.ShouldContain("services__api__http__0=http://{{ $svc0 }}:8080");
-        hcl.ShouldContain("change_mode = \"restart\"");
-        hcl.ShouldNotContain("nomadVar");
+        file.Env()!.ContainsKey("services__api__http__0").ShouldBeFalse();
+        var template = file.Template().ShouldNotBeNull();
+        var data = (string)template["EmbeddedTmpl"]!;
+        data.ShouldContain("range nomadService 1 (env \"NOMAD_ALLOC_ID\") \"api\"");
+        data.ShouldContain("services__api__http__0=http://{{ $svc0 }}:8080");
+        data.ShouldNotContain("nomadVar");
+        ((string?)template["ChangeMode"]).ShouldBe("restart");
     }
 
     [Fact]
     public async Task ConnectionString_UsesLookedUpHost()
     {
-        var (job, hcl) = await RenderAsync("api", Config());
+        var (job, file) = await RenderAsync("api", Config());
 
         job.Env.Keys.ShouldBe(new[] { "PLAIN" });
-        hcl.ShouldContain("ConnectionStrings__cache={{ $svc0 }}:6379");
-        hcl.ShouldContain("\\\"cache\\\"");
+        var data = (string)file.Template()!["EmbeddedTmpl"]!;
+        data.ShouldContain("ConnectionStrings__cache={{ $svc0 }}:6379");
+        data.ShouldContain("\"cache\"");
     }
 
     [Fact]
     public async Task ConsulProvider_UsesConsulServiceLookup()
     {
-        var (_, hcl) = await RenderAsync("web", Config(new
+        var (_, file) = await RenderAsync("web", Config(new
         {
             datacenters = new[] { "dc1" }, deploymentMode = "Docker", serviceProvider = "consul"
         }));
 
-        hcl.ShouldContain("range service \\\"api\\\"");
-        hcl.ShouldNotContain("nomadService");
+        var data = (string)file.Template()!["EmbeddedTmpl"]!;
+        data.ShouldContain("range service \"api\"");
+        data.ShouldNotContain("nomadService");
     }
 
     [Fact]
     public async Task RegisterServicesOff_FallsBackToLocalhost()
     {
-        var (job, hcl) = await RenderAsync("web", Config(new
+        var (job, file) = await RenderAsync("web", Config(new
         {
             datacenters = new[] { "dc1" }, deploymentMode = "Docker", registerServices = false
         }));
 
         job.DiscoveredEnv.ShouldBeEmpty();
         job.Env["services__api__http__0"].ShouldBe("http://localhost:8080");
-        hcl.ShouldNotContain("template {");
+        file.Template().ShouldBeNull();
     }
 
     [Fact]

@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: test-redis
+  labels:
+    app: redis
+    app.kubernetes.io/managed-by: deployify
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: "{{ if .Values.image.tag }}{{ printf "%s:%s" .Values.image.repository (toString .Values.image.tag) }}{{ else }}{{ .Values.image.repository }}{{ end }}"
+          imagePullPolicy: Always
+          ports:
+            - name: tcp
+              containerPort: 6379
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          livenessProbe:
+            tcpSocket:
+              port: tcp
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            tcpSocket:
+              port: tcp
+            initialDelaySeconds: 5
+            periodSeconds: 10

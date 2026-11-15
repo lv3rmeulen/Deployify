@@ -1,0 +1,90 @@
+{
+  "FormatVersion": 1,
+  "ActiveEnvironment": "prod",
+  "Environments": {
+    "prod": {
+      "Target": "ArgoCd",
+      "ContainerRegistry": "registry.example.com/team",
+      "ImageTag": "1.2.3",
+      "OutputPath": "out",
+      "ServiceOverrides": {},
+      "IgnoreResources": [],
+      "Parameters": {},
+      "ContainerRuntime": "Podman",
+      "DeployDashboard": true,
+      "Dashboard": {
+        "ImageTag": "latest",
+        "Port": 19888,
+        "OtlpPort": 19889,
+        "BrowserToken": "env:DASH_TOKEN",
+        "Cpu": "100m",
+        "Memory": "128Mi"
+      },
+      "AppHostPath": "<dir>",
+      "ContainerOs": "linux",
+      "ContainerArch": "arm64",
+      "DeployDapr": true,
+      "Dapr": {
+        "DaprVersion": "latest",
+        "DaprHttpPort": 3600,
+        "DaprGrpcPort": 50101,
+        "ComponentsPath": "./components",
+        "LogLevel": "info"
+      },
+      "Secrets": {
+        "Backend": "Inline",
+        "Vault": {
+          "Mount": "secret",
+          "PathPrefix": "deployify",
+          "AuthMount": "kubernetes",
+          "ManageAuth": true,
+          "SecretsFileName": "appsettings.secrets.json",
+          "AgentAnnotations": {}
+        },
+        "KeyVault": {
+          "KubernetesIdentity": "WorkloadIdentity"
+        },
+        "References": {}
+      },
+      "TargetConfig": {
+        "kubernetes": {
+          "Context": "prod-ctx",
+          "NamespacePrefix": "shop",
+          "GenerateIngress": true,
+          "IngressClassName": "nginx",
+          "IngressBaseDomain": "apps.example.com",
+          "CpuRequest": "100m",
+          "CpuLimit": "500m",
+          "MemoryRequest": "128Mi",
+          "MemoryLimit": "512Mi",
+          "DefaultReplicas": 1,
+          "HealthCheckType": "tcp",
+          "HealthCheckPath": "/health",
+          "BasePort": 8080,
+          "ImagePullSecrets": []
+        },
+        "gitops": {
+          "RepoUrl": "https://git.example.com/config.git",
+          "Branch": "deploy",
+          "Path": "envs/prod",
+          "AuthorName": "Deployify",
+          "AuthorEmail": "deployify@localhost",
+          "Push": true,
+          "Register": true,
+          "Wait": false,
+          "WaitTimeoutSeconds": 300
+        },
+        "argocd": {
+          "Namespace": "argocd",
+          "Project": "default",
+          "DestinationServer": "https://kubernetes.default.svc",
+          "AutoSync": true,
+          "Prune": true,
+          "SelfHeal": true
+        }
+      },
+      "Protected": false,
+      "Prune": false
+    }
+  }
+}

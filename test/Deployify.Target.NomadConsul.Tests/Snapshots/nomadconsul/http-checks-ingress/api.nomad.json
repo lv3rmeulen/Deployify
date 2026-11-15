@@ -1,0 +1,138 @@
+{
+  "Job": {
+    "ID": "api",
+    "Name": "api",
+    "Namespace": "mesh",
+    "Type": "service",
+    "Datacenters": [
+      "dc1"
+    ],
+    "Meta": {
+      "deployify-managed": "true"
+    },
+    "TaskGroups": [
+      {
+        "Name": "api",
+        "Count": 1,
+        "Update": {
+          "MinHealthyTime": 30000000000,
+          "HealthyDeadline": 600000000000,
+          "ProgressDeadline": 900000000000,
+          "AutoRevert": false
+        },
+        "Networks": [
+          {
+            "Mode": "bridge",
+            "DynamicPorts": [
+              {
+                "Label": "http",
+                "To": 8080
+              },
+              {
+                "Label": "metrics",
+                "To": 9090
+              }
+            ]
+          }
+        ],
+        "Services": [
+          {
+            "Name": "api",
+            "PortLabel": "8080",
+            "Checks": [
+              {
+                "Type": "http",
+                "Path": "/healthz",
+                "Expose": true,
+                "Interval": 90000000000,
+                "Timeout": 2000000000,
+                "CheckRestart": {
+                  "Limit": 3,
+                  "Grace": 30000000000
+                }
+              }
+            ],
+            "Connect": {
+              "SidecarService": {
+                "Proxy": {
+                  "Upstreams": [
+                    {
+                      "DestinationName": "pg",
+                      "LocalBindPort": 20000
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "Tasks": [
+          {
+            "Name": "api",
+            "Driver": "docker",
+            "Config": {
+              "image": "reg.example.com/app/api:v1.0.0",
+              "auth": [
+                {
+                  "username": "ci",
+                  "password": "__DEPLOYIFY_REGISTRY_PASSWORD__",
+                  "server_address": "https://reg.example.com"
+                }
+              ],
+              "ports": [
+                "http",
+                "metrics"
+              ]
+            },
+            "Env": {
+              "NOMAD_UPSTREAM_ADDR_PG": "localhost:20000",
+              "PLAIN": "hello \"quoted\" ${y}"
+            },
+            "Templates": [
+              {
+                "EmbeddedTmpl": "{{ with nomadVar \"nomad/jobs/api\" -}}\nConnectionStrings__db={{ index . \"ConnectionStrings__db\" }}\n{{- end }}\n",
+                "DestPath": "secrets/deployify.env",
+                "Envvars": true,
+                "ChangeMode": "restart"
+              }
+            ],
+            "Resources": {
+              "CPU": 256,
+              "MemoryMB": 256
+            }
+          },
+          {
+            "Name": "api-dapr",
+            "Driver": "docker",
+            "Config": {
+              "image": "daprio/daprd:latest",
+              "args": [
+                "./daprd",
+                "--app-id",
+                "api",
+                "--dapr-http-port",
+                "3500",
+                "--dapr-grpc-port",
+                "50001",
+                "--log-level",
+                "info",
+                "--app-port",
+                "8080",
+                "--resources-path",
+                "./components"
+              ]
+            },
+            "Resources": {
+              "CPU": 50,
+              "MemoryMB": 64
+            },
+            "Lifecycle": {
+              "Hook": "prestart",
+              "Sidecar": true
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

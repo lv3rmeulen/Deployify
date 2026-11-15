@@ -1,0 +1,70 @@
+{
+  "Job": {
+    "ID": "ingress-gateway",
+    "Name": "ingress-gateway",
+    "Namespace": "mesh",
+    "Type": "service",
+    "Datacenters": [
+      "dc1"
+    ],
+    "Meta": {
+      "deployify-managed": "true"
+    },
+    "TaskGroups": [
+      {
+        "Name": "ingress-gateway",
+        "Count": 1,
+        "Networks": [
+          {
+            "Mode": "bridge",
+            "ReservedPorts": [
+              {
+                "Label": "inbound_api",
+                "Value": 8080,
+                "To": 8080
+              },
+              {
+                "Label": "inbound_web",
+                "Value": 3000,
+                "To": 3000
+              }
+            ]
+          }
+        ],
+        "Services": [
+          {
+            "Name": "ingress-gateway",
+            "PortLabel": "8080",
+            "Connect": {
+              "Gateway": {
+                "Proxy": {},
+                "Ingress": {
+                  "Listeners": [
+                    {
+                      "Port": 8080,
+                      "Protocol": "tcp",
+                      "Services": [
+                        {
+                          "Name": "api"
+                        }
+                      ]
+                    },
+                    {
+                      "Port": 3000,
+                      "Protocol": "tcp",
+                      "Services": [
+                        {
+                          "Name": "web"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

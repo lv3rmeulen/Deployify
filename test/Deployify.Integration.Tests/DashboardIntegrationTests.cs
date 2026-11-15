@@ -23,14 +23,14 @@ public sealed class DashboardIntegrationTests
         await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         var outputDir = Path.Combine(dir.Path, "deployify-output");
-        var files = Directory.GetFiles(outputDir, "*.job.hcl").Select(Path.GetFileName);
-        files.ShouldNotContain("aspire-dashboard.job.hcl");
+        var files = Directory.GetFiles(outputDir, "*.nomad.json").Select(Path.GetFileName);
+        files.ShouldNotContain("aspire-dashboard.nomad.json");
     }
 
     // ── Plan with dashboard enabled ────────────────────────────────────────────
 
     [Fact]
-    public async Task Plan_WritesDashboardHcl_WhenEnabled()
+    public async Task Plan_WritesDashboardJob_WhenEnabled()
     {
         using var dir = new TempDir();
         await Harness.WriteNomadStateAsync(dir.Path, deployDashboard: true, ct: TestContext.Current.CancellationToken);
@@ -39,11 +39,11 @@ public sealed class DashboardIntegrationTests
         await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         var outputDir = Path.Combine(dir.Path, "deployify-output");
-        File.Exists(Path.Combine(outputDir, "aspire-dashboard.job.hcl")).ShouldBeTrue();
+        File.Exists(Path.Combine(outputDir, "aspire-dashboard.nomad.json")).ShouldBeTrue();
     }
 
     [Fact]
-    public async Task Plan_DashboardHcl_ContainsDashboardImage()
+    public async Task Plan_DashboardJob_ContainsDashboardImage()
     {
         using var dir = new TempDir();
         await Harness.WriteNomadStateAsync(dir.Path, deployDashboard: true, ct: TestContext.Current.CancellationToken);
@@ -51,13 +51,13 @@ public sealed class DashboardIntegrationTests
 
         await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
-        var hcl = await File.ReadAllTextAsync(
-            Path.Combine(dir.Path, "deployify-output", "aspire-dashboard.job.hcl"), TestContext.Current.CancellationToken);
-        hcl.ShouldContain("mcr.microsoft.com/dotnet/aspire-dashboard");
+        var job = await File.ReadAllTextAsync(
+            Path.Combine(dir.Path, "deployify-output", "aspire-dashboard.nomad.json"), TestContext.Current.CancellationToken);
+        job.ShouldContain("mcr.microsoft.com/dotnet/aspire-dashboard");
     }
 
     [Fact]
-    public async Task Plan_DashboardHcl_ContainsOtlpEnvVar()
+    public async Task Plan_DashboardJob_ContainsOtlpEnvVar()
     {
         using var dir = new TempDir();
         await Harness.WriteNomadStateAsync(dir.Path, deployDashboard: true, ct: TestContext.Current.CancellationToken);
@@ -65,9 +65,9 @@ public sealed class DashboardIntegrationTests
 
         await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
-        var hcl = await File.ReadAllTextAsync(
-            Path.Combine(dir.Path, "deployify-output", "aspire-dashboard.job.hcl"), TestContext.Current.CancellationToken);
-        hcl.ShouldContain("DASHBOARD__OTLP__ENDPOINT_URL");
+        var job = await File.ReadAllTextAsync(
+            Path.Combine(dir.Path, "deployify-output", "aspire-dashboard.nomad.json"), TestContext.Current.CancellationToken);
+        job.ShouldContain("DASHBOARD__OTLP__ENDPOINT_URL");
     }
 
     [Fact]
@@ -80,7 +80,7 @@ public sealed class DashboardIntegrationTests
         await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         var outputDir = Path.Combine(dir.Path, "deployify-output");
-        Directory.GetFiles(outputDir, "*.job.hcl").Length.ShouldBe(4); // 3 services + dashboard
+        Directory.GetFiles(outputDir, "*.nomad.json").Length.ShouldBe(4); // 3 services + dashboard
     }
 
     // ── Generate with dashboard ────────────────────────────────────────────────
@@ -96,7 +96,7 @@ public sealed class DashboardIntegrationTests
 
         code.ShouldBe(0);
         var outputDir = Path.Combine(dir.Path, "deployify-output");
-        File.Exists(Path.Combine(outputDir, "aspire-dashboard.job.hcl")).ShouldBeTrue();
+        File.Exists(Path.Combine(outputDir, "aspire-dashboard.nomad.json")).ShouldBeTrue();
     }
 
     // ── Compose target with dashboard ──────────────────────────────────────────
@@ -120,7 +120,7 @@ public sealed class DashboardIntegrationTests
     // ── NomadConsul target with dashboard ──────────────────────────────────────
 
     [Fact]
-    public async Task Plan_NomadConsul_WritesDashboardHcl_WhenEnabled()
+    public async Task Plan_NomadConsul_WritesDashboardJob_WhenEnabled()
     {
         using var dir = new TempDir();
         await Harness.WriteNomadConsulStateAsync(dir.Path, deployDashboard: true, ct: TestContext.Current.CancellationToken);
@@ -129,7 +129,7 @@ public sealed class DashboardIntegrationTests
         await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         var outputDir = Path.Combine(dir.Path, "deployify-output");
-        File.Exists(Path.Combine(outputDir, "aspire-dashboard.job.hcl")).ShouldBeTrue();
+        File.Exists(Path.Combine(outputDir, "aspire-dashboard.nomad.json")).ShouldBeTrue();
     }
 
     // ── Init with --deploy-dashboard ──────────────────────────────────────────

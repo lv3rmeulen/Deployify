@@ -1,13 +1,14 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using Deployify.Target.Nomad.Api;
 
 namespace Deployify.Target.Nomad;
 
 /// <summary>
 /// Secret env vars for Nomad jobs live in Nomad Variables at <c>nomad/jobs/{job}</c>, a path
 /// every task of that job can read through its workload identity without an extra ACL policy.
-/// The job file only carries a <c>template</c> block that reads them back into the task's
+/// The job file only carries a <c>template</c> that reads them back into the task's
 /// environment, so no secret is written to the output directory. Needs Nomad 1.4 or later.
 /// </summary>
 public static class NomadVariables
@@ -30,15 +31,12 @@ public static class NomadVariables
         return sb.ToString();
     }
 
-    /// <summary>Appends a <c>template</c> block (inside a task) that loads the job's secrets.</summary>
-    public static void AppendTemplate(StringBuilder sb, string jobName, IEnumerable<string> keys, string indent)
+    /// <summary>The task's <c>template</c> that loads the job's secrets into its environment.</summary>
+    public static NomadTemplate Template(string jobName, IEnumerable<string> keys) => new()
     {
-        sb.AppendLine();
-        sb.AppendLine($"{indent}template {{");
-        sb.AppendLine($"{indent}  data        = {Hcl.Quote(TemplateData(jobName, keys))}");
-        sb.AppendLine($"{indent}  destination = \"secrets/deployify.env\"");
-        sb.AppendLine($"{indent}  env         = true");
-        sb.AppendLine($"{indent}  change_mode = \"restart\"");
-        sb.AppendLine($"{indent}}}");
-    }
+        EmbeddedTmpl = TemplateData(jobName, keys),
+        DestPath = ServiceDiscovery.TemplateDestination,
+        Envvars = true,
+        ChangeMode = "restart"
+    };
 }

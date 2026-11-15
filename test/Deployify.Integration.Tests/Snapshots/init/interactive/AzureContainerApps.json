@@ -1,0 +1,69 @@
+{
+  "FormatVersion": 1,
+  "ActiveEnvironment": "prod",
+  "Environments": {
+    "prod": {
+      "Target": "AzureContainerApps",
+      "ContainerRegistry": "registry.example.com/team",
+      "ImageTag": "1.2.3",
+      "OutputPath": "out",
+      "ServiceOverrides": {},
+      "IgnoreResources": [],
+      "Parameters": {},
+      "ContainerRuntime": "Podman",
+      "DeployDashboard": true,
+      "Dashboard": {
+        "ImageTag": "latest",
+        "Port": 19888,
+        "OtlpPort": 19889,
+        "BrowserToken": "env:DASH_TOKEN",
+        "Cpu": "100m",
+        "Memory": "128Mi"
+      },
+      "AppHostPath": "<dir>",
+      "ContainerOs": "linux",
+      "ContainerArch": "arm64",
+      "DeployDapr": true,
+      "Dapr": {
+        "DaprVersion": "latest",
+        "DaprHttpPort": 3600,
+        "DaprGrpcPort": 50101,
+        "ComponentsPath": "./components",
+        "LogLevel": "info"
+      },
+      "Secrets": {
+        "Backend": "Inline",
+        "Vault": {
+          "Mount": "secret",
+          "PathPrefix": "deployify",
+          "AuthMount": "kubernetes",
+          "ManageAuth": true,
+          "SecretsFileName": "appsettings.secrets.json",
+          "AgentAnnotations": {}
+        },
+        "KeyVault": {
+          "KubernetesIdentity": "WorkloadIdentity"
+        },
+        "References": {}
+      },
+      "TargetConfig": {
+        "aca": {
+          "SubscriptionId": "sub-1",
+          "ResourceGroup": "shop-rg",
+          "Location": "westeurope",
+          "EnvironmentName": "shop-env",
+          "LogAnalyticsWorkspaceName": "deployify-logs",
+          "MinReplicas": 0,
+          "MaxReplicas": 3,
+          "DefaultCpu": 0.25,
+          "DefaultMemory": "0.5Gi",
+          "IngressType": "External",
+          "AcrLoginServer": "shop.azurecr.io",
+          "BasePort": 8080
+        }
+      },
+      "Protected": false,
+      "Prune": false
+    }
+  }
+}

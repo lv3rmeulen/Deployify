@@ -1,0 +1,100 @@
+{
+  "Job": {
+    "ID": "api",
+    "Name": "api",
+    "Namespace": "default",
+    "Type": "service",
+    "Datacenters": [
+      "dc1"
+    ],
+    "Meta": {
+      "deployify-managed": "true"
+    },
+    "TaskGroups": [
+      {
+        "Name": "api",
+        "Count": 1,
+        "Update": {
+          "MinHealthyTime": 30000000000,
+          "HealthyDeadline": 600000000000,
+          "ProgressDeadline": 900000000000,
+          "AutoRevert": true
+        },
+        "Networks": [
+          {
+            "Mode": "host",
+            "ReservedPorts": [
+              {
+                "Label": "http",
+                "Value": 8080
+              },
+              {
+                "Label": "https",
+                "Value": 8443
+              }
+            ]
+          }
+        ],
+        "Tasks": [
+          {
+            "Name": "api",
+            "Driver": "podman",
+            "Config": {
+              "image": "registry.example.com/myapp/api:v1.0.0",
+              "network_mode": "host"
+            },
+            "Env": {
+              "PLAIN": "hello \"quoted\" %{x} ${y}",
+              "Odd.Key-Name": "x"
+            },
+            "Templates": [
+              {
+                "EmbeddedTmpl": "{{ with nomadVar \"nomad/jobs/api\" -}}\nConnectionStrings__db={{ index . \"ConnectionStrings__db\" }}\n{{- end }}\n",
+                "DestPath": "secrets/deployify.env",
+                "Envvars": true,
+                "ChangeMode": "restart"
+              }
+            ],
+            "Resources": {
+              "CPU": 256,
+              "MemoryMB": 256
+            }
+          },
+          {
+            "Name": "api-dapr",
+            "Driver": "podman",
+            "Config": {
+              "image": "daprio/daprd:latest",
+              "network_mode": "host",
+              "args": [
+                "./daprd",
+                "--app-id",
+                "api-app",
+                "--dapr-http-port",
+                "3500",
+                "--dapr-grpc-port",
+                "50001",
+                "--log-level",
+                "info",
+                "--app-port",
+                "8080",
+                "--resources-path",
+                "./components",
+                "--config",
+                "./dapr.yaml"
+              ]
+            },
+            "Resources": {
+              "CPU": 50,
+              "MemoryMB": 64
+            },
+            "Lifecycle": {
+              "Hook": "prestart",
+              "Sidecar": true
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

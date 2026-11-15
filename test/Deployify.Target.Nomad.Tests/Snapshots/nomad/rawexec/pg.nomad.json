@@ -1,0 +1,76 @@
+{
+  "Job": {
+    "ID": "pg",
+    "Name": "pg",
+    "Namespace": "default",
+    "Type": "service",
+    "Datacenters": [
+      "dc1"
+    ],
+    "Meta": {
+      "deployify-managed": "true"
+    },
+    "TaskGroups": [
+      {
+        "Name": "pg",
+        "Count": 1,
+        "Update": {
+          "MinHealthyTime": 30000000000,
+          "HealthyDeadline": 600000000000,
+          "ProgressDeadline": 900000000000,
+          "AutoRevert": true
+        },
+        "Networks": [
+          {
+            "Mode": "host",
+            "ReservedPorts": [
+              {
+                "Label": "tcp",
+                "Value": 5432
+              }
+            ]
+          }
+        ],
+        "Services": [
+          {
+            "Name": "pg",
+            "PortLabel": "tcp",
+            "Provider": "nomad",
+            "Checks": [
+              {
+                "Type": "tcp",
+                "Interval": 10000000000,
+                "Timeout": 2000000000,
+                "CheckRestart": {
+                  "Limit": 3,
+                  "Grace": 30000000000
+                }
+              }
+            ]
+          }
+        ],
+        "Tasks": [
+          {
+            "Name": "pg",
+            "Driver": "raw_exec",
+            "Config": {
+              "command": "local/pg"
+            },
+            "Templates": [
+              {
+                "EmbeddedTmpl": "{{ with nomadVar \"nomad/jobs/pg\" -}}\nPOSTGRES_PASSWORD={{ index . \"POSTGRES_PASSWORD\" }}\n{{- end }}\n",
+                "DestPath": "secrets/deployify.env",
+                "Envvars": true,
+                "ChangeMode": "restart"
+              }
+            ],
+            "Resources": {
+              "CPU": 256,
+              "MemoryMB": 256
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

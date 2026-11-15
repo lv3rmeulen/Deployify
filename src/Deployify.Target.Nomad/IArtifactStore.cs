@@ -5,7 +5,7 @@ namespace Deployify.Target.Nomad;
 
 /// <summary>
 /// Uploads a zipped build artifact to a backing store and returns the download URL
-/// that Nomad will use in the <c>artifact</c> block of the HCL job.
+/// that Nomad downloads with the job's artifact.
 /// </summary>
 public interface IArtifactStore
 {

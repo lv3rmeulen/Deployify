@@ -25,7 +25,7 @@ public sealed class NomadConsulPlanCommandTests
     }
 
     [Fact]
-    public async Task Plan_NomadConsul_WritesHclFiles()
+    public async Task Plan_NomadConsul_WritesJobFiles()
     {
         using var dir = new TempDir();
         await Harness.WriteNomadConsulStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
@@ -34,12 +34,12 @@ public sealed class NomadConsulPlanCommandTests
         await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         var outputDir = Path.Combine(dir.Path, "deployify-output");
-        Directory.GetFiles(outputDir, "*.job.hcl", SearchOption.AllDirectories)
+        Directory.GetFiles(outputDir, "*.nomad.json", SearchOption.AllDirectories)
             .Length.ShouldBe(3);
     }
 
     [Fact]
-    public async Task Plan_NomadConsul_HclFiles_ContainBridgeNetworkMode()
+    public async Task Plan_NomadConsul_JobFiles_ContainBridgeNetworkMode()
     {
         using var dir = new TempDir();
         await Harness.WriteNomadConsulStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
@@ -48,14 +48,14 @@ public sealed class NomadConsulPlanCommandTests
         await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         var outputDir = Path.Combine(dir.Path, "deployify-output");
-        foreach (var file in Directory.GetFiles(outputDir, "*.job.hcl"))
+        foreach (var file in Directory.GetFiles(outputDir, "*.nomad.json"))
         {
-            (await File.ReadAllTextAsync(file, TestContext.Current.CancellationToken)).ShouldContain("mode = \"bridge\"");
+            (await File.ReadAllTextAsync(file, TestContext.Current.CancellationToken)).ShouldContain("\"Mode\": \"bridge\"");
         }
     }
 
     [Fact]
-    public async Task Plan_NomadConsul_HclFiles_ContainConnectSidecar()
+    public async Task Plan_NomadConsul_JobFiles_ContainConnectSidecar()
     {
         using var dir = new TempDir();
         await Harness.WriteNomadConsulStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
@@ -63,13 +63,13 @@ public sealed class NomadConsulPlanCommandTests
 
         await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
-        var apiHcl = await File.ReadAllTextAsync(
-            Path.Combine(dir.Path, "deployify-output", "api.job.hcl"), TestContext.Current.CancellationToken);
-        apiHcl.ShouldContain("sidecar_service {");
+        var apiJob = await File.ReadAllTextAsync(
+            Path.Combine(dir.Path, "deployify-output", "api.nomad.json"), TestContext.Current.CancellationToken);
+        apiJob.ShouldContain("\"SidecarService\"");
     }
 
     [Fact]
-    public async Task Plan_NomadConsul_WorkerHcl_ContainsUpstreamForApi()
+    public async Task Plan_NomadConsul_WorkerJob_ContainsUpstreamForApi()
     {
         using var dir = new TempDir();
         await Harness.WriteNomadConsulStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
@@ -77,13 +77,13 @@ public sealed class NomadConsulPlanCommandTests
 
         await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
-        var workerHcl = await File.ReadAllTextAsync(
-            Path.Combine(dir.Path, "deployify-output", "worker.job.hcl"), TestContext.Current.CancellationToken);
-        workerHcl.ShouldContain("destination_name = \"api\"");
+        var workerJob = await File.ReadAllTextAsync(
+            Path.Combine(dir.Path, "deployify-output", "worker.nomad.json"), TestContext.Current.CancellationToken);
+        workerJob.ShouldContain("\"DestinationName\": \"api\"");
     }
 
     [Fact]
-    public async Task Plan_NomadConsul_WorkerHcl_ContainsUpstreamEnvVar()
+    public async Task Plan_NomadConsul_WorkerJob_ContainsUpstreamEnvVar()
     {
         using var dir = new TempDir();
         await Harness.WriteNomadConsulStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
@@ -91,14 +91,14 @@ public sealed class NomadConsulPlanCommandTests
 
         await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
-        var workerHcl = await File.ReadAllTextAsync(
-            Path.Combine(dir.Path, "deployify-output", "worker.job.hcl"), TestContext.Current.CancellationToken);
-        workerHcl.ShouldContain("NOMAD_UPSTREAM_ADDR_API");
-        workerHcl.ShouldContain("localhost:20000");
+        var workerJob = await File.ReadAllTextAsync(
+            Path.Combine(dir.Path, "deployify-output", "worker.nomad.json"), TestContext.Current.CancellationToken);
+        workerJob.ShouldContain("NOMAD_UPSTREAM_ADDR_API");
+        workerJob.ShouldContain("localhost:20000");
     }
 
     [Fact]
-    public async Task Plan_NomadConsul_HclFiles_NamedAfterServices()
+    public async Task Plan_NomadConsul_JobFiles_NamedAfterServices()
     {
         using var dir = new TempDir();
         await Harness.WriteNomadConsulStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
@@ -107,10 +107,10 @@ public sealed class NomadConsulPlanCommandTests
         await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         var outputDir = Path.Combine(dir.Path, "deployify-output");
-        var files = Directory.GetFiles(outputDir, "*.job.hcl").Select(Path.GetFileName).ToList();
-        files.ShouldContain("api.job.hcl");
-        files.ShouldContain("worker.job.hcl");
-        files.ShouldContain("redis.job.hcl");
+        var files = Directory.GetFiles(outputDir, "*.nomad.json").Select(Path.GetFileName).ToList();
+        files.ShouldContain("api.nomad.json");
+        files.ShouldContain("worker.nomad.json");
+        files.ShouldContain("redis.nomad.json");
     }
 
     [Fact]
@@ -138,7 +138,7 @@ public sealed class NomadConsulPlanCommandTests
         await root.InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         var outputDir = Path.Combine(dir.Path, "deployify-output");
-        Directory.GetFiles(outputDir, "*.job.hcl").Length.ShouldBe(3);
+        Directory.GetFiles(outputDir, "*.nomad.json").Length.ShouldBe(3);
     }
 
     [Fact]
@@ -151,9 +151,9 @@ public sealed class NomadConsulPlanCommandTests
         await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         var outputDir = Path.Combine(dir.Path, "deployify-output");
-        foreach (var file in Directory.GetFiles(outputDir, "*.job.hcl"))
+        foreach (var file in Directory.GetFiles(outputDir, "*.nomad.json"))
         {
-            (await File.ReadAllTextAsync(file, TestContext.Current.CancellationToken)).ShouldNotContain("mode = \"host\"");
+            (await File.ReadAllTextAsync(file, TestContext.Current.CancellationToken)).ShouldNotContain("\"Mode\": \"host\"");
         }
     }
 }
@@ -189,7 +189,7 @@ public sealed class NomadConsulApplyCommandTests
     }
 
     [Fact]
-    public async Task Apply_NomadConsul_DryRun_WritesHclFiles()
+    public async Task Apply_NomadConsul_DryRun_WritesJobFiles()
     {
         using var dir = new TempDir();
         await Harness.WriteNomadConsulStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
@@ -199,12 +199,12 @@ public sealed class NomadConsulApplyCommandTests
             ["apply", "--project-path", dir.Path, "--dry-run", "--auto-approve"], TestContext.Current.CancellationToken);
 
         var outputDir = Path.Combine(dir.Path, "deployify-output");
-        Directory.GetFiles(outputDir, "*.job.hcl", SearchOption.AllDirectories)
+        Directory.GetFiles(outputDir, "*.nomad.json", SearchOption.AllDirectories)
             .ShouldNotBeEmpty();
     }
 
     [Fact]
-    public async Task Apply_NomadConsul_AfterPlan_FindsHclFilesOnDisk_NotPlanError()
+    public async Task Apply_NomadConsul_AfterPlan_FindsJobFilesOnDisk_NotPlanError()
     {
         using var dir = new TempDir();
         await Harness.WriteNomadConsulStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
@@ -254,7 +254,7 @@ public sealed class NomadConsulOtherCommandTests
 
         code.ShouldBe(0);
         var outputDir = Path.Combine(dir.Path, "deployify-output");
-        Directory.GetFiles(outputDir, "*.job.hcl").Length.ShouldBe(3);
+        Directory.GetFiles(outputDir, "*.nomad.json").Length.ShouldBe(3);
     }
 
     [Fact]
@@ -348,7 +348,7 @@ public sealed class NomadConsulInitCommandTests
     }
 
     [Fact]
-    public async Task Init_NomadConsul_Plan_AfterInit_WritesHclFilesWithBridgeMode()
+    public async Task Init_NomadConsul_Plan_AfterInit_WritesJobFilesWithBridgeMode()
     {
         using var dir = new TempDir();
         var root = Root();
@@ -361,9 +361,9 @@ public sealed class NomadConsulInitCommandTests
         await root.InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         var outputDir = Path.Combine(dir.Path, "deployify-output");
-        foreach (var file in Directory.GetFiles(outputDir, "*.job.hcl"))
+        foreach (var file in Directory.GetFiles(outputDir, "*.nomad.json"))
         {
-            (await File.ReadAllTextAsync(file, TestContext.Current.CancellationToken)).ShouldContain("mode = \"bridge\"");
+            (await File.ReadAllTextAsync(file, TestContext.Current.CancellationToken)).ShouldContain("\"Mode\": \"bridge\"");
         }
     }
 }
@@ -377,7 +377,7 @@ public sealed class NomadConsulVsPlainNomadTests
     private static RootCommand Root() => CommandRunner.BuildFull();
 
     [Fact]
-    public async Task NomadConsul_HclContainsConnectBlock_PlainNomad_DoesNot()
+    public async Task NomadConsul_JobContainsConnectBlock_PlainNomad_DoesNot()
     {
         using var consulDir = new TempDir();
         using var nomadDir = new TempDir();
@@ -391,17 +391,17 @@ public sealed class NomadConsulVsPlainNomadTests
         await root.InvokeAsync(["plan", "--project-path", consulDir.Path], TestContext.Current.CancellationToken);
         await root.InvokeAsync(["plan", "--project-path", nomadDir.Path], TestContext.Current.CancellationToken);
 
-        var consulApiHcl = await File.ReadAllTextAsync(
-            Path.Combine(consulDir.Path, "deployify-output", "api.job.hcl"), TestContext.Current.CancellationToken);
-        var nomadApiHcl = await File.ReadAllTextAsync(
-            Path.Combine(nomadDir.Path, "deployify-output", "api.job.hcl"), TestContext.Current.CancellationToken);
+        var consulApiJob = await File.ReadAllTextAsync(
+            Path.Combine(consulDir.Path, "deployify-output", "api.nomad.json"), TestContext.Current.CancellationToken);
+        var nomadApiJob = await File.ReadAllTextAsync(
+            Path.Combine(nomadDir.Path, "deployify-output", "api.nomad.json"), TestContext.Current.CancellationToken);
 
-        consulApiHcl.ShouldContain("connect {");
-        nomadApiHcl.ShouldNotContain("connect {");
+        consulApiJob.ShouldContain("\"Connect\"");
+        nomadApiJob.ShouldNotContain("\"Connect\"");
     }
 
     [Fact]
-    public async Task NomadConsul_HclUsesBridgeMode_PlainNomad_DoesNot()
+    public async Task NomadConsul_JobUsesBridgeMode_PlainNomad_DoesNot()
     {
         using var consulDir = new TempDir();
         using var nomadDir = new TempDir();
@@ -415,17 +415,17 @@ public sealed class NomadConsulVsPlainNomadTests
         await root.InvokeAsync(["plan", "--project-path", consulDir.Path], TestContext.Current.CancellationToken);
         await root.InvokeAsync(["plan", "--project-path", nomadDir.Path], TestContext.Current.CancellationToken);
 
-        var consulHcl = await File.ReadAllTextAsync(
-            Path.Combine(consulDir.Path, "deployify-output", "api.job.hcl"), TestContext.Current.CancellationToken);
-        var nomadHcl = await File.ReadAllTextAsync(
-            Path.Combine(nomadDir.Path, "deployify-output", "api.job.hcl"), TestContext.Current.CancellationToken);
+        var consulJob = await File.ReadAllTextAsync(
+            Path.Combine(consulDir.Path, "deployify-output", "api.nomad.json"), TestContext.Current.CancellationToken);
+        var nomadJob = await File.ReadAllTextAsync(
+            Path.Combine(nomadDir.Path, "deployify-output", "api.nomad.json"), TestContext.Current.CancellationToken);
 
-        consulHcl.ShouldContain("mode = \"bridge\"");
-        nomadHcl.ShouldNotContain("mode = \"bridge\"");
+        consulJob.ShouldContain("\"Mode\": \"bridge\"");
+        nomadJob.ShouldNotContain("\"Mode\": \"bridge\"");
     }
 
     [Fact]
-    public async Task NomadConsul_WorkerHcl_HasUpstreamEnvVar_PlainNomad_DoesNot()
+    public async Task NomadConsul_WorkerJob_HasUpstreamEnvVar_PlainNomad_DoesNot()
     {
         using var consulDir = new TempDir();
         using var nomadDir = new TempDir();
@@ -440,16 +440,16 @@ public sealed class NomadConsulVsPlainNomadTests
         await root.InvokeAsync(["plan", "--project-path", nomadDir.Path], TestContext.Current.CancellationToken);
 
         var consulWorker = await File.ReadAllTextAsync(
-            Path.Combine(consulDir.Path, "deployify-output", "worker.job.hcl"), TestContext.Current.CancellationToken);
+            Path.Combine(consulDir.Path, "deployify-output", "worker.nomad.json"), TestContext.Current.CancellationToken);
         var nomadWorker = await File.ReadAllTextAsync(
-            Path.Combine(nomadDir.Path, "deployify-output", "worker.job.hcl"), TestContext.Current.CancellationToken);
+            Path.Combine(nomadDir.Path, "deployify-output", "worker.nomad.json"), TestContext.Current.CancellationToken);
 
         consulWorker.ShouldContain("NOMAD_UPSTREAM_ADDR_API");
         nomadWorker.ShouldNotContain("NOMAD_UPSTREAM_ADDR_API");
     }
 
     [Fact]
-    public async Task BothTargets_ProduceThreeHclFiles_ForSameManifest()
+    public async Task BothTargets_ProduceThreeJobFiles_ForSameManifest()
     {
         using var consulDir = new TempDir();
         using var nomadDir = new TempDir();
@@ -463,9 +463,9 @@ public sealed class NomadConsulVsPlainNomadTests
         await root.InvokeAsync(["plan", "--project-path", consulDir.Path], TestContext.Current.CancellationToken);
         await root.InvokeAsync(["plan", "--project-path", nomadDir.Path], TestContext.Current.CancellationToken);
 
-        Directory.GetFiles(Path.Combine(consulDir.Path, "deployify-output"), "*.job.hcl")
+        Directory.GetFiles(Path.Combine(consulDir.Path, "deployify-output"), "*.nomad.json")
             .Length.ShouldBe(3);
-        Directory.GetFiles(Path.Combine(nomadDir.Path, "deployify-output"), "*.job.hcl")
+        Directory.GetFiles(Path.Combine(nomadDir.Path, "deployify-output"), "*.nomad.json")
             .Length.ShouldBe(3);
     }
 }

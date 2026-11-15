@@ -11,9 +11,15 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="YamlDotNet" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Deployify.Target.Compose.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Shared with the other targets that write YAML. -->
+    <Compile Include="..\Shared\Yaml\YamlWriter.cs" Link="Yaml\YamlWriter.cs" />
   </ItemGroup>
 
 </Project>

@@ -1,0 +1,59 @@
+{
+  "Job": {
+    "ID": "pg",
+    "Name": "pg",
+    "Namespace": "default",
+    "Type": "service",
+    "Datacenters": [
+      "dc1"
+    ],
+    "Meta": {
+      "deployify-managed": "true"
+    },
+    "TaskGroups": [
+      {
+        "Name": "pg",
+        "Count": 1,
+        "Update": {
+          "MinHealthyTime": 30000000000,
+          "HealthyDeadline": 600000000000,
+          "ProgressDeadline": 900000000000,
+          "AutoRevert": true
+        },
+        "Networks": [
+          {
+            "Mode": "host",
+            "ReservedPorts": [
+              {
+                "Label": "tcp",
+                "Value": 5432
+              }
+            ]
+          }
+        ],
+        "Tasks": [
+          {
+            "Name": "pg",
+            "Driver": "podman",
+            "Config": {
+              "image": "postgres:17",
+              "network_mode": "host"
+            },
+            "Templates": [
+              {
+                "EmbeddedTmpl": "{{ with nomadVar \"nomad/jobs/pg\" -}}\nPOSTGRES_PASSWORD={{ index . \"POSTGRES_PASSWORD\" }}\n{{- end }}\n",
+                "DestPath": "secrets/deployify.env",
+                "Envvars": true,
+                "ChangeMode": "restart"
+              }
+            ],
+            "Resources": {
+              "CPU": 256,
+              "MemoryMB": 256
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

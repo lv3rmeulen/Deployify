@@ -5,7 +5,7 @@ description: "Deploying an Aspire app to Nomad + Consul Connect with Deployify."
 
 Target ID: `NomadConsul`
 
-Generates Nomad HCL jobs with Consul Connect service mesh. Every service uses `network { mode = "bridge" }` and a `sidecar_service` block. Inter-service dependencies become `upstreams` bound to loopback ports (starting at `upstreamBasePort`), with `NOMAD_UPSTREAM_ADDR_<SERVICE>` env vars injected automatically so applications discover peers at `localhost:<port>` without hardcoded addresses.
+Generates Nomad job files (`<service>.nomad.json`, the JSON that Nomad's job API takes) with Consul Connect service mesh. Every service uses a bridge network and a Connect sidecar service. Inter-service dependencies become upstreams bound to loopback ports (starting at `upstreamBasePort`), with `NOMAD_UPSTREAM_ADDR_<SERVICE>` env vars injected automatically so applications discover peers at `localhost:<port>` without hardcoded addresses.
 
 ```json
 "targetConfig": {

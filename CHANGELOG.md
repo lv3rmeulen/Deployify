@@ -42,6 +42,13 @@ Each release can have these sections: **Added**, **Changed**, **Deprecated**, **
   version (1). Files from the alphas are read and upgraded the next time they're saved. A file
   from a newer Deployify is refused instead of being overwritten.
 
+- Nomad and Nomad + Consul jobs are written as JSON (`<service>.nomad.json`, the body Nomad's
+  job API takes) instead of HCL (`<service>.job.hcl`), and sent to Nomad without its HCL parser.
+  `plan` removes a service's old `.job.hcl` file. To run a job by hand, use
+  `nomad job run -json <service>.nomad.json`.
+- Kubernetes manifests and Compose files are written from typed models. The objects are
+  unchanged; a few values are quoted differently.
+
 ### Fixed
 
 - Console output when Deployify runs without a terminal.

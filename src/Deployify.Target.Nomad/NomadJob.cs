@@ -51,7 +51,7 @@ public sealed class NomadJob
     // ── Raw exec artifact ─────────────────────────────────────────────────────
     /// <summary>
     /// Download URL populated after <c>deployify package</c> uploads the zip.
-    /// When set, the HCL emits an <c>artifact { source = "..." }</c> block.
+    /// When set, the job downloads it with an artifact (GetterSource).
     /// </summary>
     public string? ArtifactUrl { get; set; }
 

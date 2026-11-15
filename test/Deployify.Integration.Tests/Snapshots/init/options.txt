@@ -1,0 +1,132 @@
+--project-path, -p : String = <cwd>
+    Path to the Aspire AppHost .csproj or its directory.
+--non-interactive : Boolean = False
+    Disable interactive prompts; fail on missing required values.
+--env-name : String = local
+    Environment name.
+--target : DeploymentTargetType?
+    Deployment target: nomad | kubernetes | helm | argocd | flux | ovhcloud | compose | awsecs | azurecontainerapps | nomadconsul | iis, or the ID of a plugin target.
+--container-registry : String
+    Container registry URL.
+--image-tag : String = latest
+    Default image tag.
+--output-path : String = deployify-output
+    Output folder for artifacts.
+--container-runtime : ContainerRuntime = Docker
+    Container runtime for publishing: docker (default) | podman.
+--container-os : String = linux
+    Target OS for container images (default: linux).
+--container-arch : String = x64
+    Target CPU architecture for container images: x64 (default) | arm64 | arm.
+--deploy-dapr : Boolean = False
+    Inject a Dapr sidecar into every service.
+--dapr-version : String = latest
+    Dapr sidecar image tag.
+--dapr-http-port : Int32 = 3500
+    Base Dapr HTTP port.
+--dapr-grpc-port : Int32 = 50001
+    Base Dapr gRPC port.
+--dapr-components-path : String
+    Path to Dapr components directory.
+--dapr-config-path : String
+    Path to Dapr config file.
+--dapr-log-level : String = info
+    Dapr sidecar log level.
+--deploy-dashboard : Boolean = False
+    Inject the Aspire Dashboard container into every deployment.
+--dashboard-tag : String = latest
+    Image tag for mcr.microsoft.com/dotnet/aspire-dashboard.
+--dashboard-port : Int32 = 18888
+    Host port for the dashboard UI.
+--dashboard-otlp-port : Int32 = 18889
+    Host port for the OTLP gRPC endpoint.
+--dashboard-token : String
+    Browser auth token as env:NAME (omit for unauthenticated).
+--nomad-address : String = http://localhost:4646
+    Nomad cluster address.
+--nomad-token : String
+    Nomad ACL token as env:NAME. Default: NOMAD_TOKEN at run time.
+--nomad-namespace : String = default
+    Nomad namespace.
+--nomad-datacenter : String = dc1
+    Nomad datacenter.
+--nomad-mode : NomadDeploymentMode = Docker
+    Nomad deployment mode: Docker (default) | RawExec.
+--nomad-registry-username : String
+    Docker registry username for private image pulls.
+--nomad-registry-password : String
+    Docker registry password or access token as env:NAME. Default: DEPLOYIFY_REGISTRY_PASSWORD at run time.
+--nomad-register-services : Boolean = True
+    Register services in Nomad/Consul service catalog.
+--nomad-service-provider : String = nomad
+    Service registration provider: nomad (default) | consul.
+--nomad-health-check-path : String = /health
+    HTTP path for service health checks.
+--kubernetes-context : String
+    kubectl context name.
+--kubernetes-namespace-prefix : String = deployify
+    Kubernetes namespace prefix.
+--kubernetes-ingress-domain : String
+    Ingress base domain.
+--gitops-repo : String
+    Config repository the GitOps controller watches (https or ssh URL).
+--gitops-branch : String = main
+    Branch Deployify commits to.
+--gitops-path : String
+    Folder in the repository for this environment. Default: deployify/{env}.
+--ovh-endpoint : String = ovh-eu
+    OVHcloud API endpoint: ovh-eu | ovh-ca | ovh-us.
+--ovh-project : String
+    OVHcloud Public Cloud project ID. Default: OVH_CLOUD_PROJECT_SERVICE at run time.
+--ovh-cluster : String
+    OVHcloud Managed Kubernetes cluster ID.
+--iis-host : String
+    Windows server running IIS. Default: this machine.
+--iis-transport : IisTransport = WinRm
+    How to reach --iis-host: WinRm | Ssh.
+--iis-user : String
+    User to connect as. WinRM reads the password from IIS_PASSWORD.
+--iis-sites-root : String = C:\inetpub\deployify
+    Folder on the server for the sites and their releases.
+--compose-project : String = deployify
+    Docker Compose project name.
+--compose-restart : String = unless-stopped
+    Restart policy.
+--ecs-region : String = us-east-1
+    AWS region.
+--ecs-cluster : String = deployify
+    ECS cluster name.
+--ecs-profile : String
+    AWS CLI profile name.
+--ecs-subnets : String
+    Comma-separated subnet IDs for Fargate tasks.
+--ecs-security-groups : String
+    Comma-separated security group IDs.
+--ecs-execution-role : String
+    ECS task execution role ARN.
+--aca-subscription : String
+    Azure subscription ID.
+--aca-resource-group : String = deployify-rg
+    Azure resource group.
+--aca-location : String = eastus
+    Azure region.
+--aca-environment : String = deployify-env
+    Container Apps environment name.
+--aca-acr : String
+    Azure Container Registry login server.
+--nc-nomad-address : String = http://localhost:4646
+    Nomad address (Consul mesh target).
+--nc-nomad-token : String
+    Nomad ACL token as env:NAME (Consul mesh target). Default: NOMAD_TOKEN at run time.
+--nc-nomad-namespace : String = default
+    Nomad namespace (Consul mesh target).
+--nc-datacenter : String = dc1
+    Nomad/Consul datacenter.
+--nc-consul-address : String = http://localhost:8500
+    Consul address.
+--nc-consul-token : String
+    Consul ACL token as env:NAME. Default: CONSUL_HTTP_TOKEN at run time.
+--nc-ingress-gateway : Boolean = False
+    Enable Consul Ingress Gateway for HTTP services.
+--allow-plaintext-secrets : Boolean = False
+    Allow secret flags (tokens, passwords) to take literal values, which are saved as plain text in deployify-state.json. By default they must be env:NAME references.

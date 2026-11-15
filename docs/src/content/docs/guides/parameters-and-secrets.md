@@ -34,7 +34,7 @@ stores them its own way:
 | Kubernetes | A `<service>-secrets` Secret, loaded with `envFrom.secretRef` |
 | AzureContainerApps | `configuration.secrets`, referenced with `secretRef` |
 | AwsEcs | SSM Parameter Store SecureStrings under `secretsPrefix` (default `/deployify/<cluster>`), written by `apply` and referenced from the task definition's `secrets`. The execution role needs `ssm:GetParameters` |
-| Nomad / NomadConsul | Nomad Variables at `nomad/jobs/<job>`, written by `apply` and read by a `template` block (Nomad 1.4+) |
+| Nomad / NomadConsul | Nomad Variables at `nomad/jobs/<job>`, written by `apply` and read by the job's template (Nomad 1.4+) |
 
 `explain` masks secret values. A reference that can't be resolved is left in place and reported.
 

@@ -44,7 +44,7 @@ public sealed class PlanCommandTests
     // ── artifact generation (no network required) ─────────────────────────────
 
     [Fact]
-    public async Task Plan_Nomad_WritesHclFiles()
+    public async Task Plan_Nomad_WritesJobFiles()
     {
         using var dir = new TempDir();
         await Harness.WriteNomadStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
@@ -52,22 +52,22 @@ public sealed class PlanCommandTests
         // Plan generates files regardless of whether Nomad is reachable
         await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
         var outputDir = Path.Combine(dir.Path, "deployify-output");
-        Directory.GetFiles(outputDir, "*.hcl", SearchOption.AllDirectories)
+        Directory.GetFiles(outputDir, "*.nomad.json", SearchOption.AllDirectories)
             .Length.ShouldBe(3); // api, worker, redis
     }
 
     [Fact]
-    public async Task Plan_Nomad_WritesOneHclFilePerService()
+    public async Task Plan_Nomad_WritesOneJobFilePerService()
     {
         using var dir = new TempDir();
         await Harness.WriteNomadStateAsync(dir.Path, ct: TestContext.Current.CancellationToken);
         await Harness.WriteManifestAsync(dir.Path, ct: TestContext.Current.CancellationToken);
         await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
         var outputDir = Path.Combine(dir.Path, "deployify-output");
-        var files = Directory.GetFiles(outputDir, "*.hcl");
-        files.ShouldContain(f => f.EndsWith("api.job.hcl"));
-        files.ShouldContain(f => f.EndsWith("worker.job.hcl"));
-        files.ShouldContain(f => f.EndsWith("redis.job.hcl"));
+        var files = Directory.GetFiles(outputDir, "*.nomad.json");
+        files.ShouldContain(f => f.EndsWith("api.nomad.json"));
+        files.ShouldContain(f => f.EndsWith("worker.nomad.json"));
+        files.ShouldContain(f => f.EndsWith("redis.nomad.json"));
     }
 
     [Fact]
@@ -148,7 +148,7 @@ public sealed class PlanCommandTests
         await root.InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
         await root.InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
         var outputDir = Path.Combine(dir.Path, "deployify-output");
-        Directory.GetFiles(outputDir, "*.hcl").Length.ShouldBe(3);
+        Directory.GetFiles(outputDir, "*.nomad.json").Length.ShouldBe(3);
     }
 }
 
@@ -200,7 +200,7 @@ public sealed class ApplyCommandTests
         await Root().InvokeAsync(
             ["apply", "--project-path", dir.Path, "--dry-run", "--auto-approve"], TestContext.Current.CancellationToken);
         var outputDir = Path.Combine(dir.Path, "deployify-output");
-        Directory.GetFiles(outputDir, "*.hcl", SearchOption.AllDirectories)
+        Directory.GetFiles(outputDir, "*.nomad.json", SearchOption.AllDirectories)
             .ShouldNotBeEmpty();
     }
 

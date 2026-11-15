@@ -1,0 +1,76 @@
+{
+  "FormatVersion": 1,
+  "ActiveEnvironment": "prod",
+  "Environments": {
+    "prod": {
+      "Target": "Nomad",
+      "ContainerRegistry": "registry.example.com/team",
+      "ImageTag": "1.2.3",
+      "OutputPath": "out",
+      "ServiceOverrides": {},
+      "IgnoreResources": [],
+      "Parameters": {},
+      "ContainerRuntime": "Podman",
+      "DeployDashboard": true,
+      "Dashboard": {
+        "ImageTag": "latest",
+        "Port": 19888,
+        "OtlpPort": 19889,
+        "BrowserToken": "env:DASH_TOKEN",
+        "Cpu": "100m",
+        "Memory": "128Mi"
+      },
+      "AppHostPath": "<dir>",
+      "ContainerOs": "linux",
+      "ContainerArch": "arm64",
+      "DeployDapr": true,
+      "Dapr": {
+        "DaprVersion": "latest",
+        "DaprHttpPort": 3600,
+        "DaprGrpcPort": 50101,
+        "ComponentsPath": "./components",
+        "LogLevel": "info"
+      },
+      "Secrets": {
+        "Backend": "Inline",
+        "Vault": {
+          "Mount": "secret",
+          "PathPrefix": "deployify",
+          "AuthMount": "kubernetes",
+          "ManageAuth": true,
+          "SecretsFileName": "appsettings.secrets.json",
+          "AgentAnnotations": {}
+        },
+        "KeyVault": {
+          "KubernetesIdentity": "WorkloadIdentity"
+        },
+        "References": {}
+      },
+      "TargetConfig": {
+        "nomad": {
+          "Address": "http://nomad:4646",
+          "Token": "env:PROD_NOMAD",
+          "Namespace": "apps",
+          "Datacenters": [
+            "eu1"
+          ],
+          "DeploymentMode": "RawExec",
+          "RegistryUsername": "ci",
+          "RegistryPassword": "env:REG_PW",
+          "ServiceProvider": "consul",
+          "RegisterServices": true,
+          "HealthCheckType": "tcp",
+          "AutoRevert": true,
+          "HealthCheckPath": "/healthz",
+          "HealthCheckInterval": "10s",
+          "HealthCheckTimeout": "2s",
+          "BasePort": 8080,
+          "DefaultCpu": 256,
+          "DefaultMemory": 256
+        }
+      },
+      "Protected": false,
+      "Prune": false
+    }
+  }
+}

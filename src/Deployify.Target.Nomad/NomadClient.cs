@@ -6,9 +6,11 @@ using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using Deployify.Target.Nomad.Api;
 using Microsoft.Extensions.Logging;
 
 namespace Deployify.Target.Nomad;
@@ -81,14 +83,14 @@ public sealed class NomadClient : IDisposable
     }
 
     /// <summary>
-    /// Asks Nomad what submitting <paramref name="hclPath"/> would change, using the job
-    /// plan API. Returns Nomad's diff type: "None", "Added", "Edited" or "Deleted".
+    /// Asks Nomad what submitting the job file at <paramref name="jobPath"/> would change, using
+    /// the job plan API. Returns Nomad's diff type: "None", "Added", "Edited" or "Deleted".
     /// </summary>
-    public async Task<string> PlanJobAsync(string hclPath, CancellationToken ct = default)
+    public async Task<string> PlanJobAsync(string jobPath, CancellationToken ct = default)
     {
-        var (jobId, jobJson) = await ParseAsync(hclPath, ct);
+        var (jobId, job) = await ReadJobAsync(jobPath, ct);
         var resp = await _http.PostAsync($"v1/job/{Uri.EscapeDataString(jobId)}/plan?{Ns}",
-            new StringContent($"{{\"Job\":{jobJson},\"Diff\":true}}", Encoding.UTF8, "application/json"), ct);
+            JsonBody(new JsonObject { ["Job"] = job, ["Diff"] = true }), ct);
         await EnsureSuccessAsync(resp, "plan", ct);
         using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
         return doc.RootElement.TryGetProperty("Diff", out var diff) &&
@@ -98,11 +100,10 @@ public sealed class NomadClient : IDisposable
             : "None";
     }
 
-    public async Task<string> SubmitJobAsync(string hclPath, CancellationToken ct = default)
+    public async Task<string> SubmitJobAsync(string jobPath, CancellationToken ct = default)
     {
-        var (_, jobJson) = await ParseAsync(hclPath, ct);
-        var submitResp = await _http.PostAsync($"v1/jobs?{Ns}",
-            new StringContent($"{{\"Job\":{jobJson}}}", Encoding.UTF8, "application/json"), ct);
+        var (_, job) = await ReadJobAsync(jobPath, ct);
+        var submitResp = await _http.PostAsync($"v1/jobs?{Ns}", JsonBody(new JsonObject { ["Job"] = job }), ct);
         await EnsureSuccessAsync(submitResp, "submit", ct);
         using var doc = JsonDocument.Parse(await submitResp.Content.ReadAsStringAsync(ct));
         return doc.RootElement.TryGetProperty("EvalID", out var id) ? id.GetString() ?? string.Empty : string.Empty;
@@ -125,18 +126,10 @@ public sealed class NomadClient : IDisposable
         await EnsureSuccessAsync(resp, "stop", ct);
     }
 
-    public async Task<IReadOnlyList<string>> ValidateJobAsync(string hclPath, CancellationToken ct = default)
+    public async Task<IReadOnlyList<string>> ValidateJobAsync(string jobPath, CancellationToken ct = default)
     {
-        var hcl = await ReadHclAsync(hclPath, ct);
-        var parseResp = await _http.PostAsJsonAsync($"v1/jobs/parse?{Ns}", new { JobHCL = hcl, Canonicalize = true }, ct);
-        if (!parseResp.IsSuccessStatusCode)
-        {
-            return [$"Parse error: {await parseResp.Content.ReadAsStringAsync(ct)}"];
-        }
-
-        var jobJson = await parseResp.Content.ReadAsStringAsync(ct);
-        var valResp = await _http.PostAsync("v1/validate/job",
-            new StringContent($"{{\"Job\":{jobJson}}}", Encoding.UTF8, "application/json"), ct);
+        var (_, job) = await ReadJobAsync(jobPath, ct);
+        var valResp = await _http.PostAsync("v1/validate/job", JsonBody(new JsonObject { ["Job"] = job }), ct);
         await EnsureSuccessAsync(valResp, "validate", ct);
         using var doc = JsonDocument.Parse(await valResp.Content.ReadAsStringAsync(ct));
         var errors = new List<string>();
@@ -371,10 +364,10 @@ public sealed class NomadClient : IDisposable
     {
         var json = await GetJobJsonAsync(jobId, ct)
                    ?? throw new HttpRequestException($"Nomad doesn't know job {jobId}.");
-        var job = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();
+        var job = JsonNode.Parse(json)!.AsObject();
         job["Stop"] = false;
         var resp = await _http.PostAsync($"v1/jobs?{Ns}",
-            new StringContent(new System.Text.Json.Nodes.JsonObject { ["Job"] = job }.ToJsonString(), Encoding.UTF8, "application/json"), ct);
+            new StringContent(new JsonObject { ["Job"] = job }.ToJsonString(), Encoding.UTF8, "application/json"), ct);
         await EnsureSuccessAsync(resp, $"start job {jobId}", ct);
     }
 
@@ -382,20 +375,12 @@ public sealed class NomadClient : IDisposable
 
     public void Dispose() => _http.Dispose();
 
-    /// <summary>Reads a job file and swaps the registry password placeholder for the real secret.</summary>
-    private async Task<string> ReadHclAsync(string hclPath, CancellationToken ct)
-        => Hcl.InjectRegistryPassword(await File.ReadAllTextAsync(hclPath, ct), _registryPassword);
+    /// <summary>Reads a job file, with the registry password placeholder swapped for the real secret.</summary>
+    private Task<(string JobId, JsonObject Job)> ReadJobAsync(string jobPath, CancellationToken ct)
+        => NomadJobFile.ReadAsync(jobPath, _registryPassword, ct);
 
-    private async Task<(string JobId, string JobJson)> ParseAsync(string hclPath, CancellationToken ct)
-    {
-        var hcl = await ReadHclAsync(hclPath, ct);
-        var parseResp = await _http.PostAsJsonAsync($"v1/jobs/parse?{Ns}", new { JobHCL = hcl, Canonicalize = true }, ct);
-        await EnsureSuccessAsync(parseResp, $"parse {Path.GetFileName(hclPath)}", ct);
-        var jobJson = await parseResp.Content.ReadAsStringAsync(ct);
-        using var doc = JsonDocument.Parse(jobJson);
-        var id = doc.RootElement.TryGetProperty("ID", out var idEl) ? idEl.GetString() : null;
-        return (id ?? Path.GetFileNameWithoutExtension(hclPath).Replace(".job", ""), jobJson);
-    }
+    private static StringContent JsonBody(JsonObject body)
+        => new(body.ToJsonString(), Encoding.UTF8, "application/json");
 
     /// <summary>Throws with Nomad's own error text instead of a bare status code.</summary>
     private static async Task EnsureSuccessAsync(HttpResponseMessage resp, string action, CancellationToken ct)

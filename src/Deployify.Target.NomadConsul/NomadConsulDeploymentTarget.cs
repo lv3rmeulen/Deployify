@@ -9,6 +9,7 @@ using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
 using Deployify.Target.Nomad;
+using Deployify.Target.Nomad.Api;
 using Microsoft.Extensions.Logging;
 
 namespace Deployify.Target.NomadConsul;
@@ -83,7 +84,7 @@ public sealed class NomadConsulDeploymentTarget(
         var paths = new List<string>();
         foreach (var job in jobs)
         {
-            paths.Add(await Generator.WriteHclAsync(job, config, cfg, outputDirectory, ct));
+            paths.Add(await Generator.WriteJobAsync(job, config, cfg, outputDirectory, ct));
         }
 
         return paths;
@@ -104,18 +105,18 @@ public sealed class NomadConsulDeploymentTarget(
 
         foreach (var job in jobs)
         {
-            var hclPath = await Generator.WriteHclAsync(job, config, cfg, outputDirectory, ct);
+            var jobPath = await Generator.WriteJobAsync(job, config, cfg, outputDirectory, ct);
             IReadOnlyList<string> errors;
             try
             {
-                errors = await nomadClient.ValidateJobAsync(hclPath, ct);
+                errors = await nomadClient.ValidateJobAsync(jobPath, ct);
             }
             catch
             {
                 errors = [];
             } // Nomad unreachable — skip live validation
 
-            results.Add(new ValidationResult { ArtifactName = hclPath, Errors = errors });
+            results.Add(new ValidationResult { ArtifactName = jobPath, Errors = errors });
         }
 
         return results;
@@ -134,7 +135,7 @@ public sealed class NomadConsulDeploymentTarget(
     }
 
     /// <summary>
-    /// Writes every job's HCL (apply reads these) and asks Nomad what submitting each would
+    /// Writes every job file (apply reads these) and asks Nomad what submitting each would
     /// change; plan and diff both use this, so they agree. A job that isn't running is Added;
     /// one Nomad's plan API reports no change for is Unchanged, otherwise Changed. When the
     /// plan call itself fails the job is Unknown, with the reason, rather than guessed. An
@@ -147,7 +148,7 @@ public sealed class NomadConsulDeploymentTarget(
         var paths = new Dictionary<string, string>();
         foreach (var job in jobs)
         {
-            paths[job.Name] = await Generator.WriteHclAsync(job, config, cfg, outputDirectory, ct);
+            paths[job.Name] = await Generator.WriteJobAsync(job, config, cfg, outputDirectory, ct);
         }
 
         using var client = BuildNomadClient(cfg);
@@ -193,15 +194,15 @@ public sealed class NomadConsulDeploymentTarget(
     }
 
     /// <summary>Nomad's diff type ("None", "Added", "Edited"…), or null and the reason when the plan call fails.</summary>
-    private async Task<(string? DiffType, string? Error)> TryPlanAsync(NomadClient client, string hclPath, CancellationToken ct)
+    private async Task<(string? DiffType, string? Error)> TryPlanAsync(NomadClient client, string jobPath, CancellationToken ct)
     {
         try
         {
-            return (await client.PlanJobAsync(hclPath, ct), null);
+            return (await client.PlanJobAsync(jobPath, ct), null);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogWarning("Could not plan {Path}: {Message}", Path.GetFileName(hclPath), ex.Message);
+            logger.LogWarning("Could not plan {Path}: {Message}", Path.GetFileName(jobPath), ex.Message);
             return (null, $"Nomad could not plan the job: {ex.Message}");
         }
     }
@@ -230,14 +231,14 @@ public sealed class NomadConsulDeploymentTarget(
     private async Task<DeploymentResult> ApplyOneAsync(
         NomadClient nomadClient, ConsulJob job, string outputDirectory, CancellationToken ct)
     {
-        var hclPath = Path.Combine(outputDirectory, $"{job.Name}.job.hcl");
-        if (!File.Exists(hclPath))
+        var jobPath = Path.Combine(outputDirectory, NomadJobFile.FileName(job.Name));
+        if (!File.Exists(jobPath))
         {
             return new DeploymentResult
             {
                 ServiceName = job.Name,
                 Success = false,
-                Error = $"Artifact not found: {hclPath}. Run 'deployify plan' first."
+                Error = $"Artifact not found: {jobPath}. Run 'deployify plan' first."
             };
         }
 
@@ -250,7 +251,7 @@ public sealed class NomadConsulDeploymentTarget(
                     job.SecretEnv.ToDictionary(kv => kv.Key, kv => kv.Value.ToString()), ct);
             }
 
-            var evalId = await nomadClient.SubmitJobAsync(hclPath, ct);
+            var evalId = await nomadClient.SubmitJobAsync(jobPath, ct);
             logger.LogInformation(
                 "Submitted Consul Connect job '{Name}', evalId={EvalId}", job.Name, evalId);
             return new DeploymentResult

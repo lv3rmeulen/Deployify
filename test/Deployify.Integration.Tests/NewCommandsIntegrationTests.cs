@@ -50,7 +50,7 @@ public sealed class GenerateCommandTests
         await Root().InvokeAsync(["generate", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         var outputDir = Path.Combine(dir.Path, "deployify-output");
-        Directory.GetFiles(outputDir, "*.job.hcl").Length.ShouldBeGreaterThan(0);
+        Directory.GetFiles(outputDir, "*.nomad.json").Length.ShouldBeGreaterThan(0);
     }
 
     [Fact]
@@ -84,7 +84,7 @@ public sealed class GenerateCommandTests
         await Root().InvokeAsync(["generate", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         var outputDir = Path.Combine(dir.Path, "deployify-output");
-        Directory.GetFiles(outputDir, "*.job.hcl").Length.ShouldBe(3);
+        Directory.GetFiles(outputDir, "*.nomad.json").Length.ShouldBe(3);
     }
 
     [Fact]
@@ -112,7 +112,7 @@ public sealed class GenerateCommandTests
         await root.InvokeAsync(["generate", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         var outputDir = Path.Combine(dir.Path, "deployify-output");
-        Directory.GetFiles(outputDir, "*.job.hcl").Length.ShouldBe(3);
+        Directory.GetFiles(outputDir, "*.nomad.json").Length.ShouldBe(3);
     }
 
     [Fact]
@@ -154,7 +154,7 @@ public sealed class GenerateCommandTests
 
         code.ShouldBe(0);
         var outputDir = Path.Combine(dir.Path, "deployify-output");
-        Directory.GetFiles(outputDir, "*.job.hcl").Length.ShouldBe(3);
+        Directory.GetFiles(outputDir, "*.nomad.json").Length.ShouldBe(3);
     }
 }
 
@@ -198,7 +198,7 @@ public sealed class CiCommandTests
             ["ci", "--project-path", dir.Path, "--skip-validate", "--skip-apply"], TestContext.Current.CancellationToken);
 
         var outputDir = Path.Combine(dir.Path, "deployify-output");
-        Directory.GetFiles(outputDir, "*.job.hcl").Length.ShouldBe(3);
+        Directory.GetFiles(outputDir, "*.nomad.json").Length.ShouldBe(3);
     }
 
     [Fact]
@@ -426,7 +426,7 @@ public sealed class GenerateCiPipelineTests
         ], TestContext.Current.CancellationToken);
 
         var outputDir = Path.Combine(dir.Path, "deployify-output");
-        Directory.GetFiles(outputDir, "*.job.hcl").Length.ShouldBe(3);
+        Directory.GetFiles(outputDir, "*.nomad.json").Length.ShouldBe(3);
     }
 
     [Fact]
@@ -441,9 +441,9 @@ public sealed class GenerateCiPipelineTests
         await root.InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         var outputDir = Path.Combine(dir.Path, "deployify-output");
-        var files = Directory.GetFiles(outputDir, "*.job.hcl").Select(Path.GetFileName).ToList();
-        files.ShouldContain("api.job.hcl");
-        files.ShouldContain("worker.job.hcl");
-        files.ShouldContain("redis.job.hcl");
+        var files = Directory.GetFiles(outputDir, "*.nomad.json").Select(Path.GetFileName).ToList();
+        files.ShouldContain("api.nomad.json");
+        files.ShouldContain("worker.nomad.json");
+        files.ShouldContain("redis.nomad.json");
     }
 }

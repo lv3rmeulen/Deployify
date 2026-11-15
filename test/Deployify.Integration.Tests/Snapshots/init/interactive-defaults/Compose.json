@@ -1,0 +1,64 @@
+{
+  "FormatVersion": 1,
+  "ActiveEnvironment": "prod",
+  "Environments": {
+    "prod": {
+      "Target": "Compose",
+      "ImageTag": "latest",
+      "OutputPath": "deployify-output",
+      "ServiceOverrides": {},
+      "IgnoreResources": [],
+      "Parameters": {},
+      "ContainerRuntime": "Docker",
+      "DeployDashboard": false,
+      "Dashboard": {
+        "ImageTag": "latest",
+        "Port": 18888,
+        "OtlpPort": 18889,
+        "Cpu": "100m",
+        "Memory": "128Mi"
+      },
+      "AppHostPath": "<dir>",
+      "ContainerOs": "linux",
+      "ContainerArch": "x64",
+      "DeployDapr": false,
+      "Dapr": {
+        "DaprVersion": "latest",
+        "DaprHttpPort": 3500,
+        "DaprGrpcPort": 50001,
+        "LogLevel": "info"
+      },
+      "Secrets": {
+        "Backend": "Inline",
+        "Vault": {
+          "Mount": "secret",
+          "PathPrefix": "deployify",
+          "AuthMount": "kubernetes",
+          "ManageAuth": true,
+          "SecretsFileName": "appsettings.secrets.json",
+          "AgentAnnotations": {}
+        },
+        "KeyVault": {
+          "KubernetesIdentity": "WorkloadIdentity"
+        },
+        "References": {}
+      },
+      "TargetConfig": {
+        "compose": {
+          "ProjectName": "prod",
+          "OutputPath": "compose-output",
+          "GenerateMergedFile": true,
+          "RestartPolicy": "unless-stopped",
+          "GenerateHealthChecks": false,
+          "BasePort": 8080,
+          "GenerateEnvFile": true,
+          "GenerateProfiles": true,
+          "Volumes": {},
+          "BindMounts": {}
+        }
+      },
+      "Protected": false,
+      "Prune": false
+    }
+  }
+}

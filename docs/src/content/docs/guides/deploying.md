@@ -7,7 +7,7 @@ See [Health-gated rollouts](/Deployify/guides/rollouts/) for what `apply` does w
 
 ## `generate`
 
-Writes artifacts (HCL jobs, Kubernetes YAML, Helm charts, `docker-compose.yml`, ECS task definitions, ACA specs) to `deployify-output/` without contacting the cluster. Use this as a standalone step in CI or to inspect outputs before planning.
+Writes artifacts (Nomad job files, Kubernetes YAML, Helm charts, `docker-compose.yml`, ECS task definitions, ACA specs) to `deployify-output/` without contacting the cluster. Use this as a standalone step in CI or to inspect outputs before planning.
 
 ```bash
 deployify generate

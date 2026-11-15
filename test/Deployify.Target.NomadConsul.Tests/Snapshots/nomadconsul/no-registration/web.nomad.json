@@ -1,0 +1,84 @@
+{
+  "Job": {
+    "ID": "web",
+    "Name": "web",
+    "Namespace": "mesh",
+    "Type": "service",
+    "Datacenters": [
+      "dc1"
+    ],
+    "Meta": {
+      "deployify-managed": "true"
+    },
+    "TaskGroups": [
+      {
+        "Name": "web",
+        "Count": 1,
+        "Update": {
+          "MinHealthyTime": 30000000000,
+          "HealthyDeadline": 600000000000,
+          "ProgressDeadline": 900000000000,
+          "AutoRevert": true
+        },
+        "Networks": [
+          {
+            "Mode": "bridge",
+            "DynamicPorts": [
+              {
+                "Label": "http",
+                "To": 3000
+              }
+            ]
+          }
+        ],
+        "Services": [
+          {
+            "Name": "web",
+            "PortLabel": "3000",
+            "Connect": {
+              "SidecarService": {
+                "Proxy": {
+                  "Upstreams": [
+                    {
+                      "DestinationName": "api",
+                      "LocalBindPort": 20000
+                    },
+                    {
+                      "DestinationName": "pg",
+                      "LocalBindPort": 20001
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "Tasks": [
+          {
+            "Name": "web",
+            "Driver": "podman",
+            "Config": {
+              "image": "registry.example.com/myapp/web:1",
+              "args": [
+                "--api",
+                "http://localhost:20000"
+              ],
+              "ports": [
+                "http"
+              ]
+            },
+            "Env": {
+              "NOMAD_UPSTREAM_ADDR_API": "localhost:20000",
+              "NOMAD_UPSTREAM_ADDR_PG": "localhost:20001",
+              "API_URL": "http://localhost:20000"
+            },
+            "Resources": {
+              "CPU": 256,
+              "MemoryMB": 256
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

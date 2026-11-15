@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-config
+  namespace: test-api
+  labels:
+    app: api
+    app.kubernetes.io/managed-by: deployify
+data:
+  ASPNETCORE_ENVIRONMENT: "Production"

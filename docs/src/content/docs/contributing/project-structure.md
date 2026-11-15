@@ -9,7 +9,8 @@ Directory.Packages.props                  package versions (Central Package Mana
 src/
   Deployify/                              CLI entry point
     Commands/
-      InitCommand.cs
+      InitCommand.cs                      settings every target shares
+      Init/                               one init flow (flags + prompts) per target
       EnvCommand.cs
       GenerateCommand.cs
       ValidateCommand.cs
@@ -48,6 +49,7 @@ src/
       StateManager.cs
   Deployify.Target.Nomad/
   Deployify.Target.Kubernetes/            also writes Helm charts (HelmChartWriter)
+    Manifests/                            typed Kubernetes objects, written with YamlDotNet
   Deployify.Target.Helm/                  Kubernetes via helm upgrade --install
   Deployify.Target.OvhCloud/              Kubernetes on OVHcloud, cluster reached via the OVHcloud API
   Deployify.Target.Iis/                   IIS sites on Windows Server, driven through PowerShell remoting
@@ -55,6 +57,7 @@ src/
   Deployify.Target.AwsEcs/
   Deployify.Target.AzureContainerApps/
   Deployify.Target.NomadConsul/
+  Shared/Yaml/                            YAML writer compiled into the Kubernetes and Compose targets
 test/
   Deployify.Core.Tests/
   Deployify.Target.Nomad.Tests/

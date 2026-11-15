@@ -1,0 +1,62 @@
+{
+  "Job": {
+    "ID": "worker",
+    "Name": "worker",
+    "Namespace": "apps",
+    "Type": "service",
+    "Datacenters": [
+      "dc1",
+      "dc2"
+    ],
+    "Meta": {
+      "deployify-managed": "true"
+    },
+    "TaskGroups": [
+      {
+        "Name": "worker",
+        "Count": 1,
+        "Update": {
+          "MinHealthyTime": 30000000000,
+          "HealthyDeadline": 600000000000,
+          "ProgressDeadline": 900000000000,
+          "AutoRevert": false
+        },
+        "Tasks": [
+          {
+            "Name": "worker",
+            "Driver": "docker",
+            "Config": {
+              "image": "registry.example.com/myapp/worker:1",
+              "network_mode": "host",
+              "args": [
+                "--mode",
+                "fast",
+                "--api",
+                "http://localhost:8080"
+              ],
+              "auth": [
+                {
+                  "username": "ci",
+                  "password": "__DEPLOYIFY_REGISTRY_PASSWORD__",
+                  "server_address": "https://registry.example.com"
+                }
+              ]
+            },
+            "Templates": [
+              {
+                "EmbeddedTmpl": "{{ $svc0 := \"\" }}{{ range service \"api\" }}{{ $svc0 = .Address }}{{ end -}}\nAPI_URL=http://{{ $svc0 }}:8080\n",
+                "DestPath": "secrets/deployify.env",
+                "Envvars": true,
+                "ChangeMode": "restart"
+              }
+            ],
+            "Resources": {
+              "CPU": 300,
+              "MemoryMB": 512
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

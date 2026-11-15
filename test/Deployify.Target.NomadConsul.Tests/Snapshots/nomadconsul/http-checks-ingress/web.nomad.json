@@ -1,0 +1,104 @@
+{
+  "Job": {
+    "ID": "web",
+    "Name": "web",
+    "Namespace": "mesh",
+    "Type": "service",
+    "Datacenters": [
+      "dc1"
+    ],
+    "Meta": {
+      "deployify-managed": "true"
+    },
+    "TaskGroups": [
+      {
+        "Name": "web",
+        "Count": 1,
+        "Update": {
+          "MinHealthyTime": 30000000000,
+          "HealthyDeadline": 600000000000,
+          "ProgressDeadline": 900000000000,
+          "AutoRevert": false
+        },
+        "Networks": [
+          {
+            "Mode": "bridge",
+            "DynamicPorts": [
+              {
+                "Label": "http",
+                "To": 3000
+              }
+            ]
+          }
+        ],
+        "Services": [
+          {
+            "Name": "web",
+            "PortLabel": "3000",
+            "Checks": [
+              {
+                "Type": "http",
+                "Path": "/healthz",
+                "Expose": true,
+                "Interval": 90000000000,
+                "Timeout": 2000000000,
+                "CheckRestart": {
+                  "Limit": 3,
+                  "Grace": 30000000000
+                }
+              }
+            ],
+            "Connect": {
+              "SidecarService": {
+                "Proxy": {
+                  "Upstreams": [
+                    {
+                      "DestinationName": "api",
+                      "LocalBindPort": 20000
+                    },
+                    {
+                      "DestinationName": "pg",
+                      "LocalBindPort": 20001
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "Tasks": [
+          {
+            "Name": "web",
+            "Driver": "docker",
+            "Config": {
+              "image": "registry.example.com/myapp/web:1",
+              "args": [
+                "--api",
+                "http://localhost:20000"
+              ],
+              "auth": [
+                {
+                  "username": "ci",
+                  "password": "__DEPLOYIFY_REGISTRY_PASSWORD__",
+                  "server_address": "https://reg.example.com"
+                }
+              ],
+              "ports": [
+                "http"
+              ]
+            },
+            "Env": {
+              "NOMAD_UPSTREAM_ADDR_API": "localhost:20000",
+              "NOMAD_UPSTREAM_ADDR_PG": "localhost:20001",
+              "API_URL": "http://localhost:20000"
+            },
+            "Resources": {
+              "CPU": 256,
+              "MemoryMB": 256
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

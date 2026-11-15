@@ -13,7 +13,11 @@ To support a platform without changing Deployify, write a [plugin](/Deployify/ex
    ```csharp
    .AddSingleton<IDeploymentTarget, MyTargetDeploymentTarget>()
    ```
-4. Add init flags in `InitCommand.cs` and display address handling in `EnvCommand.cs`.
+4. Add an init flow in `src/Deployify/Commands/Init/`: a class implementing `ITargetInitFlow` with the
+   target's flags, its interactive questions and the target config both produce. List it in
+   `TargetInitFlows` (and in `TargetInitFlows.Choices` for the interactive prompt), then update the
+   `init` snapshots with `DEPLOYIFY_UPDATE_SNAPSHOTS=1` and review the diff. Add display address
+   handling in `EnvCommand.cs`.
 5. All commands (`generate`, `validate`, `plan`, `apply`, `ci`, `watch`, etc.) pick it up automatically via the target factory.
 6. For `destroy` and `apply --prune`, also implement `IResourceLifecycle`: put an ownership marker
    on everything the target creates, list what carries it (throwing when the platform can't be

@@ -2,17 +2,17 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Expressions;
 using Deployify.Core.Models;
+using Deployify.Target.Nomad.Api;
 using Microsoft.Extensions.Logging;
 
 namespace Deployify.Target.Nomad;
 
-/// <summary>Generates Nomad HCL job files from an <see cref="AspireManifest"/>.</summary>
+/// <summary>Generates Nomad job files (the job API's JSON) from an <see cref="AspireManifest"/>.</summary>
 /// <remarks>
 /// Every Docker task runs with host networking and a fixed port. A reference to another
 /// service gets that service's address from the service catalog at runtime (see
@@ -27,9 +27,9 @@ public sealed class JobGenerator(ILogger<JobGenerator> logger)
         AspireManifest manifest, EnvironmentConfig config, CancellationToken ct = default)
         => [.. await GenerateAsync(manifest, config, ct)];
 
-    public async Task<string> WriteHclAsync(
+    public async Task<string> WriteJobAsync(
         object jobObj, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
-        => await WriteHclAsync((NomadJob)jobObj, config, outputDirectory, ct);
+        => await WriteJobAsync((NomadJob)jobObj, config, outputDirectory, ct);
 
     // ── Model generation ──────────────────────────────────────────────────────
 
@@ -163,244 +163,193 @@ public sealed class JobGenerator(ILogger<JobGenerator> logger)
         return jobs;
     }
 
-    public async Task<string> WriteHclAsync(
+    /// <summary>Writes <c>{job}.nomad.json</c> to <paramref name="outputDirectory"/> and returns its path.</summary>
+    public async Task<string> WriteJobAsync(
         NomadJob job, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
     {
-        Directory.CreateDirectory(outputDirectory);
-        var filePath = Path.Combine(outputDirectory, $"{job.Name}.job.hcl");
-        // No BOM: Nomad's HCL parser and many tools choke on it.
-        await File.WriteAllTextAsync(filePath, RenderHcl(job, config), new UTF8Encoding(false), ct);
-        logger.LogDebug("Written HCL to '{FilePath}'.", filePath);
+        var filePath = await NomadJobFile.WriteAsync(BuildJob(job, config), outputDirectory, ct);
+        logger.LogDebug("Written job to '{FilePath}'.", filePath);
         return filePath;
     }
 
-    // ── HCL renderer ──────────────────────────────────────────────────────────
+    // ── Job spec ──────────────────────────────────────────────────────────────
 
-    internal static string RenderHcl(NomadJob job, EnvironmentConfig config)
+    internal static NomadApiJob BuildJob(NomadJob job, EnvironmentConfig config)
     {
         var nc = ReadConfig(config);
         var rawExec = nc.DeploymentMode == NomadDeploymentMode.RawExec;
         var driver = rawExec ? "raw_exec"
             : config.ContainerRuntime == ContainerRuntime.Podman ? "podman" : "docker";
-        var registryUsername = nc.RegistryUsername;
-        var registryPassword = Secrets.Resolve(nc.RegistryPassword, "DEPLOYIFY_REGISTRY_PASSWORD");
 
-        var sb = new StringBuilder();
-        var dcs = string.Join(", ", nc.Datacenters.Select(Hcl.Quote));
+        var tasks = new List<NomadTask> { MainTask(job, config, nc, rawExec, driver) };
 
-        sb.AppendLine($"job {Hcl.Quote(job.Name)} {{");
-        sb.AppendLine($"  namespace = {Hcl.Quote(nc.Namespace)}");
-        sb.AppendLine($"  datacenters = [{dcs}]");
-        sb.AppendLine("  type = \"service\"");
-        sb.AppendLine();
-        sb.AppendLine("  meta = {");
-        sb.AppendLine($"    {Hcl.Quote(NomadClient.ManagedMetaKey)} = \"true\"");
-        sb.AppendLine("  }");
-        sb.AppendLine();
-        sb.AppendLine($"  group {Hcl.Quote(job.Name)} {{");
-        sb.AppendLine($"    count = {job.Count}");
-        sb.AppendLine();
-        sb.AppendLine("    update {");
-        sb.AppendLine("      min_healthy_time = \"30s\"");
-        sb.AppendLine("      healthy_deadline = \"10m\"");
-        sb.AppendLine("      progress_deadline = \"15m\"");
-        sb.AppendLine($"      auto_revert = {(nc.AutoRevert ? "true" : "false")}");
-        sb.AppendLine("    }");
-
-        // ── network ───────────────────────────────────────────────────────────
-        if (job.Ports.Count > 0)
+        // Dapr sidecar (container runtimes only).
+        if (job.DaprEnabled && !rawExec)
         {
-            sb.AppendLine();
-            sb.AppendLine("    network {");
-            sb.AppendLine("      mode = \"host\"");
-            foreach (var port in job.Ports)
-            {
-                sb.AppendLine($"      port {Hcl.Quote(port.Label)} {{ static = {port.Static} }}");
-            }
-
-            sb.AppendLine("    }");
+            tasks.Add(DaprSidecar.Task(job.Name, job.DaprAppId, job.DaprAppPort, job.DaprHttpPort, job.DaprGrpcPort,
+                job.DaprVersion, config.Dapr, driver, hostNetwork: job.UseHostNetwork));
         }
 
-        // ── service registration ─────────────────────────────────────────────
-        // Registered at group level so the check addresses the host port directly.
-        if (nc.RegisterServices && job.Ports.Count > 0)
+        return new NomadApiJob
         {
-            var servicePort = job.Ports.FirstOrDefault(p => p.IsHttp) ?? job.Ports[0];
-            var checkType = !servicePort.IsHttp ? "tcp" : nc.HealthCheckType.ToLowerInvariant();
-
-            sb.AppendLine();
-            sb.AppendLine("    service {");
-            sb.AppendLine($"      name = {Hcl.Quote(job.Name)}");
-            sb.AppendLine($"      port = {Hcl.Quote(servicePort.Label)}");
-            sb.AppendLine($"      provider = {Hcl.Quote(nc.ServiceProvider)}");
-
-            if (checkType != "none")
-            {
-                sb.AppendLine();
-                sb.AppendLine("      check {");
-                sb.AppendLine($"        type = {Hcl.Quote(checkType == "http" ? "http" : "tcp")}");
-                if (checkType == "http")
+            Id = job.Name,
+            Name = job.Name,
+            Namespace = nc.Namespace,
+            Datacenters = [.. nc.Datacenters],
+            Meta = new Dictionary<string, string>(StringComparer.Ordinal) { [NomadClient.ManagedMetaKey] = "true" },
+            TaskGroups =
+            [
+                new NomadTaskGroup
                 {
-                    sb.AppendLine($"        path = {Hcl.Quote(nc.HealthCheckPath)}");
+                    Name = job.Name,
+                    Count = job.Count,
+                    Update = UpdateStrategy(nc.AutoRevert),
+                    Networks = job.Ports.Count > 0
+                        ?
+                        [
+                            new NomadNetwork
+                            {
+                                Mode = "host",
+                                ReservedPorts = [.. job.Ports.Select(p => new NomadNetworkPort { Label = p.Label, Value = p.Static ?? 0 })]
+                            }
+                        ]
+                        : null,
+                    // Registered at group level so the check addresses the host port directly.
+                    Services = nc.RegisterServices && job.Ports.Count > 0 ? [Service(job, nc)] : null,
+                    Tasks = tasks
                 }
+            ]
+        };
+    }
 
-                sb.AppendLine($"        interval = {Hcl.Quote(nc.HealthCheckInterval)}");
-                sb.AppendLine($"        timeout = {Hcl.Quote(nc.HealthCheckTimeout)}");
-                sb.AppendLine();
-                sb.AppendLine("        check_restart {");
-                sb.AppendLine("          limit = 3");
-                sb.AppendLine("          grace = \"30s\"");
-                sb.AppendLine("        }");
-                sb.AppendLine("      }");
-            }
+    /// <summary>The rolling update every Deployify job uses.</summary>
+    public static NomadUpdateStrategy UpdateStrategy(bool autoRevert) => new()
+    {
+        MinHealthyTime = NomadDuration.Parse("30s"),
+        HealthyDeadline = NomadDuration.Parse("10m"),
+        ProgressDeadline = NomadDuration.Parse("15m"),
+        AutoRevert = autoRevert
+    };
 
-            sb.AppendLine("    }");
-        }
-
-        // ── main task ─────────────────────────────────────────────────────────
-        sb.AppendLine();
-        sb.AppendLine($"    task {Hcl.Quote(job.Name)} {{");
-        sb.AppendLine($"      driver = {Hcl.Quote(driver)}");
-
-        if (rawExec && job.ArtifactUrl is not null)
+    private static NomadService Service(NomadJob job, NomadTargetConfig nc)
+    {
+        var servicePort = job.Ports.FirstOrDefault(p => p.IsHttp) ?? job.Ports[0];
+        var checkType = !servicePort.IsHttp ? "tcp" : nc.HealthCheckType.ToLowerInvariant();
+        return new NomadService
         {
-            sb.AppendLine();
-            sb.AppendLine("      artifact {");
-            sb.AppendLine($"        source = {Hcl.Quote(job.ArtifactUrl)}");
-            sb.AppendLine("        destination = \"local/\"");
-            sb.AppendLine("        options {");
-            // go-getter expects the archive format here; "true" is not a format and
-            // leaves the zip packed, so the binary is never found.
-            sb.AppendLine("          archive = \"zip\"");
-            sb.AppendLine("        }");
-            sb.AppendLine("      }");
-        }
+            Name = job.Name,
+            PortLabel = servicePort.Label,
+            Provider = nc.ServiceProvider,
+            Checks = checkType == "none"
+                ? null
+                :
+                [
+                    new NomadServiceCheck
+                    {
+                        Type = checkType == "http" ? "http" : "tcp",
+                        Path = checkType == "http" ? nc.HealthCheckPath : null,
+                        Interval = NomadDuration.Parse(nc.HealthCheckInterval),
+                        Timeout = NomadDuration.Parse(nc.HealthCheckTimeout),
+                        CheckRestart = CheckRestart()
+                    }
+                ]
+        };
+    }
 
-        sb.AppendLine();
-        sb.AppendLine("      config {");
+    /// <summary>Restart a task after three failed checks, with 30s grace after it starts.</summary>
+    public static NomadCheckRestart CheckRestart() => new() { Limit = 3, Grace = NomadDuration.Parse("30s") };
+
+    private static NomadTask MainTask(NomadJob job, EnvironmentConfig config, NomadTargetConfig nc, bool rawExec, string driver)
+    {
+        var taskConfig = new Dictionary<string, object>(StringComparer.Ordinal);
         if (rawExec)
         {
-            sb.AppendLine($"        command = {Hcl.Quote(job.ArtifactBinaryPath ?? $"local/{job.Name}")}");
+            taskConfig["command"] = job.ArtifactBinaryPath ?? $"local/{job.Name}";
             if (job.Args.Count > 0)
             {
-                sb.AppendLine($"        args = [{string.Join(", ", job.Args.Select(Hcl.Quote))}]");
+                taskConfig["args"] = job.Args.ToList();
             }
         }
         else
         {
-            sb.AppendLine($"        image = {Hcl.Quote(ImageReference.Format(job.Image!, job.ImageTag))}");
+            taskConfig["image"] = ImageReference.Format(job.Image!, job.ImageTag);
             if (job.UseHostNetwork)
             {
-                sb.AppendLine("        network_mode = \"host\"");
+                taskConfig["network_mode"] = "host";
             }
 
             if (job.Args.Count > 0)
             {
-                sb.AppendLine($"        args = [{string.Join(", ", job.Args.Select(Hcl.Quote))}]");
+                taskConfig["args"] = job.Args.ToList();
             }
 
-            if (registryUsername is not null && registryPassword is not null
-                                             && !IsPublicRegistry(job.Image!))
+            if (RegistryAuth(job.Image!, nc.RegistryUsername, nc.RegistryPassword, nc.RegistryServer, config.ContainerRegistry) is { } auth)
             {
-                var serverAddress = nc.RegistryServer
-                    ?? DeriveServerAddress(job.Image!, config.ContainerRegistry);
-                sb.AppendLine("        auth {");
-                sb.AppendLine($"          username = {Hcl.Quote(registryUsername)}");
-                sb.AppendLine($"          password = {Hcl.Quote(Hcl.RegistryPasswordPlaceholder)}");
-                sb.AppendLine($"          server_address = {Hcl.Quote(serverAddress)}");
-                sb.AppendLine("        }");
+                taskConfig["auth"] = auth;
             }
 
             // With host networking the container shares the host's ports, so Docker port
             // mappings are neither needed nor allowed.
             if (job.Ports.Count > 0 && !job.UseHostNetwork)
             {
-                sb.AppendLine($"        ports = [{string.Join(", ", job.Ports.Select(p => Hcl.Quote(p.Label)))}]");
+                taskConfig["ports"] = job.Ports.Select(p => p.Label).ToList();
             }
         }
 
-        sb.AppendLine("      }");
-
-        if (job.Env.Count > 0)
+        return new NomadTask
         {
-            sb.AppendLine();
-            // Map syntax so keys that aren't valid HCL identifiers still work.
-            sb.AppendLine("      env = {");
-            foreach (var (k, v) in job.Env)
-            {
-                sb.AppendLine($"        {Hcl.Quote(k)} = {Hcl.Quote(v)}");
-            }
+            Name = job.Name,
+            Driver = driver,
+            Artifacts = rawExec && job.ArtifactUrl is not null
+                ?
+                [
+                    new NomadTaskArtifact
+                    {
+                        GetterSource = job.ArtifactUrl,
+                        RelativeDest = "local/",
+                        // go-getter expects the archive format here; "true" is not a format and
+                        // leaves the zip packed, so the binary is never found.
+                        GetterOptions = new Dictionary<string, string>(StringComparer.Ordinal) { ["archive"] = "zip" }
+                    }
+                ]
+                : null,
+            Config = taskConfig,
+            Env = job.Env.Count > 0 ? new Dictionary<string, string>(job.Env, StringComparer.Ordinal) : null,
+            Templates = job.SecretEnv.Count > 0 || job.DiscoveredEnv.Count > 0
+                ?
+                [
+                    ServiceDiscovery.Template(job.Name, job.DiscoveredEnv,
+                        job.SecretEnv.ToDictionary(kv => kv.Key, kv => kv.Value.ToString(), StringComparer.Ordinal),
+                        nc.ServiceProvider)
+                ]
+                : null,
+            Resources = new NomadResources { Cpu = nc.DefaultCpu, MemoryMB = nc.DefaultMemory }
+        };
+    }
 
-            sb.AppendLine("      }");
-        }
-
-        if (job.SecretEnv.Count > 0 || job.DiscoveredEnv.Count > 0)
+    /// <summary>
+    /// The Docker/Podman <c>auth</c> block, or null when no credentials are configured or the
+    /// image is on a public registry. The password is a placeholder (see <see cref="NomadJobFile"/>).
+    /// </summary>
+    public static List<Dictionary<string, string>>? RegistryAuth(
+        string image, string? username, string? passwordSource, string? server, string? containerRegistry)
+    {
+        var password = Secrets.Resolve(passwordSource, "DEPLOYIFY_REGISTRY_PASSWORD");
+        if (username is null || password is null || IsPublicRegistry(image))
         {
-            ServiceDiscovery.AppendTemplate(sb, job.Name, job.DiscoveredEnv,
-                job.SecretEnv.ToDictionary(kv => kv.Key, kv => kv.Value.ToString(), StringComparer.Ordinal),
-                nc.ServiceProvider, "      ");
+            return null;
         }
 
-        sb.AppendLine();
-        sb.AppendLine("      resources {");
-        sb.AppendLine($"        cpu = {nc.DefaultCpu}");
-        sb.AppendLine($"        memory = {nc.DefaultMemory}");
-        sb.AppendLine("      }");
-        sb.AppendLine("    }");
-
-        // ── Dapr sidecar (container runtimes only) ───────────────────────────
-        if (job.DaprEnabled && !rawExec)
-        {
-            var daprArgs = new List<string>
+        // A block in driver config is a list of objects in the API, as Nomad's own HCL parser writes it.
+        return
+        [
+            new Dictionary<string, string>(StringComparer.Ordinal)
             {
-                "./daprd",
-                "--app-id", job.DaprAppId ?? job.Name,
-                "--dapr-http-port", job.DaprHttpPort.ToString(),
-                "--dapr-grpc-port", job.DaprGrpcPort.ToString(),
-                "--log-level", config.Dapr.LogLevel
-            };
-            if (job.DaprAppPort.HasValue)
-            {
-                daprArgs.AddRange(["--app-port", job.DaprAppPort.Value.ToString()]);
+                ["username"] = username,
+                ["password"] = NomadJobFile.RegistryPasswordPlaceholder,
+                ["server_address"] = server ?? DeriveServerAddress(image, containerRegistry)
             }
-
-            if (config.Dapr.ComponentsPath is not null)
-            {
-                daprArgs.AddRange(["--resources-path", config.Dapr.ComponentsPath]);
-            }
-
-            if (config.Dapr.ConfigPath is not null)
-            {
-                daprArgs.AddRange(["--config", config.Dapr.ConfigPath]);
-            }
-
-            sb.AppendLine();
-            sb.AppendLine($"    task {Hcl.Quote($"{job.Name}-dapr")} {{");
-            sb.AppendLine($"      driver = {Hcl.Quote(driver)}");
-            sb.AppendLine("      config {");
-            sb.AppendLine($"        image = {Hcl.Quote($"{DaprConstants.SidecarImage}:{job.DaprVersion}")}");
-            if (job.UseHostNetwork)
-            {
-                sb.AppendLine("        network_mode = \"host\"");
-            }
-
-            sb.AppendLine($"        args = [{string.Join(", ", daprArgs.Select(Hcl.Quote))}]");
-            sb.AppendLine("      }");
-            sb.AppendLine("      resources {");
-            sb.AppendLine("        cpu = 50");
-            sb.AppendLine("        memory = 64");
-            sb.AppendLine("      }");
-            sb.AppendLine("      lifecycle {");
-            sb.AppendLine("        hook = \"prestart\"");
-            sb.AppendLine("        sidecar = true");
-            sb.AppendLine("      }");
-            sb.AppendLine("    }");
-        }
-
-        sb.AppendLine("  }");
-        sb.AppendLine("}");
-
-        return sb.ToString();
+        ];
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -425,7 +374,7 @@ public sealed class JobGenerator(ILogger<JobGenerator> logger)
     /// True for well-known public registries that don't need credentials. Sending Docker
     /// Hub credentials to them can make the pull fail.
     /// </summary>
-    private static bool IsPublicRegistry(string image)
+    internal static bool IsPublicRegistry(string image)
         => image.StartsWith("mcr.microsoft.com/", StringComparison.OrdinalIgnoreCase) ||
             image.StartsWith("ghcr.io/", StringComparison.OrdinalIgnoreCase) ||
             image.StartsWith("gcr.io/", StringComparison.OrdinalIgnoreCase) ||
@@ -439,7 +388,7 @@ public sealed class JobGenerator(ILogger<JobGenerator> logger)
     /// Derives the registry server address Nomad matches credentials against.
     /// Images without a registry host are on Docker Hub.
     /// </summary>
-    private static string DeriveServerAddress(string image, string? containerRegistry)
+    internal static string DeriveServerAddress(string image, string? containerRegistry)
     {
         var firstSegment = (containerRegistry ?? image).Split('/')[0];
         if (firstSegment.Contains('.') || firstSegment.Contains(':'))

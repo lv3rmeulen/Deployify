@@ -1,0 +1,70 @@
+{
+  "FormatVersion": 1,
+  "ActiveEnvironment": "prod",
+  "Environments": {
+    "prod": {
+      "Target": "Nomad",
+      "ImageTag": "latest",
+      "OutputPath": "deployify-output",
+      "ServiceOverrides": {},
+      "IgnoreResources": [],
+      "Parameters": {},
+      "ContainerRuntime": "Docker",
+      "DeployDashboard": false,
+      "Dashboard": {
+        "ImageTag": "latest",
+        "Port": 18888,
+        "OtlpPort": 18889,
+        "Cpu": "100m",
+        "Memory": "128Mi"
+      },
+      "AppHostPath": "<dir>",
+      "ContainerOs": "linux",
+      "ContainerArch": "x64",
+      "DeployDapr": false,
+      "Dapr": {
+        "DaprVersion": "latest",
+        "DaprHttpPort": 3500,
+        "DaprGrpcPort": 50001,
+        "LogLevel": "info"
+      },
+      "Secrets": {
+        "Backend": "Inline",
+        "Vault": {
+          "Mount": "secret",
+          "PathPrefix": "deployify",
+          "AuthMount": "kubernetes",
+          "ManageAuth": true,
+          "SecretsFileName": "appsettings.secrets.json",
+          "AgentAnnotations": {}
+        },
+        "KeyVault": {
+          "KubernetesIdentity": "WorkloadIdentity"
+        },
+        "References": {}
+      },
+      "TargetConfig": {
+        "nomad": {
+          "Address": "http://localhost:4646",
+          "Namespace": "default",
+          "Datacenters": [
+            "dc1"
+          ],
+          "DeploymentMode": "Docker",
+          "ServiceProvider": "nomad",
+          "RegisterServices": true,
+          "HealthCheckType": "tcp",
+          "AutoRevert": true,
+          "HealthCheckPath": "/health",
+          "HealthCheckInterval": "10s",
+          "HealthCheckTimeout": "2s",
+          "BasePort": 8080,
+          "DefaultCpu": 256,
+          "DefaultMemory": 256
+        }
+      },
+      "Protected": false,
+      "Prune": false
+    }
+  }
+}

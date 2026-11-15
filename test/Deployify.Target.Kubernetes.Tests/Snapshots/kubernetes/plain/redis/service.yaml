@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: shop-redis
+  labels:
+    app: redis
+    app.kubernetes.io/managed-by: deployify
+spec:
+  selector:
+    app: redis
+  ports:
+    - name: tcp
+      port: 6379
+      targetPort: tcp
+      protocol: TCP
+  type: ClusterIP

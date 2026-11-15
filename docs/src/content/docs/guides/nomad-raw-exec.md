@@ -21,7 +21,7 @@ deployify package --publish-dir ./out/publish
 deployify package --image-tag v1.0.0
 ```
 
-After running `package`, the artifact URLs are written back to `deployify-state.json` under `serviceOverrides[name].artifactUrl`. The next `generate`/`plan`/`apply` picks them up and emits an `artifact { source = "..." }` block in the HCL.
+After running `package`, the artifact URLs are written back to `deployify-state.json` under `serviceOverrides[name].artifactUrl`. The next `generate`/`plan`/`apply` picks them up and adds an artifact that downloads the zip to the job.
 
 **Typical raw_exec workflow:**
 
@@ -36,23 +36,20 @@ deployify apply --auto-approve
 
 When `deploymentMode` is `RawExec`, Deployify can zip your published binaries and upload them to an artifact store. Nomad then downloads and unzips the artifact before running the binary via `raw_exec`.
 
-The generated HCL looks like:
+The task in the generated job file (`api.nomad.json`) looks like:
 
-```hcl
-task "api" {
-  driver = "raw_exec"
-
-  artifact {
-    source      = "https://artifacts.example.com/api-v1.0.0.zip"
-    destination = "local/"
-    options {
-      archive = true
+```json
+{
+  "Name": "api",
+  "Driver": "raw_exec",
+  "Artifacts": [
+    {
+      "GetterSource": "https://artifacts.example.com/api-v1.0.0.zip",
+      "GetterOptions": { "archive": "zip" },
+      "RelativeDest": "local/"
     }
-  }
-
-  config {
-    command = "local/api"
-  }
+  ],
+  "Config": { "command": "local/api" }
 }
 ```
 

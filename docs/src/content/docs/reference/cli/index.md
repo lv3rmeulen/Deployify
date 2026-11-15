@@ -13,7 +13,7 @@ Generated from the command definitions by `tools/Deployify.DocGen`; don't edit b
 |---|---|
 | [`init`](./init/) | Initialize deployify in an Aspire AppHost project. |
 | [`env`](./env/) | Manage deployment environments. |
-| [`generate`](./generate/) | Generate deployment artifacts (HCL, manifests, compose files) without contacting the cluster. |
+| [`generate`](./generate/) | Generate deployment artifacts (Nomad jobs, manifests, compose files) without contacting the cluster. |
 | [`validate`](./validate/) | Validate generated artifacts against the target. |
 | [`plan`](./plan/) | Preview changes that would be applied to the target. |
 | [`apply`](./apply/) | Deploy to the target. |

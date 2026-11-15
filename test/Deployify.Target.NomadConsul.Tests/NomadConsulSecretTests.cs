@@ -3,6 +3,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Deployify.Core.Models;
+using Deployify.Tests.Shared;
 using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
 using Xunit;
@@ -44,7 +45,7 @@ public sealed class NomadConsulSecretTests
     private readonly ConsulJobGenerator _sut = new(NullLogger<ConsulJobGenerator>.Instance);
 
     [Fact]
-    public async Task Hcl_HasTemplateAndNoSecret()
+    public async Task Job_HasTemplateAndNoSecret()
     {
         using var dir = new Fixtures.TempDir();
         var cfg = Fixtures.DefaultConsulCfg();
@@ -52,13 +53,12 @@ public sealed class NomadConsulSecretTests
         config.Parameters["pg-password"] = Secret;
         var api = (await _sut.GenerateAsync(Manifest(), config, cfg, TestContext.Current.CancellationToken)).Single(j => j.Name == "api");
 
-        var path = await _sut.WriteHclAsync(api, config, cfg, dir.Path, TestContext.Current.CancellationToken);
-        var hcl = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
+        var file = await NomadJobJson.ReadAsync(await _sut.WriteJobAsync(api, config, cfg, dir.Path, TestContext.Current.CancellationToken));
 
         api.SecretEnv.Keys.ShouldBe(new[] { "ConnectionStrings__db" });
         api.SecretEnv["ConnectionStrings__db"].ToString().ShouldContain($"Password={Secret}");
-        hcl.ShouldNotContain(Secret);
-        hcl.ShouldContain("nomadVar \\\"nomad/jobs/api\\\"");
-        hcl.ShouldContain("\"PLAIN\" = \"hello\"");
+        file.Text.ShouldNotContain(Secret);
+        ((string)file.Template()!["EmbeddedTmpl"]!).ShouldContain("nomadVar \"nomad/jobs/api\"");
+        ((string?)file.Env()!["PLAIN"]).ShouldBe("hello");
     }
 }

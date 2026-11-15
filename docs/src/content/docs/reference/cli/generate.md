@@ -1,6 +1,6 @@
 ---
 title: deployify generate
-description: "Generate deployment artifacts (HCL, manifests, compose files) without contacting the cluster."
+description: "Generate deployment artifacts (Nomad jobs, manifests, compose files) without contacting the cluster."
 sidebar:
   label: generate
   order: 3
@@ -10,7 +10,7 @@ sidebar:
 Generated from the command definitions by `tools/Deployify.DocGen`; don't edit by hand. Run `dotnet run --project tools/Deployify.DocGen` after changing a command.
 :::
 
-Generate deployment artifacts (HCL, manifests, compose files) without contacting the cluster.
+Generate deployment artifacts (Nomad jobs, manifests, compose files) without contacting the cluster.
 
 ```
 deployify generate [options]

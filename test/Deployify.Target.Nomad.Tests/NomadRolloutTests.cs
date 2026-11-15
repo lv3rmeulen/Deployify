@@ -220,7 +220,7 @@ public sealed class NomadRolloutTests
 
         var paths = await target.GenerateAsync(Fixtures.SingleService("api"), Fixtures.NomadConfig(), dir.Path, Ct);
 
-        (await File.ReadAllTextAsync(paths.Single(), Ct)).ShouldContain("auto_revert = true");
+        ((bool?)(await Deployify.Tests.Shared.NomadJobJson.ReadAsync(paths.Single())).Group["Update"]!["AutoRevert"]).ShouldBe(true);
         (await target.HasNativeRollbackAsync(Fixtures.NomadConfig(), Ct)).ShouldBeTrue();
     }
 

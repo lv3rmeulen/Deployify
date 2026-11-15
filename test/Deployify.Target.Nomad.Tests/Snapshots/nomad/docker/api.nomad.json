@@ -1,0 +1,127 @@
+{
+  "Job": {
+    "ID": "api",
+    "Name": "api",
+    "Namespace": "apps",
+    "Type": "service",
+    "Datacenters": [
+      "dc1",
+      "dc2"
+    ],
+    "Meta": {
+      "deployify-managed": "true"
+    },
+    "TaskGroups": [
+      {
+        "Name": "api",
+        "Count": 1,
+        "Update": {
+          "MinHealthyTime": 30000000000,
+          "HealthyDeadline": 600000000000,
+          "ProgressDeadline": 900000000000,
+          "AutoRevert": false
+        },
+        "Networks": [
+          {
+            "Mode": "host",
+            "ReservedPorts": [
+              {
+                "Label": "http",
+                "Value": 8080
+              },
+              {
+                "Label": "https",
+                "Value": 8443
+              }
+            ]
+          }
+        ],
+        "Services": [
+          {
+            "Name": "api",
+            "PortLabel": "http",
+            "Provider": "consul",
+            "Checks": [
+              {
+                "Type": "http",
+                "Path": "/healthz",
+                "Interval": 15000000000,
+                "Timeout": 1500000000,
+                "CheckRestart": {
+                  "Limit": 3,
+                  "Grace": 30000000000
+                }
+              }
+            ]
+          }
+        ],
+        "Tasks": [
+          {
+            "Name": "api",
+            "Driver": "docker",
+            "Config": {
+              "image": "registry.example.com/myapp/api:v1.0.0",
+              "network_mode": "host",
+              "auth": [
+                {
+                  "username": "ci",
+                  "password": "__DEPLOYIFY_REGISTRY_PASSWORD__",
+                  "server_address": "https://registry.example.com"
+                }
+              ]
+            },
+            "Env": {
+              "PLAIN": "hello \"quoted\" %{x} ${y}",
+              "Odd.Key-Name": "x"
+            },
+            "Templates": [
+              {
+                "EmbeddedTmpl": "{{ $svc0 := \"\" }}{{ range service \"pg\" }}{{ $svc0 = .Address }}{{ end -}}\n{{ with nomadVar \"nomad/jobs/api\" -}}\nConnectionStrings__db={{ index . \"ConnectionStrings__db\" | replaceAll \"@@deployify-svc:pg@@\" $svc0 }}\n{{- end }}\n",
+                "DestPath": "secrets/deployify.env",
+                "Envvars": true,
+                "ChangeMode": "restart"
+              }
+            ],
+            "Resources": {
+              "CPU": 300,
+              "MemoryMB": 512
+            }
+          },
+          {
+            "Name": "api-dapr",
+            "Driver": "docker",
+            "Config": {
+              "image": "daprio/daprd:latest",
+              "network_mode": "host",
+              "args": [
+                "./daprd",
+                "--app-id",
+                "api-app",
+                "--dapr-http-port",
+                "3500",
+                "--dapr-grpc-port",
+                "50001",
+                "--log-level",
+                "info",
+                "--app-port",
+                "8080",
+                "--resources-path",
+                "./components",
+                "--config",
+                "./dapr.yaml"
+              ]
+            },
+            "Resources": {
+              "CPU": 50,
+              "MemoryMB": 64
+            },
+            "Lifecycle": {
+              "Hook": "prestart",
+              "Sidecar": true
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

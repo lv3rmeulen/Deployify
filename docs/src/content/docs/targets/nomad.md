@@ -5,7 +5,10 @@ description: "Deploying an Aspire app to Nomad with Deployify."
 
 Target ID: `Nomad`
 
-Generates one HCL job file per service using the Docker driver. Submits jobs via the Nomad HTTP API.
+Generates one job file per service (`<service>.nomad.json`) using the Docker driver, and submits
+it through the Nomad HTTP API. A job file is the JSON that Nomad's job API takes, so you can also
+run one by hand with `nomad job run -json api.nomad.json`. When `registryPassword` is set, the
+file holds a placeholder instead of the password, which Deployify fills in when it submits the job.
 
 ```json
 "targetConfig": {
@@ -29,7 +32,7 @@ Notes:
 - **Networking.** Docker tasks use host networking and each service gets its own static port
   (starting at `basePort`, default 8080). Services find each other through the service catalog,
   so jobs can run on different nodes: a reference such as `{api.bindings.http.url}` is written
-  into the task's `template` block, which looks up the node `api` is registered on
+  into the task's template, which looks up the node `api` is registered on
   (`nomadService`, or Consul's `service` when `serviceProvider` is `consul`) when the task
   starts. If a dependency moves, the task restarts with its new address. This needs
   `registerServices` (on by default) and Nomad 1.4 or later. With `registerServices: false`,

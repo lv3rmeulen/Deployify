@@ -32,7 +32,7 @@ public interface IDeploymentTarget
     Task<(bool Ok, string? Error)> PingAsync(EnvironmentConfig config, CancellationToken ct = default);
 
     /// <summary>
-    /// Generates all output artifacts (e.g. HCL files, Kubernetes manifests, compose.yml)
+    /// Generates all output artifacts (e.g. Nomad job files, Kubernetes manifests, compose.yml)
     /// from the Aspire manifest. Does not deploy anything.
     /// Returns the paths of all generated files.
     /// </summary>

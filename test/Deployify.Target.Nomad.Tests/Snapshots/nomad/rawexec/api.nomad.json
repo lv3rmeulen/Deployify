@@ -1,0 +1,93 @@
+{
+  "Job": {
+    "ID": "api",
+    "Name": "api",
+    "Namespace": "default",
+    "Type": "service",
+    "Datacenters": [
+      "dc1"
+    ],
+    "Meta": {
+      "deployify-managed": "true"
+    },
+    "TaskGroups": [
+      {
+        "Name": "api",
+        "Count": 3,
+        "Update": {
+          "MinHealthyTime": 30000000000,
+          "HealthyDeadline": 600000000000,
+          "ProgressDeadline": 900000000000,
+          "AutoRevert": true
+        },
+        "Networks": [
+          {
+            "Mode": "host",
+            "ReservedPorts": [
+              {
+                "Label": "http",
+                "Value": 8080
+              },
+              {
+                "Label": "https",
+                "Value": 8443
+              }
+            ]
+          }
+        ],
+        "Services": [
+          {
+            "Name": "api",
+            "PortLabel": "http",
+            "Provider": "nomad",
+            "Checks": [
+              {
+                "Type": "tcp",
+                "Interval": 10000000000,
+                "Timeout": 2000000000,
+                "CheckRestart": {
+                  "Limit": 3,
+                  "Grace": 30000000000
+                }
+              }
+            ]
+          }
+        ],
+        "Tasks": [
+          {
+            "Name": "api",
+            "Driver": "raw_exec",
+            "Artifacts": [
+              {
+                "GetterSource": "https://artifacts.example.com/api.zip",
+                "GetterOptions": {
+                  "archive": "zip"
+                },
+                "RelativeDest": "local/"
+              }
+            ],
+            "Config": {
+              "command": "local/api"
+            },
+            "Env": {
+              "PLAIN": "hello \"quoted\" %{x} ${y}",
+              "Odd.Key-Name": "x"
+            },
+            "Templates": [
+              {
+                "EmbeddedTmpl": "{{ $svc0 := \"\" }}{{ range nomadService 1 (env \"NOMAD_ALLOC_ID\") \"pg\" }}{{ $svc0 = .Address }}{{ end -}}\n{{ with nomadVar \"nomad/jobs/api\" -}}\nConnectionStrings__db={{ index . \"ConnectionStrings__db\" | replaceAll \"@@deployify-svc:pg@@\" $svc0 }}\n{{- end }}\n",
+                "DestPath": "secrets/deployify.env",
+                "Envvars": true,
+                "ChangeMode": "restart"
+              }
+            ],
+            "Resources": {
+              "CPU": 256,
+              "MemoryMB": 256
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

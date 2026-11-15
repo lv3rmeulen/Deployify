@@ -47,7 +47,7 @@ public sealed class ConsulJob
     /// <summary>
     /// Resolved upstream entries: (service name → local loopback port).
     /// Populated by <see cref="ConsulJobGenerator"/> so that env vars can be
-    /// injected and the HCL upstream stanzas can be rendered.
+    /// injected and the Connect upstreams can be written.
     /// </summary>
     public List<ConsulUpstream> Upstreams { get; set; } = [];
 
@@ -69,8 +69,8 @@ public sealed class ConsulJob
     /// <summary>Listeners of the ingress gateway job: one per exposed service.</summary>
     public List<IngressListener> IngressListeners { get; set; } = [];
 
-    /// <summary>Path written by the generator, set after WriteHclAsync.</summary>
-    public string? HclPath { get; set; }
+    /// <summary>Path written by the generator, set after WriteJobAsync.</summary>
+    public string? JobFilePath { get; set; }
 
     // ── Dapr ──────────────────────────────────────────────────────────────────
     public bool DaprEnabled { get; set; }

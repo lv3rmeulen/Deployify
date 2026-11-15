@@ -1,0 +1,77 @@
+{
+  "FormatVersion": 1,
+  "ActiveEnvironment": "prod",
+  "Environments": {
+    "prod": {
+      "Target": "Helm",
+      "ContainerRegistry": "registry.example.com/team",
+      "ImageTag": "1.2.3",
+      "OutputPath": "out",
+      "ServiceOverrides": {},
+      "IgnoreResources": [],
+      "Parameters": {},
+      "ContainerRuntime": "Podman",
+      "DeployDashboard": true,
+      "Dashboard": {
+        "ImageTag": "latest",
+        "Port": 19888,
+        "OtlpPort": 19889,
+        "BrowserToken": "env:DASH_TOKEN",
+        "Cpu": "100m",
+        "Memory": "128Mi"
+      },
+      "AppHostPath": "<dir>",
+      "ContainerOs": "linux",
+      "ContainerArch": "arm64",
+      "DeployDapr": true,
+      "Dapr": {
+        "DaprVersion": "latest",
+        "DaprHttpPort": 3600,
+        "DaprGrpcPort": 50101,
+        "ComponentsPath": "./components",
+        "LogLevel": "info"
+      },
+      "Secrets": {
+        "Backend": "Inline",
+        "Vault": {
+          "Mount": "secret",
+          "PathPrefix": "deployify",
+          "AuthMount": "kubernetes",
+          "ManageAuth": true,
+          "SecretsFileName": "appsettings.secrets.json",
+          "AgentAnnotations": {}
+        },
+        "KeyVault": {
+          "KubernetesIdentity": "WorkloadIdentity"
+        },
+        "References": {}
+      },
+      "TargetConfig": {
+        "kubernetes": {
+          "Context": "prod-ctx",
+          "NamespacePrefix": "shop",
+          "GenerateIngress": true,
+          "IngressClassName": "nginx",
+          "IngressBaseDomain": "apps.example.com",
+          "CpuRequest": "100m",
+          "CpuLimit": "500m",
+          "MemoryRequest": "128Mi",
+          "MemoryLimit": "512Mi",
+          "DefaultReplicas": 1,
+          "HealthCheckType": "tcp",
+          "HealthCheckPath": "/health",
+          "BasePort": 8080,
+          "ImagePullSecrets": []
+        },
+        "helm": {
+          "ChartVersion": "0.1.0",
+          "HistoryMax": 10,
+          "Wait": false,
+          "Timeout": "5m"
+        }
+      },
+      "Protected": false,
+      "Prune": false
+    }
+  }
+}

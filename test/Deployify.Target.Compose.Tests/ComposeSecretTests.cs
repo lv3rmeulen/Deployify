@@ -90,9 +90,9 @@ public sealed class ComposeSecretTests
 
         var yaml = await File.ReadAllTextAsync(mergedPath, TestContext.Current.CancellationToken);
         yaml.ShouldNotContain(Secret);
-        yaml.ShouldContain("\"ConnectionStrings__db\": \"Host=pg;Password=${Parameters__pg_password};Opt=a$$b\"");
-        yaml.ShouldContain("\"POSTGRES_PASSWORD\": \"${Parameters__pg_password}\"");
-        yaml.ShouldContain("\"PLAIN\": \"hello\"");
+        yaml.ShouldContain("ConnectionStrings__db: \"Host=pg;Password=${Parameters__pg_password};Opt=a$$b\"");
+        yaml.ShouldContain("POSTGRES_PASSWORD: \"${Parameters__pg_password}\"");
+        yaml.ShouldContain("PLAIN: \"hello\"");
 
         var env = await File.ReadAllTextAsync(Path.Combine(dir.Path, ".env"), TestContext.Current.CancellationToken);
         env.ShouldContain($"Parameters__pg_password='{Secret}'");

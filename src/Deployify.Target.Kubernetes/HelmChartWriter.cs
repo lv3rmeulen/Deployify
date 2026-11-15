@@ -8,6 +8,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Models;
 using Deployify.Core.SecretBackends;
+using Deployify.Target.Kubernetes.Manifests;
+using Deployify.Yaml;
 
 namespace Deployify.Target.Kubernetes;
 
@@ -61,7 +63,7 @@ public sealed partial class HelmChartWriter
 
         var policyPath = Path.Combine(chartDir, "vault-policy.hcl");
         File.Delete(policyPath);
-        foreach (var (name, content) in KubernetesManifestGenerator.Render(svc))
+        foreach (var (name, model) in KubernetesManifestBuilder.Build(svc))
         {
             switch (name)
             {
@@ -69,11 +71,11 @@ public sealed partial class HelmChartWriter
                     continue; // see remarks
                 case "vault-policy.hcl":
                     // Not a manifest: kept next to the chart for reference; Helm doesn't render it.
-                    files.Add(await KubernetesManifestGenerator.WriteAsync(chartDir, name, content, ct));
+                    files.Add(await KubernetesManifestGenerator.WriteAsync(chartDir, name, KubernetesManifestBuilder.ToText(model), ct));
                     continue;
             }
 
-            var path = await KubernetesManifestGenerator.WriteAsync(templatesDir, name, Templatize(svc, name, content), ct);
+            var path = await KubernetesManifestGenerator.WriteAsync(templatesDir, name, Templatize(model), ct);
             if (name == KubernetesManifestGenerator.SecretFileName)
             {
                 KubernetesManifestGenerator.RestrictToOwner(path);
@@ -166,50 +168,29 @@ ingress:
         "{{ else }}{{ .Values.image.repository }}{{ end }}";
 
     /// <summary>
-    /// Escapes what Helm would read as template actions (the Vault agent's own template is full
-    /// of <c>{{ }}</c>), then swaps the overridable fields for references to values.yaml. Each
-    /// swap must hit exactly one line, so a change to the renderers can't silently leave a
-    /// value hard-coded.
+    /// The manifest as a Helm template: what Helm would read as template actions is escaped (the
+    /// Vault agent's own template is full of <c>{{ }}</c>), and the overridable fields become
+    /// references to values.yaml. The fields are replaced in the YAML tree, not found in the
+    /// text, and each must exist, so a change to the models can't silently leave a value
+    /// hard-coded.
     /// </summary>
-    internal static string Templatize(KubernetesServiceManifest svc, string fileName, string content)
+    internal static string Templatize(object model) => model switch
     {
-        var text = EscapeTemplateActions(content.ReplaceLineEndings("\n"));
-        switch (fileName)
-        {
-            case "deployment.yaml":
-                text = ReplaceOnce(text, fileName, $"\n  replicas: {svc.Replicas}\n",
-                    "\n  replicas: {{ .Values.replicaCount }}\n");
-                text = ReplaceOnce(text, fileName,
-                    $"\n          image: {KubernetesManifestGenerator.QuoteYaml(ImageReference.Format(svc.Image!, svc.ImageTag))}\n",
-                    $"\n          image: \"{ImageExpression}\"\n");
-                text = ReplaceOnce(text, fileName, $"""
-
-          resources:
-            requests:
-              cpu: {svc.CpuRequest}
-              memory: {svc.MemoryRequest}
-            limits:
-              cpu: {svc.CpuLimit}
-              memory: {svc.MemoryLimit}
-
-""".ReplaceLineEndings("\n"), """
-
-          resources:
-            {{- toYaml .Values.resources | nindent 12 }}
-
-""".ReplaceLineEndings("\n"));
-                break;
-
-            case "ingress.yaml":
-                text = ReplaceOnce(text, fileName, $"\n  ingressClassName: {svc.IngressClassName}\n",
-                    "\n  ingressClassName: {{ .Values.ingress.className | quote }}\n");
-                text = ReplaceOnce(text, fileName, $"\n    - host: {svc.IngressHost}\n",
-                    "\n    - host: {{ .Values.ingress.host | quote }}\n");
-                break;
-        }
-
-        return text;
-    }
+        DeploymentManifest deployment => YamlWriter.CamelCase.SerializeWithReplacements(deployment,
+        [
+            ("spec.replicas", _ => "{{ .Values.replicaCount }}"),
+            ("spec.template.spec.containers[0].image", _ => $"\"{ImageExpression}\""),
+            // nindent puts the values one level below the resources key.
+            ("spec.template.spec.containers[0].resources",
+                column => $"\n{new string(' ', column + 2)}{{{{- toYaml .Values.resources | nindent {column + 2} }}}}")
+        ], EscapeTemplateActions),
+        IngressManifest ingress => YamlWriter.CamelCase.SerializeWithReplacements(ingress,
+        [
+            ("spec.ingressClassName", _ => "{{ .Values.ingress.className | quote }}"),
+            ("spec.rules[0].host", _ => "{{ .Values.ingress.host | quote }}")
+        ], EscapeTemplateActions),
+        _ => EscapeTemplateActions(KubernetesManifestBuilder.ToText(model))
+    };
 
     /// <summary>
     /// Makes literal <c>{{</c> and <c>}}</c> print as themselves under Helm. One pass, so the
@@ -217,18 +198,6 @@ ingress:
     /// </summary>
     internal static string EscapeTemplateActions(string text)
         => TemplateDelimiters().Replace(text, m => m.Value == "{{" ? "{{ \"{{\" }}" : "{{ \"}}\" }}");
-
-    private static string ReplaceOnce(string text, string fileName, string find, string replacement)
-    {
-        var at = text.IndexOf(find, StringComparison.Ordinal);
-        if (at < 0 || text.IndexOf(find, at + find.Length, StringComparison.Ordinal) >= 0)
-        {
-            throw new InvalidOperationException(
-                $"Could not turn {fileName} into a Helm template: expected exactly one '{find.Trim()}'.");
-        }
-
-        return string.Concat(text.AsSpan(0, at), replacement, text.AsSpan(at + find.Length));
-    }
 
     private static string Q(string? value) => KubernetesManifestGenerator.QuoteYaml(value);
 

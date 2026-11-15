@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pg-config
+  namespace: test-pg
+  labels:
+    app: pg
+    app.kubernetes.io/managed-by: deployify
+data:
+  PLAIN: "hello"

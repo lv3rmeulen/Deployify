@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using Deployify.Target.Nomad.Api;
 
 namespace Deployify.Target.Nomad;
 
@@ -99,21 +100,19 @@ public static partial class ServiceDiscovery
         return sb.ToString();
     }
 
-    /// <summary>Appends a <c>template</c> block (inside a task) that writes the task's env file.</summary>
-    public static void AppendTemplate(
-        StringBuilder sb, string jobName,
+    /// <summary>The task's <c>template</c> that writes its env file and restarts it when an address changes.</summary>
+    public static NomadTemplate Template(
+        string jobName,
         IReadOnlyDictionary<string, string> discoveredEnv,
         IReadOnlyDictionary<string, string> secretEnv,
-        string provider, string indent)
-    {
-        sb.AppendLine();
-        sb.AppendLine($"{indent}template {{");
-        sb.AppendLine($"{indent}  data        = {Hcl.Quote(TemplateData(jobName, discoveredEnv, secretEnv, provider))}");
-        sb.AppendLine($"{indent}  destination = \"{TemplateDestination}\"");
-        sb.AppendLine($"{indent}  env         = true");
-        sb.AppendLine($"{indent}  change_mode = \"restart\"");
-        sb.AppendLine($"{indent}}}");
-    }
+        string provider)
+        => new()
+        {
+            EmbeddedTmpl = TemplateData(jobName, discoveredEnv, secretEnv, provider),
+            DestPath = TemplateDestination,
+            Envvars = true,
+            ChangeMode = "restart"
+        };
 
     /// <summary>
     /// Declares <paramref name="variable"/> and sets it to the address of one registered

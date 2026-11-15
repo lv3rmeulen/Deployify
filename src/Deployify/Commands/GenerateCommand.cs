@@ -11,7 +11,7 @@ public static class GenerateCommand
     public static Command Build()
     {
         var cmd = new Command("generate",
-            "Generate deployment artifacts (HCL, manifests, compose files) without contacting the cluster.");
+            "Generate deployment artifacts (Nomad jobs, manifests, compose files) without contacting the cluster.");
         cmd.Options.Add(GlobalOptions.ProjectPath);
         cmd.Options.Add(GlobalOptions.Environment);
         cmd.Options.Add(GlobalOptions.Target);

@@ -20,4 +20,10 @@
     <ProjectReference Include="..\..\src\Deployify.Core\Deployify.Core.csproj" />
     <ProjectReference Include="..\..\src\Deployify.Target.NomadConsul\Deployify.Target.NomadConsul.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared\Snapshot.cs" Link="Shared\Snapshot.cs" />
+    <Compile Include="..\Shared\NomadJobJson.cs" Link="Shared\NomadJobJson.cs" />
+    <Compile Include="..\Shared\NomadEquivalence.cs" Link="Shared\NomadEquivalence.cs" />
+  </ItemGroup>
+
 </Project>

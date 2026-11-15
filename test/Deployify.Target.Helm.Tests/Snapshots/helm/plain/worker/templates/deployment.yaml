@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: test-worker
+  labels:
+    app: worker
+    app.kubernetes.io/managed-by: deployify
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      containers:
+        - name: worker
+          image: "{{ if .Values.image.tag }}{{ printf "%s:%s" .Values.image.repository (toString .Values.image.tag) }}{{ else }}{{ .Values.image.repository }}{{ end }}"
+          imagePullPolicy: Always
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

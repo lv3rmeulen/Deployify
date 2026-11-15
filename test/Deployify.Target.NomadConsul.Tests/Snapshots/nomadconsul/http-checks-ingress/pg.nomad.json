@@ -1,0 +1,82 @@
+{
+  "Job": {
+    "ID": "pg",
+    "Name": "pg",
+    "Namespace": "mesh",
+    "Type": "service",
+    "Datacenters": [
+      "dc1"
+    ],
+    "Meta": {
+      "deployify-managed": "true"
+    },
+    "TaskGroups": [
+      {
+        "Name": "pg",
+        "Count": 1,
+        "Update": {
+          "MinHealthyTime": 30000000000,
+          "HealthyDeadline": 600000000000,
+          "ProgressDeadline": 900000000000,
+          "AutoRevert": false
+        },
+        "Networks": [
+          {
+            "Mode": "bridge",
+            "DynamicPorts": [
+              {
+                "Label": "tcp",
+                "To": 5432
+              }
+            ]
+          }
+        ],
+        "Services": [
+          {
+            "Name": "pg",
+            "PortLabel": "5432",
+            "Checks": [
+              {
+                "Type": "tcp",
+                "PortLabel": "tcp",
+                "Interval": 90000000000,
+                "Timeout": 2000000000,
+                "CheckRestart": {
+                  "Limit": 3,
+                  "Grace": 30000000000
+                }
+              }
+            ],
+            "Connect": {
+              "SidecarService": {}
+            }
+          }
+        ],
+        "Tasks": [
+          {
+            "Name": "pg",
+            "Driver": "docker",
+            "Config": {
+              "image": "postgres:17",
+              "ports": [
+                "tcp"
+              ]
+            },
+            "Templates": [
+              {
+                "EmbeddedTmpl": "{{ with nomadVar \"nomad/jobs/pg\" -}}\nPOSTGRES_PASSWORD={{ index . \"POSTGRES_PASSWORD\" }}\n{{- end }}\n",
+                "DestPath": "secrets/deployify.env",
+                "Envvars": true,
+                "ChangeMode": "restart"
+              }
+            ],
+            "Resources": {
+              "CPU": 256,
+              "MemoryMB": 256
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

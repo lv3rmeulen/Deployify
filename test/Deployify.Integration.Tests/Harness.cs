@@ -328,9 +328,9 @@ internal static class Harness
                 Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(validateResults ??
             [
-                new ValidationResult { ArtifactName = "api.job.hcl", Errors = [] },
-                new ValidationResult { ArtifactName = "worker.job.hcl", Errors = [] },
-                new ValidationResult { ArtifactName = "redis.job.hcl", Errors = [] }
+                new ValidationResult { ArtifactName = "api.nomad.json", Errors = [] },
+                new ValidationResult { ArtifactName = "worker.nomad.json", Errors = [] },
+                new ValidationResult { ArtifactName = "redis.nomad.json", Errors = [] }
             ]);
 
         mock.DiffAsync(Arg.Any<AspireManifest>(), Arg.Any<EnvironmentConfig>(),

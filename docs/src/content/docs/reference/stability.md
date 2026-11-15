@@ -59,7 +59,7 @@ current behavior.
 - Resource names derived from the AppHost (job, service, namespace and Compose project names)
   don't change, so an upgrade doesn't recreate running services.
 
-The rest of a generated artifact (HCL, Kubernetes manifests, Compose files, Helm charts) can
+The rest of a generated artifact (Nomad job files, Kubernetes manifests, Compose files, Helm charts) can
 change in a minor release, for example to set a new field or follow a platform's
 recommendation. Such changes are listed in the changelog, and `plan` shows them before you apply.
 

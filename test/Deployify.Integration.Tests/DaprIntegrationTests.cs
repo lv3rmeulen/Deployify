@@ -22,7 +22,7 @@ public sealed class DaprIntegrationTests
         await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
         var outputDir = Path.Combine(dir.Path, "deployify-output");
-        foreach (var file in Directory.GetFiles(outputDir, "*.job.hcl"))
+        foreach (var file in Directory.GetFiles(outputDir, "*.nomad.json"))
         {
             (await File.ReadAllTextAsync(file, TestContext.Current.CancellationToken)).ShouldNotContain("daprio/daprd");
         }
@@ -39,12 +39,12 @@ public sealed class DaprIntegrationTests
 
         await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
-        var apiHcl = await File.ReadAllTextAsync(
-            Path.Combine(dir.Path, "deployify-output", "api.job.hcl"), TestContext.Current.CancellationToken);
-        apiHcl.ShouldContain("daprio/daprd");
-        apiHcl.ShouldContain("api-dapr");
-        apiHcl.ShouldContain("lifecycle");
-        apiHcl.ShouldContain("sidecar = true");
+        var apiJob = await File.ReadAllTextAsync(
+            Path.Combine(dir.Path, "deployify-output", "api.nomad.json"), TestContext.Current.CancellationToken);
+        apiJob.ShouldContain("daprio/daprd");
+        apiJob.ShouldContain("api-dapr");
+        apiJob.ShouldContain("lifecycle");
+        apiJob.ShouldContain("\"Sidecar\": true");
     }
 
     [Fact]
@@ -56,9 +56,9 @@ public sealed class DaprIntegrationTests
 
         await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
-        var apiHcl = await File.ReadAllTextAsync(
-            Path.Combine(dir.Path, "deployify-output", "api.job.hcl"), TestContext.Current.CancellationToken);
-        apiHcl.ShouldContain("--dapr-http-port");
+        var apiJob = await File.ReadAllTextAsync(
+            Path.Combine(dir.Path, "deployify-output", "api.nomad.json"), TestContext.Current.CancellationToken);
+        apiJob.ShouldContain("--dapr-http-port");
     }
 
     [Fact]
@@ -70,10 +70,10 @@ public sealed class DaprIntegrationTests
 
         await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
-        var apiHcl = await File.ReadAllTextAsync(
-            Path.Combine(dir.Path, "deployify-output", "api.job.hcl"), TestContext.Current.CancellationToken);
-        apiHcl.ShouldContain("--app-id");
-        apiHcl.ShouldContain("\"api\"");
+        var apiJob = await File.ReadAllTextAsync(
+            Path.Combine(dir.Path, "deployify-output", "api.nomad.json"), TestContext.Current.CancellationToken);
+        apiJob.ShouldContain("--app-id");
+        apiJob.ShouldContain("\"api\"");
     }
 
     [Fact]
@@ -85,7 +85,7 @@ public sealed class DaprIntegrationTests
 
         await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
-        Directory.GetFiles(Path.Combine(dir.Path, "deployify-output"), "*.job.hcl")
+        Directory.GetFiles(Path.Combine(dir.Path, "deployify-output"), "*.nomad.json")
             .Length.ShouldBe(3); // Still 3 files — sidecar is a task inside the same job
     }
 
@@ -100,10 +100,10 @@ public sealed class DaprIntegrationTests
 
         await Root().InvokeAsync(["plan", "--project-path", dir.Path], TestContext.Current.CancellationToken);
 
-        var apiHcl = await File.ReadAllTextAsync(
-            Path.Combine(dir.Path, "deployify-output", "api.job.hcl"), TestContext.Current.CancellationToken);
-        apiHcl.ShouldContain("daprio/daprd");
-        apiHcl.ShouldContain("sidecar = true");
+        var apiJob = await File.ReadAllTextAsync(
+            Path.Combine(dir.Path, "deployify-output", "api.nomad.json"), TestContext.Current.CancellationToken);
+        apiJob.ShouldContain("daprio/daprd");
+        apiJob.ShouldContain("\"Sidecar\": true");
     }
 
     // ── Compose + Dapr ────────────────────────────────────────────────────────

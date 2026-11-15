@@ -1,0 +1,65 @@
+{
+  "FormatVersion": 1,
+  "ActiveEnvironment": "prod",
+  "Environments": {
+    "prod": {
+      "Target": "AzureContainerApps",
+      "ImageTag": "latest",
+      "OutputPath": "deployify-output",
+      "ServiceOverrides": {},
+      "IgnoreResources": [],
+      "Parameters": {},
+      "ContainerRuntime": "Docker",
+      "DeployDashboard": false,
+      "Dashboard": {
+        "ImageTag": "latest",
+        "Port": 18888,
+        "OtlpPort": 18889,
+        "Cpu": "100m",
+        "Memory": "128Mi"
+      },
+      "AppHostPath": "<dir>",
+      "ContainerOs": "linux",
+      "ContainerArch": "x64",
+      "DeployDapr": false,
+      "Dapr": {
+        "DaprVersion": "latest",
+        "DaprHttpPort": 3500,
+        "DaprGrpcPort": 50001,
+        "LogLevel": "info"
+      },
+      "Secrets": {
+        "Backend": "Inline",
+        "Vault": {
+          "Mount": "secret",
+          "PathPrefix": "deployify",
+          "AuthMount": "kubernetes",
+          "ManageAuth": true,
+          "SecretsFileName": "appsettings.secrets.json",
+          "AgentAnnotations": {}
+        },
+        "KeyVault": {
+          "KubernetesIdentity": "WorkloadIdentity"
+        },
+        "References": {}
+      },
+      "TargetConfig": {
+        "aca": {
+          "SubscriptionId": "",
+          "ResourceGroup": "deployify-rg",
+          "Location": "eastus",
+          "EnvironmentName": "deployify-env",
+          "LogAnalyticsWorkspaceName": "deployify-logs",
+          "MinReplicas": 0,
+          "MaxReplicas": 3,
+          "DefaultCpu": 0.25,
+          "DefaultMemory": "0.5Gi",
+          "IngressType": "External",
+          "BasePort": 8080
+        }
+      },
+      "Protected": false,
+      "Prune": false
+    }
+  }
+}

@@ -65,7 +65,22 @@ public sealed class NomadPlanTests
         plan.ToDelete.ShouldBe(["old"]);
     }
 
-    /// <summary>Just enough of the Nomad API for plan: list jobs, parse HCL, plan a job.</summary>
+    [Fact]
+    public async Task Plan_SendsTheJobFile_AsAJobPlanRequest()
+    {
+        using var nomad = new FakeNomad();
+        using var dir = new TempDir();
+
+        await Target().PlanAsync(Fixtures.SingleService("api"), Fixtures.NomadConfig(nomad.Address), dir.Path, Ct);
+
+        var body = System.Text.Json.Nodes.JsonNode.Parse(nomad.LastPlanBody.ShouldNotBeNull())!;
+        ((bool?)body["Diff"]).ShouldBe(true);
+        ((string?)body["Job"]!["ID"]).ShouldBe("api");
+        ((string?)body["Job"]!["TaskGroups"]![0]!["Tasks"]![0]!["Driver"]).ShouldBe("docker");
+        System.IO.File.Exists(System.IO.Path.Combine(dir.Path, "api.nomad.json")).ShouldBeTrue();
+    }
+
+    /// <summary>Just enough of the Nomad API for plan: list jobs and plan a job.</summary>
     private sealed class FakeNomad : IDisposable
     {
         private readonly HttpListener _listener = new();
@@ -92,11 +107,16 @@ public sealed class NomadPlanTests
                     }
 
                     var path = ctx.Request.Url!.AbsolutePath;
+                    if (path == "/v1/job/api/plan")
+                    {
+                        using var reader = new System.IO.StreamReader(ctx.Request.InputStream);
+                        LastPlanBody = await reader.ReadToEndAsync();
+                    }
+
                     var (status, body) = path switch
                     {
                         "/v1/jobs" when ctx.Request.HttpMethod == "GET" =>
                             (200, $"[{{\"ID\":\"{runningJob}\",\"Status\":\"running\",\"Meta\":{{\"deployify-managed\":\"true\"}}}}]"),
-                        "/v1/jobs/parse" => (200, "{\"ID\":\"api\",\"Name\":\"api\"}"),
                         "/v1/job/api/plan" => (planStatus, planBody),
                         _ => (404, "not found")
                     };
@@ -110,6 +130,9 @@ public sealed class NomadPlanTests
         }
 
         public string Address { get; }
+
+        /// <summary>The body of the last plan request.</summary>
+        public string? LastPlanBody { get; private set; }
 
         public void Dispose()
         {
