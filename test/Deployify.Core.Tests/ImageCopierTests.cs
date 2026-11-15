@@ -23,17 +23,18 @@ public sealed class ImageCopierTests
     {
         var runner = new FakeProcessRunner();
         var copier = new ImageCopier(runner);
+        var ct = TestContext.Current.CancellationToken;
 
-        (await copier.DetectAsync()).ShouldBe(ImageCopyTool.Crane);
+        (await copier.DetectAsync(ct)).ShouldBe(ImageCopyTool.Crane);
 
         runner.Missing.Add("crane");
-        (await copier.DetectAsync()).ShouldBe(ImageCopyTool.Skopeo);
+        (await copier.DetectAsync(ct)).ShouldBe(ImageCopyTool.Skopeo);
 
         runner.Missing.Add("skopeo");
-        (await copier.DetectAsync()).ShouldBe(ImageCopyTool.Docker);
+        (await copier.DetectAsync(ct)).ShouldBe(ImageCopyTool.Docker);
 
         runner.When(["buildx", "version"], s_fail);
-        (await copier.DetectAsync()).ShouldBeNull();
+        (await copier.DetectAsync(ct)).ShouldBeNull();
     }
 
     [Theory]
@@ -46,7 +47,7 @@ public sealed class ImageCopierTests
     {
         var runner = new FakeProcessRunner();
 
-        await new ImageCopier(runner).CopyAsync(tool, Source, Digest, Target, "abc123");
+        await new ImageCopier(runner).CopyAsync(tool, Source, Digest, Target, "abc123", TestContext.Current.CancellationToken);
 
         var copy = runner.Calls.First();
         copy.FileName.ShouldBe(program);
@@ -61,7 +62,7 @@ public sealed class ImageCopierTests
     {
         var runner = new FakeProcessRunner();
 
-        await new ImageCopier(runner).CopyAsync(tool, Source, Digest, Target, "abc123");
+        await new ImageCopier(runner).CopyAsync(tool, Source, Digest, Target, "abc123", TestContext.Current.CancellationToken);
 
         runner.Calls.Count.ShouldBe(2);
         runner.Calls[1].Args.ShouldContain(verb);
@@ -96,9 +97,10 @@ public sealed class ImageCopierTests
     public async Task Exists_IsFalse_WhenTheRegistryHasNoSuchManifest()
     {
         var runner = new FakeProcessRunner().When(["manifest"], s_fail);
+        var ct = TestContext.Current.CancellationToken;
 
-        (await new ImageCopier(runner).ExistsAsync(ImageCopyTool.Crane, Target, Digest)).ShouldBeFalse();
-        (await new ImageCopier(new FakeProcessRunner()).ExistsAsync(ImageCopyTool.Crane, Target, Digest)).ShouldBeTrue();
+        (await new ImageCopier(runner).ExistsAsync(ImageCopyTool.Crane, Target, Digest, ct)).ShouldBeFalse();
+        (await new ImageCopier(new FakeProcessRunner()).ExistsAsync(ImageCopyTool.Crane, Target, Digest, ct)).ShouldBeTrue();
     }
 
     [Theory]
