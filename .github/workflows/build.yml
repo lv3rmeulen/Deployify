@@ -4,6 +4,14 @@ on:
   push:
     branches: [ main ]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      update-snapshots:
+        description: >-
+          Regenerate the test snapshots (DEPLOYIFY_UPDATE_SNAPSHOTS=1) and upload them as the
+          "snapshots" artifact. Snapshot tests always pass in this mode; review the diff.
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -27,6 +35,8 @@ jobs:
         run: dotnet build Deployify.slnx --configuration Release --no-restore
 
       - name: Test
+        env:
+                DEPLOYIFY_UPDATE_SNAPSHOTS: ${{ inputs.update-snapshots && '1' || '' }}
         run: >
           dotnet tool run dotnet-coverage collect
           "dotnet test --solution Deployify.slnx --configuration Release --no-build --report-github"
@@ -38,4 +48,24 @@ jobs:
         with:
           name: coverage
           path: ./artifacts/coverage.cobertura.xml
+          if-no-files-found: error
+
+      - name: Summarize snapshot changes
+        if: inputs.update-snapshots
+        run: |
+          git add --intent-to-add -- 'test/**/Snapshots/**'
+          {
+            echo '### Snapshot changes'
+            echo '```'
+            git diff --ignore-cr-at-eol --stat -- 'test/**/Snapshots/**' || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload snapshots
+        if: inputs.update-snapshots
+        uses: actions/upload-artifact@v7
+        with:
+          name: snapshots
+          path: test/**/Snapshots/
+          include-hidden-files: true
           if-no-files-found: error

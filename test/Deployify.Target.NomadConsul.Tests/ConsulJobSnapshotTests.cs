@@ -50,6 +50,5 @@ public sealed class ConsulJobSnapshotTests
         }
     }
 
-    private static string SnapshotDirectory([System.Runtime.CompilerServices.CallerFilePath] string file = "")
-        => Path.GetDirectoryName(file)!;
+    private static string SnapshotDirectory() => Snapshot.SourceDirectory();
 }
