@@ -74,6 +74,7 @@ public static class CiCommand
         cmd.Options.Add(GlobalOptions.ProjectPath);
         cmd.Options.Add(GlobalOptions.Environment);
         cmd.Options.Add(GlobalOptions.Target);
+        cmd.Options.Add(GlobalOptions.AllowUnverified);
         cmd.Options.Add(skipValidate);
         cmd.Options.Add(skipApply);
         cmd.Options.Add(noPublish);
@@ -105,7 +106,8 @@ public static class CiCommand
             try
             {
                 resolved = await DependencyInjection.ResolveAsync(projectPath, envOverride, targetOpt, ct,
-                    lockFor: doSkipApply ? null : "ci");
+                    lockFor: doSkipApply ? null : "ci",
+                    allowUnverifiedPlugins: parseResult.GetValue(GlobalOptions.AllowUnverified));
             }
             catch (Exception ex)
             {

@@ -22,6 +22,7 @@ public static class PublishCommand
         cmd.Options.Add(GlobalOptions.ProjectPath);
         cmd.Options.Add(GlobalOptions.Environment);
         cmd.Options.Add(GlobalOptions.Target);
+        cmd.Options.Add(GlobalOptions.AllowUnverified);
         cmd.Options.Add(GlobalOptions.DryRun);
         cmd.Options.Add(imageTagOpt);
         cmd.Options.Add(runtimeOpt);
@@ -38,7 +39,8 @@ public static class PublishCommand
             ResolvedContext resolved;
             try
             {
-                resolved = await DependencyInjection.ResolveAsync(projectPath, envOverride, targetOverride, ct);
+                resolved = await DependencyInjection.ResolveAsync(projectPath, envOverride, targetOverride, ct,
+                    allowUnverifiedPlugins: parseResult.GetValue(GlobalOptions.AllowUnverified));
             }
             catch (Exception ex)
             {

@@ -60,4 +60,12 @@ public sealed class DeployifyDeployOptions
     /// <c>ignoreResources</c> in deployify-state.json.
     /// </summary>
     public bool Strict { get; set; }
+
+    /// <summary>
+    /// Start a plugin target that deployify-plugins.lock.json has no hash for, with a warning
+    /// each time (key <c>Deployify:AllowUnverifiedPlugins</c>), like <c>deployify apply
+    /// --allow-unverified</c>. Off: such a plugin stops the deploy. A plugin whose files don't
+    /// match its locked hash stops it either way.
+    /// </summary>
+    public bool AllowUnverifiedPlugins { get; set; }
 }

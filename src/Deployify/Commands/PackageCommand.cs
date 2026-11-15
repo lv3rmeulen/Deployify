@@ -40,6 +40,7 @@ public static class PackageCommand
         cmd.Options.Add(GlobalOptions.ProjectPath);
         cmd.Options.Add(GlobalOptions.Environment);
         cmd.Options.Add(GlobalOptions.Target);
+        cmd.Options.Add(GlobalOptions.AllowUnverified);
         cmd.Options.Add(GlobalOptions.DryRun);
         cmd.Options.Add(publishDirOpt);
         var imageTagOpt = new Option<string?>("--image-tag", "-i")
@@ -60,7 +61,8 @@ public static class PackageCommand
             ResolvedContext resolved;
             try
             {
-                resolved = await DependencyInjection.ResolveAsync(projectPath, envOverride, targetOpt, ct);
+                resolved = await DependencyInjection.ResolveAsync(projectPath, envOverride, targetOpt, ct,
+                    allowUnverifiedPlugins: parseResult.GetValue(GlobalOptions.AllowUnverified));
             }
             catch (Exception ex)
             {

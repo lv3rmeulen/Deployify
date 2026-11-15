@@ -67,7 +67,7 @@ public static class PluginCommand
                     Markup.Escape(plugin.TargetId),
                     Markup.Escape(plugin.ExecutablePath),
                     Markup.Escape(plugin.Source),
-                    locked is null ? "[dim]no[/]" : Markup.Escape($"{locked.Version ?? "any version"}{(locked.Sha256 is null ? "" : " + hash")}")
+                    LockStatus(locked, plugin.Files)
                 };
 
                 if (parseResult.GetValue(check))
@@ -113,13 +113,11 @@ public static class PluginCommand
             Description = "Plugin target IDs to lock. Default: every plugin target the project's environments use.",
             Arity = ArgumentArity.ZeroOrMore
         };
-        var noHash = new Option<bool>("--no-hash")
-        {
-            Description = "Lock the plugin version only, not the exact file (for dotnet tool installs, whose launcher differs per machine)."
-        };
-        var cmd = new Command("lock", $"Record the plugin version (and file hash) each target uses in {PluginLockFile.FileName}.");
+        var cmd = new Command("lock",
+            $"Record the plugin version and the SHA-256 of its files each target uses in {PluginLockFile.FileName}. " +
+            "Deployify refuses to start a plugin target without one. A platform-specific plugin gets a hash per platform: " +
+            "run this on each platform that deploys.");
         cmd.Options.Add(GlobalOptions.ProjectPath);
-        cmd.Options.Add(noHash);
         cmd.Arguments.Add(targets);
 
         cmd.SetAction(async (parseResult, ct) =>
@@ -159,6 +157,8 @@ public static class PluginCommand
                     continue;
                 }
 
+                // Hash first: what is recorded is what was there before anything of it ran.
+                var hash = plugin.Files.ComputeHash();
                 var (info, error) = await ProbeAsync(plugin, locked: null, ct);
                 if (info is null)
                 {
@@ -167,15 +167,20 @@ public static class PluginCommand
                     continue;
                 }
 
-                var entry = new PluginLock
-                {
-                    Plugin = info.Plugin.Name,
-                    Version = info.Plugin.Version,
-                    Sha256 = parseResult.GetValue(noHash) ? null : PluginLockFile.HashFile(plugin.ExecutablePath)
-                };
+                // The same plugin version locked on another platform keeps that platform's hash.
+                var previous = lockFile.Find(target.Value);
+                var hashes = previous is not null &&
+                             string.Equals(previous.Plugin, info.Plugin.Name, StringComparison.Ordinal) &&
+                             string.Equals(previous.Version, info.Plugin.Version, StringComparison.OrdinalIgnoreCase)
+                    ? new SortedDictionary<string, string>(previous.Sha256, StringComparer.Ordinal)
+                    : new SortedDictionary<string, string>(StringComparer.Ordinal);
+                hashes[plugin.Files.Platform] = hash;
+
+                var entry = new PluginLock { Plugin = info.Plugin.Name, Version = info.Plugin.Version, Sha256 = hashes };
                 lockFile.Plugins[target.Value] = entry;
+                var others = hashes.Count > 1 ? $" (also locked for {string.Join(", ", hashes.Keys.Where(k => k != plugin.Files.Platform))})" : "";
                 AnsiConsole.MarkupLineInterpolated(
-                    $"[green]✓[/] {target.Value}: {entry.Plugin} {entry.Version ?? "(no version)"}{(entry.Sha256 is null ? "" : $", sha256 {entry.Sha256[..12]}…")}");
+                    $"[green]✓[/] {target.Value}: {entry.Plugin} {entry.Version ?? "(no version)"}, {plugin.Files.Platform} sha256 {hash[..12]}… of {plugin.Files.Describe()}{others}");
             }
 
             await lockFile.SaveAsync(project, ct);
@@ -201,12 +206,36 @@ public static class PluginCommand
             .Distinct(StringComparer.OrdinalIgnoreCase)];
     }
 
-    /// <summary>Starts a plugin, reads its handshake and stops it again.</summary>
+    /// <summary>The "Locked" column: whether this plugin would start without --allow-unverified.</summary>
+    private static string LockStatus(PluginLock? locked, PluginFiles files)
+    {
+        if (locked is null)
+        {
+            return "[red]no (unverified)[/]";
+        }
+
+        var version = Markup.Escape(locked.Version ?? "any version");
+        return locked.HashFor(files.Platform) is null
+            ? $"[yellow]{version}, no hash for {Markup.Escape(files.Platform)} (unverified)[/]"
+            : $"{version} + hash";
+    }
+
+    /// <summary>
+    /// Starts a plugin, reads its handshake and stops it again. An unlocked plugin is allowed: this
+    /// is for looking at plugins, not deploying with them. A hash that doesn't match still fails.
+    /// </summary>
     private static async Task<(Plugin.Contracts.InitializeResult? Info, string? Error)> ProbeAsync(
         DiscoveredPlugin plugin, PluginLock? locked, CancellationToken ct)
     {
         var host = new PluginHost(
-            new PluginLaunchSpec { ExecutablePath = plugin.ExecutablePath, Source = plugin.Source, Lock = locked },
+            new PluginLaunchSpec
+            {
+                ExecutablePath = plugin.ExecutablePath,
+                Source = plugin.Source,
+                Lock = locked,
+                Files = plugin.Files,
+                Unverified = UnverifiedPluginPolicy.Allow
+            },
             NullLoggerFactory.Instance);
         try
         {

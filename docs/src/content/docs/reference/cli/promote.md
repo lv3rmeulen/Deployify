@@ -21,6 +21,7 @@ deployify promote [options]
 | Option | Description | Default |
 |---|---|---|
 | `--project-path`, `-p` | Path to the Aspire AppHost .csproj or its directory. | current directory |
+| `--allow-unverified` | Start target plugins that deployify-plugins.lock.json has no hash for, with a warning each time (a plugin whose files don't match its locked hash is still refused). Run 'deployify plugin lock' instead to verify them. | `false` |
 | `--from` | **Required.** Environment whose published images to promote (e.g. staging). |  |
 | `--to` | **Required.** Environment to promote them to (e.g. prod). |  |
 | `--image-tag`, `-i` | Tag to promote, for example the commit SHA. Defaults to the source environment's configured tag. |  |

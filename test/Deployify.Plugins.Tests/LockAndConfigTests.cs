@@ -96,16 +96,26 @@ public sealed class LockAndConfigTests : IDisposable
             File.Move(exe, exe += ".cmd");
         }
 
+        var files = PluginFiles.ForFile(exe);
         var lockFile = new PluginLockFile();
-        lockFile.Plugins["example"] = new PluginLock { Plugin = "example", Version = "1.0.0", Sha256 = PluginLockFile.HashFile(exe) };
+        lockFile.Plugins["example"] = new PluginLock
+        {
+            Plugin = "example", Version = "1.0.0", Sha256 = new() { [files.Platform] = files.ComputeHash() }
+        };
         await lockFile.SaveAsync(_project, Ct);
 
         var catalog = new PluginCatalog(Path.Combine(_project, "none"), name => name == "PATH" ? bin : null);
         var spec = PluginTargetSource.Locate(catalog, DeploymentTargetType.Parse("EXAMPLE"), _project);
 
         spec.ShouldNotBeNull();
-        spec.Lock.ShouldBe(lockFile.Plugins["example"]);
+        spec.Lock.ShouldNotBeNull();
+        spec.Lock.Version.ShouldBe("1.0.0");
+        spec.Lock.HashFor(files.Platform).ShouldBe(files.ComputeHash());
+        spec.Files.ShouldBe(files);
+        spec.Unverified.ShouldBe(UnverifiedPluginPolicy.Refuse);
         PluginTargetSource.Locate(catalog, DeploymentTargetType.Parse("example"), projectDirectory: null)!.Lock.ShouldBeNull();
+        PluginTargetSource.Locate(catalog, DeploymentTargetType.Parse("example"), _project, new PluginHostOptions { AllowUnverified = true })!
+            .Unverified.ShouldBe(UnverifiedPluginPolicy.Warn);
     }
 
     [Fact]
@@ -130,13 +140,13 @@ public sealed class LockAndConfigTests : IDisposable
             new PluginLaunchSpec
             {
                 ExecutablePath = exe,
-                Lock = new PluginLock { Plugin = "example", Sha256 = new string('0', 64) }
+                Lock = new PluginLock { Plugin = "example", Sha256 = new() { [PluginFiles.CurrentPlatform] = new string('0', 64) } }
             },
             Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
         await using var _ = host;
 
         var ex = await Should.ThrowAsync<PluginException>(() => host.GetConnectionAsync(Ct));
 
-        ex.Message.ShouldContain("isn't the file deployify-plugins.lock.json locked");
+        ex.Message.ShouldContain("doesn't match deployify-plugins.lock.json");
     }
 }

@@ -51,6 +51,7 @@ public static class PromoteCommand
         var cmd = new Command("promote",
             "Make another environment deploy the images an environment already published, by digest, without rebuilding them.");
         cmd.Options.Add(GlobalOptions.ProjectPath);
+        cmd.Options.Add(GlobalOptions.AllowUnverified);
         cmd.Options.Add(fromOpt);
         cmd.Options.Add(toOpt);
         cmd.Options.Add(imageTagOpt);
@@ -79,7 +80,8 @@ public static class PromoteCommand
             try
             {
                 resolved = await DependencyInjection.ResolveAsync(projectPath, to, null, ct,
-                    lockFor: dryRun ? null : "promote");
+                    lockFor: dryRun ? null : "promote",
+                    allowUnverifiedPlugins: parseResult.GetValue(GlobalOptions.AllowUnverified));
             }
             catch (Exception ex)
             {

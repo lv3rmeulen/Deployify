@@ -21,7 +21,11 @@ Each release can have these sections: **Added**, **Changed**, **Deprecated**, **
 - Secret backends for parameters (Vault, Azure Key Vault, AWS SSM).
 - Running Deployify from `aspire deploy` with `builder.AddDeployify()`.
 - Out-of-process target plugins: plugin protocol 1.0, `Deployify.Plugin.Sdk`,
-  `Deployify.Plugin.Testing`, and `deployify plugin list` / `plugin lock`.
+  `Deployify.Plugin.Testing`, and `deployify plugin list` / `plugin lock`. A plugin target only
+  starts when `deployify-plugins.lock.json` has the SHA-256 of its files for the platform; use
+  `--allow-unverified` (`AllowUnverifiedPlugins` for `aspire deploy`) to start one anyway, with a
+  warning each time. `dotnet tool` installs are hashed by the tool behind the launcher, and
+  self-contained plugins get a hash per platform.
 - `promote`: deploy the images another environment already published, by digest, copying them
   between registries when needed.
 - `dashboard`: serve an environment's deployed resources to the Aspire dashboard.

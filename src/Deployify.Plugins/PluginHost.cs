@@ -12,6 +12,13 @@ public sealed class PluginHostOptions
 {
     /// <summary>How long a plugin gets to start and answer the handshake.</summary>
     public TimeSpan HandshakeTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Start plugins that deployify-plugins.lock.json has no hash for, with a warning each time
+    /// one starts (<c>--allow-unverified</c>). Off: they are refused. A plugin whose files don't
+    /// match its locked hash is refused either way.
+    /// </summary>
+    public bool AllowUnverified { get; set; }
 }
 
 /// <summary>

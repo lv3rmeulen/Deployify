@@ -43,6 +43,7 @@ public static class DestroyCommand
         cmd.Options.Add(GlobalOptions.ProjectPath);
         cmd.Options.Add(GlobalOptions.Environment);
         cmd.Options.Add(GlobalOptions.Target);
+        cmd.Options.Add(GlobalOptions.AllowUnverified);
         cmd.Options.Add(GlobalOptions.DryRun);
         cmd.Options.Add(services);
         cmd.Options.Add(keepSecrets);
@@ -59,7 +60,8 @@ public static class DestroyCommand
                     parseResult.GetValue(GlobalOptions.ProjectPath)!,
                     parseResult.GetValue(GlobalOptions.Environment),
                     parseResult.GetValue(GlobalOptions.Target), ct,
-                    lockFor: dryRun ? null : "destroy");
+                    lockFor: dryRun ? null : "destroy",
+                    allowUnverifiedPlugins: parseResult.GetValue(GlobalOptions.AllowUnverified));
             }
             catch (Exception ex)
             {

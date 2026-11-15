@@ -22,15 +22,18 @@ public sealed class PluginTargetSource : IDeploymentTargetSource, IAsyncDisposab
     private readonly ConcurrentDictionary<(DeploymentTargetType Target, string? Project), RemoteDeploymentTarget> _targets = new();
 
     public PluginTargetSource(PluginCatalog catalog, ILoggerFactory? loggers = null, PluginHostOptions? options = null)
-        : this((target, project) => Locate(catalog, target, project), loggers, options)
+        : this((target, project) => Locate(catalog, target, project, options), loggers, options)
     {
     }
 
     /// <summary>
     /// Finds the plugin for a target and attaches what the project's lock file requires of it.
-    /// A locked target that isn't installed is an error, not a missing target.
+    /// A locked target that isn't installed is an error, not a missing target. The plugin is
+    /// refused when it starts unless the lock file has its hash, or
+    /// <see cref="PluginHostOptions.AllowUnverified"/> is set.
     /// </summary>
-    public static PluginLaunchSpec? Locate(PluginCatalog catalog, DeploymentTargetType target, string? projectDirectory)
+    public static PluginLaunchSpec? Locate(
+        PluginCatalog catalog, DeploymentTargetType target, string? projectDirectory, PluginHostOptions? options = null)
     {
         var locked = projectDirectory is null ? null : PluginLockFile.Load(projectDirectory)?.Find(target.Value);
         if (catalog.Find(target, projectDirectory) is not { } found)
@@ -42,7 +45,14 @@ public sealed class PluginTargetSource : IDeploymentTargetSource, IAsyncDisposab
                     $"but no '{Plugin.Contracts.PluginProtocol.ExecutablePrefix}{target}' executable is installed.");
         }
 
-        return new PluginLaunchSpec { ExecutablePath = found.ExecutablePath, Source = found.Source, Lock = locked };
+        return new PluginLaunchSpec
+        {
+            ExecutablePath = found.ExecutablePath,
+            Source = found.Source,
+            Lock = locked,
+            Files = found.Files,
+            Unverified = options?.AllowUnverified == true ? UnverifiedPluginPolicy.Warn : UnverifiedPluginPolicy.Refuse
+        };
     }
 
     /// <param name="locate">

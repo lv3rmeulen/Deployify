@@ -22,7 +22,9 @@ public static class DeployifyServiceCollectionExtensions
     /// <summary>
     /// Core services, every built-in target, and plugin targets found on demand (see
     /// <see cref="PluginCatalog"/>). Logging is up to the host: the CLI adds a console logger,
-    /// the Aspire integration hands in the AppHost's logger factory.
+    /// the Aspire integration hands in the AppHost's logger factory. Register a
+    /// <see cref="PluginHostOptions"/> to change how plugins run (for example to allow
+    /// unverified plugins).
     /// </summary>
     public static IServiceCollection AddDeployify(this IServiceCollection services)
         => services
@@ -44,7 +46,7 @@ public static class DeployifyServiceCollectionExtensions
             .AddSingleton<IDeploymentTarget, IisDeploymentTarget>()
             .AddSingleton(_ => new PluginCatalog())
             .AddSingleton(sp => new PluginTargetSource(
-                sp.GetRequiredService<PluginCatalog>(), sp.GetService<ILoggerFactory>()))
+                sp.GetRequiredService<PluginCatalog>(), sp.GetService<ILoggerFactory>(), sp.GetService<PluginHostOptions>()))
             .AddSingleton<IDeploymentTargetSource>(sp => sp.GetRequiredService<PluginTargetSource>())
             .AddSingleton<IDeploymentTargetFactory>(sp =>
                 new DeploymentTargetFactory(sp.GetServices<IDeploymentTarget>(), sp.GetServices<IDeploymentTargetSource>()));

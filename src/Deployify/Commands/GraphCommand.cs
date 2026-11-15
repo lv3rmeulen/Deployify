@@ -14,6 +14,7 @@ public static class GraphCommand
         cmd.Options.Add(GlobalOptions.ProjectPath);
         cmd.Options.Add(GlobalOptions.Environment);
         cmd.Options.Add(GlobalOptions.Target);
+        cmd.Options.Add(GlobalOptions.AllowUnverified);
 
         cmd.SetAction(async (parseResult, ct) =>
         {
@@ -24,7 +25,8 @@ public static class GraphCommand
             ResolvedContext resolved;
             try
             {
-                resolved = await DependencyInjection.ResolveAsync(projectPath, envOverride, targetOpt, ct);
+                resolved = await DependencyInjection.ResolveAsync(projectPath, envOverride, targetOpt, ct,
+                    allowUnverifiedPlugins: parseResult.GetValue(GlobalOptions.AllowUnverified));
             }
             catch (Exception ex)
             {

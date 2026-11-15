@@ -8,7 +8,11 @@ using Deployify.Plugin.Contracts;
 namespace Deployify.Plugins;
 
 /// <summary>A plugin executable found on disk, and the target ID its file name declares.</summary>
-public sealed record DiscoveredPlugin(string TargetId, string ExecutablePath, string Source);
+public sealed record DiscoveredPlugin(string TargetId, string ExecutablePath, string Source)
+{
+    /// <summary>What the plugin's lock hash covers.</summary>
+    public PluginFiles Files { get; init; } = PluginFiles.ForFile(ExecutablePath);
+}
 
 /// <summary>
 /// Finds plugin executables by name: <c>deployify-target-&lt;id&gt;</c> serves target
@@ -113,7 +117,16 @@ public sealed class PluginCatalog
         {
             if (TargetIdFor(file, allowDll) is { } id)
             {
-                yield return new DiscoveredPlugin(id, Path.GetFullPath(file), source);
+                // In a subfolder of its own the whole folder is the plugin; at the top of a folder
+                // (or on PATH) it shares the folder, so only the file is, or the tool behind a shim.
+                var ownFolder = !string.Equals(
+                    Path.GetDirectoryName(Path.GetFullPath(file)),
+                    Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory)),
+                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+                yield return new DiscoveredPlugin(id, Path.GetFullPath(file), source)
+                {
+                    Files = ownFolder ? PluginFiles.ForOwnFolder(file) : PluginFiles.ForSharedFolder(file)
+                };
             }
         }
     }

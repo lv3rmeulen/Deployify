@@ -23,6 +23,7 @@ deployify package [options]
 | `--project-path`, `-p` | Path to the Aspire AppHost .csproj or its directory. | current directory |
 | `--env`, `-e` | Environment to use, overriding the active environment (e.g. local, prod). |  |
 | `--target`, `-t` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| ovhcloud \| compose \| awsecs \| azurecontainerapps \| nomadconsul \| iis, or the ID of a plugin target. |  |
+| `--allow-unverified` | Start target plugins that deployify-plugins.lock.json has no hash for, with a warning each time (a plugin whose files don't match its locked hash is still refused). Run 'deployify plugin lock' instead to verify them. | `false` |
 | `--dry-run` | Simulate the operation without making changes. | `false` |
 | `--publish-dir` | Directory containing the published binaries. Defaults to the dotnet publish output directory (bin/Release/net*/publish) for each project found in the manifest. |  |
 | `--image-tag`, `-i` | Version used in the artifact file names (defaults to the environment's image tag). |  |

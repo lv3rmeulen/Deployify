@@ -29,6 +29,28 @@ public sealed record PluginLaunchSpec
 
     /// <summary>What the project's lock file requires of this plugin; null when it isn't locked.</summary>
     public PluginLock? Lock { get; init; }
+
+    /// <summary>What the lock hash covers. Null: just <see cref="ExecutablePath"/>.</summary>
+    public PluginFiles? Files { get; init; }
+
+    /// <summary>
+    /// What to do when <see cref="Lock"/> has no hash for this plugin on this platform. A hash
+    /// that doesn't match is refused whatever this says.
+    /// </summary>
+    public UnverifiedPluginPolicy Unverified { get; init; } = UnverifiedPluginPolicy.Refuse;
+}
+
+/// <summary>What to do with a plugin the lock file has no hash for.</summary>
+public enum UnverifiedPluginPolicy
+{
+    /// <summary>Don't start it (the default).</summary>
+    Refuse,
+
+    /// <summary>Start it, logging a warning every time it starts (<c>--allow-unverified</c>).</summary>
+    Warn,
+
+    /// <summary>Start it without a word: for inspecting plugins (<c>plugin list --check</c>, <c>plugin lock</c>) and tests.</summary>
+    Allow
 }
 
 /// <summary>A plugin failed to start, answer, or do what was asked. The message is meant for the user.</summary>
@@ -80,7 +102,7 @@ public sealed class PluginConnection : IAsyncDisposable
         PluginLaunchSpec spec, IPluginHostCallbacks callbacks, ILogger logger, TimeSpan handshakeTimeout,
         CancellationToken ct = default)
     {
-        CheckLockedHash(spec);
+        Verify(spec, logger);
         var process = new Process { StartInfo = CreateStartInfo(spec), EnableRaisingEvents = true };
         try
         {
@@ -243,19 +265,50 @@ public sealed class PluginConnection : IAsyncDisposable
         return info;
     }
 
-    private static void CheckLockedHash(PluginLaunchSpec spec)
+    /// <summary>
+    /// Checks the plugin's files against the lock file before anything of it runs. A plugin the
+    /// lock file has no hash for is refused unless <see cref="PluginLaunchSpec.Unverified"/> allows
+    /// it; a hash that doesn't match is always refused.
+    /// </summary>
+    private static void Verify(PluginLaunchSpec spec, ILogger logger)
     {
-        if (spec.Lock?.Sha256 is not { } expected || !File.Exists(spec.ExecutablePath))
+        var files = spec.Files ?? PluginFiles.ForFile(spec.ExecutablePath);
+        if (!File.Exists(files.EntryPath))
         {
+            // Starting it fails with a clearer message.
             return;
         }
 
-        var actual = PluginLockFile.HashFile(spec.ExecutablePath);
+        if (spec.Lock?.HashFor(files.Platform) is not { } expected)
+        {
+            if (spec.Unverified == UnverifiedPluginPolicy.Allow)
+            {
+                return;
+            }
+
+            var why = spec.Lock is null
+                ? $"{PluginLockFile.FileName} doesn't lock it"
+                : $"{PluginLockFile.FileName} has no hash for it on {files.Platform}";
+            if (spec.Unverified == UnverifiedPluginPolicy.Warn)
+            {
+                logger.LogWarning(
+                    "Starting plugin {Plugin} ({Path}, found in {Source}) unverified: {Why}. Run 'deployify plugin lock' and commit {LockFile}.",
+                    spec.DisplayName, spec.ExecutablePath, spec.Source, why, PluginLockFile.FileName);
+                return;
+            }
+
+            throw new PluginException(
+                $"Plugin '{spec.DisplayName}' at {spec.ExecutablePath} (found in {spec.Source}) isn't verified: {why}. " +
+                $"Run 'deployify plugin lock' and commit {PluginLockFile.FileName}, or allow unverified plugins " +
+                "(--allow-unverified, or AllowUnverifiedPlugins for aspire deploy) to start it anyway.");
+        }
+
+        var actual = files.ComputeHash();
         if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
         {
             throw new PluginException(
-                $"Plugin '{spec.DisplayName}' at {spec.ExecutablePath} isn't the file {PluginLockFile.FileName} locked " +
-                $"(SHA-256 {actual[..12]}…, locked {expected[..Math.Min(12, expected.Length)]}…). " +
+                $"Plugin '{spec.DisplayName}' doesn't match {PluginLockFile.FileName}: {files.Describe()} has SHA-256 " +
+                $"{actual[..12]}…, locked {expected[..Math.Min(12, expected.Length)]}… for {files.Platform}. " +
                 "If you updated it on purpose, run 'deployify plugin lock' and commit the lock file.");
         }
     }

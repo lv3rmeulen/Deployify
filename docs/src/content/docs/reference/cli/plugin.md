@@ -33,7 +33,7 @@ deployify plugin list [options]
 
 ## `plugin lock`
 
-Record the plugin version (and file hash) each target uses in deployify-plugins.lock.json.
+Record the plugin version and the SHA-256 of its files each target uses in deployify-plugins.lock.json. Deployify refuses to start a plugin target without one. A platform-specific plugin gets a hash per platform: run this on each platform that deploys.
 
 ```
 deployify plugin lock <targets> [options]
@@ -50,5 +50,4 @@ deployify plugin lock <targets> [options]
 | Option | Description | Default |
 |---|---|---|
 | `--project-path`, `-p` | Path to the Aspire AppHost .csproj or its directory. | current directory |
-| `--no-hash` | Lock the plugin version only, not the exact file (for dotnet tool installs, whose launcher differs per machine). | `false` |
 

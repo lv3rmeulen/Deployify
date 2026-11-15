@@ -55,6 +55,7 @@ Set in code, or per run through configuration under `Deployify:` (environment va
 | `HealthTimeout` | `Deployify:HealthTimeoutSeconds` | 10 minutes |
 | `AutoApprove` | `Deployify:AutoApprove` | `false`; without it, a run that can't ask fails |
 | `Strict` | `Deployify:Strict` | `false`; when `true`, a manifest resource Deployify can't deploy stops the run even if nothing depends on it (see [ignored resources](/reference/state-file/#ignored-resources)) |
+| `AllowUnverifiedPlugins` | `Deployify:AllowUnverifiedPlugins` | `false`; when `true`, a plugin target that [deployify-plugins.lock.json](/extending/plugins/#lock-plugins) has no hash for starts with a warning instead of stopping the run |
 
 ```csharp
 builder.AddDeployify(configure: o =>

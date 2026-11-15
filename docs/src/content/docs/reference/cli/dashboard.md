@@ -23,6 +23,7 @@ deployify dashboard [options]
 | `--project-path`, `-p` | Path to the Aspire AppHost .csproj or its directory. | current directory |
 | `--env`, `-e` | Environment to use, overriding the active environment (e.g. local, prod). |  |
 | `--target`, `-t` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| ovhcloud \| compose \| awsecs \| azurecontainerapps \| nomadconsul \| iis, or the ID of a plugin target. |  |
+| `--allow-unverified` | Start target plugins that deployify-plugins.lock.json has no hash for, with a warning each time (a plugin whose files don't match its locked hash is still refused). Run 'deployify plugin lock' instead to verify them. | `false` |
 | `--port` | Port the resource service listens on (default: 18886). | `18886` |
 | `--bind` | Address to listen on: an IP address, localhost, or 0.0.0.0 for every interface (default: 127.0.0.1). | `127.0.0.1` |
 | `--api-key` | API key the dashboard must send, as env:NAME. Default: $DEPLOYIFY_RESOURCE_SERVICE_API_KEY, or a random key printed at start. |  |

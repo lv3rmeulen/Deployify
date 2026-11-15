@@ -25,6 +25,7 @@ public static class StatusCommand
         cmd.Options.Add(GlobalOptions.ProjectPath);
         cmd.Options.Add(GlobalOptions.Environment);
         cmd.Options.Add(GlobalOptions.Target);
+        cmd.Options.Add(GlobalOptions.AllowUnverified);
         cmd.Options.Add(rolloutId);
         cmd.Options.Add(limit);
 
@@ -36,7 +37,8 @@ public static class StatusCommand
                 resolved = await DependencyInjection.ResolveAsync(
                     parseResult.GetValue(GlobalOptions.ProjectPath)!,
                     parseResult.GetValue(GlobalOptions.Environment),
-                    parseResult.GetValue(GlobalOptions.Target), ct);
+                    parseResult.GetValue(GlobalOptions.Target), ct,
+                    allowUnverifiedPlugins: parseResult.GetValue(GlobalOptions.AllowUnverified));
             }
             catch (Exception ex)
             {

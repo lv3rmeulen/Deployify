@@ -23,6 +23,7 @@ deployify destroy [options]
 | `--project-path`, `-p` | Path to the Aspire AppHost .csproj or its directory. | current directory |
 | `--env`, `-e` | Environment to use, overriding the active environment (e.g. local, prod). |  |
 | `--target`, `-t` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| ovhcloud \| compose \| awsecs \| azurecontainerapps \| nomadconsul \| iis, or the ID of a plugin target. |  |
+| `--allow-unverified` | Start target plugins that deployify-plugins.lock.json has no hash for, with a warning each time (a plugin whose files don't match its locked hash is still refused). Run 'deployify plugin lock' instead to verify them. | `false` |
 | `--dry-run` | Simulate the operation without making changes. | `false` |
 | `--service`, `-s` | Only destroy these services (comma-separated or repeated). Default: all of them. |  |
 | `--keep-secrets` | Keep the services' platform-side secrets (Nomad variables, SSM parameters). | `false` |

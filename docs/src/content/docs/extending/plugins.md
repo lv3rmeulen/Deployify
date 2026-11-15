@@ -46,22 +46,63 @@ deployify plugin list            # where each plugin target was found
 deployify plugin list --check    # also start each one: name, version, capabilities
 ```
 
-### Lock plugin versions
+### Lock plugins
+
+Deployify only starts a plugin target that the project's lock file has a hash for. Lock the
+plugins before the first deploy:
 
 ```bash
 deployify plugin lock            # every plugin target the project's environments use
-deployify plugin lock example        # just this one
-deployify plugin lock --no-hash  # version only
+deployify plugin lock example    # just this one
 ```
 
 This writes `deployify-plugins.lock.json` next to `deployify-state.json`. Commit it. From then on:
 
-- Deployify refuses to start a plugin whose file no longer matches the locked SHA-256.
+- Deployify refuses to start a plugin whose files no longer match the locked SHA-256.
 - Deployify refuses a plugin that reports a different version than the one locked.
 - A locked target whose plugin isn't installed is an error, rather than "unknown target".
 
-The hash covers the file Deployify starts. That works for a self-contained executable or a
-`.dll`. A `dotnet tool` launcher differs per machine, so lock those with `--no-hash`.
+A plugin that isn't locked is refused before it runs:
+
+```
+✗ Plugin 'deployify-target-example' at /home/me/.deployify/plugins/deployify-target-example (found in user plugins folder)
+  isn't verified: deployify-plugins.lock.json doesn't lock it. Run 'deployify plugin lock' and commit
+  deployify-plugins.lock.json, or allow unverified plugins (--allow-unverified, or AllowUnverifiedPlugins
+  for aspire deploy) to start it anyway.
+```
+
+`--allow-unverified` (or `AllowUnverifiedPlugins` with `aspire deploy`) starts it anyway and
+logs a warning every time it does. It's meant for trying a plugin out, not for pipelines. It
+doesn't get past a hash that doesn't match: a plugin whose files changed is always refused.
+
+What the hash covers:
+
+| Installed as | Hashed |
+|---|---|
+| A folder of its own (`plugins/example/deployify-target-example.exe`) | every file in that folder, so its dependencies too |
+| `dotnet tool install` (on `PATH` or a `--tool-path`) | the tool's folder in the tool store, not the launcher, which differs per machine |
+| A single file at the top of a plugin folder, or on `PATH` | that file |
+
+Give a plugin with dependencies a folder of its own, so they are covered too.
+
+A framework-dependent plugin (a `.dll`, or a `dotnet tool`) is the same on every platform and is
+locked once. A self-contained executable differs per platform, so the lock file keeps a hash per
+runtime ID. Run `deployify plugin lock` on each platform that deploys (for example on your
+Windows machine and in Linux CI) and commit the result. Locking the same plugin version again
+keeps the other platforms' hashes; a new version starts over.
+
+```json
+{
+  "version": 1,
+  "plugins": {
+    "example": {
+      "plugin": "Example",
+      "version": "1.2.0",
+      "sha256": { "linux-x64": "3f9a…", "win-x64": "b71c…" }
+    }
+  }
+}
+```
 
 ### Settings checks
 
@@ -229,5 +270,6 @@ the target itself failed. Cancellation arrives as `$/cancelRequest`.
 
 A plugin runs as you, with your cloud credentials and your environment variables. Nothing
 sandboxes it. Install plugins only from sources you trust, the same as any other tool you put
-on `PATH`. The lock file stops a plugin from changing without anyone noticing. It doesn't make
-an untrusted plugin safe.
+on `PATH`. The lock file makes sure every machine runs the plugin files someone locked and
+committed, and stops them from changing without anyone noticing. It doesn't make an untrusted
+plugin safe.

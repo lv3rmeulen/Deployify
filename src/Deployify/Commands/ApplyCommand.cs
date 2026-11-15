@@ -27,6 +27,7 @@ public static class ApplyCommand
         cmd.Options.Add(GlobalOptions.ProjectPath);
         cmd.Options.Add(GlobalOptions.Environment);
         cmd.Options.Add(GlobalOptions.Target);
+        cmd.Options.Add(GlobalOptions.AllowUnverified);
         cmd.Options.Add(GlobalOptions.DryRun);
         cmd.Options.Add(GlobalOptions.Strict);
         cmd.Options.Add(autoApprove);
@@ -51,7 +52,8 @@ public static class ApplyCommand
             try
             {
                 resolved = await DependencyInjection.ResolveAsync(projectPath, envOverride, targetOpt, ct,
-                    lockFor: dryRun ? null : "apply");
+                    lockFor: dryRun ? null : "apply",
+                    allowUnverifiedPlugins: parseResult.GetValue(GlobalOptions.AllowUnverified));
             }
             catch (Exception ex)
             {

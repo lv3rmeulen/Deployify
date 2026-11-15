@@ -10,14 +10,15 @@ using System.Threading.Tasks;
 namespace Deployify.Plugins;
 
 /// <summary>
-/// <c>deployify-plugins.lock.json</c>, next to deployify-state.json: which plugin version (and
-/// optionally which exact file) each plugin target must use. Commit it, so every machine and CI
-/// run deploys with the same plugin. Written by <c>deployify plugin lock</c>.
+/// <c>deployify-plugins.lock.json</c>, next to deployify-state.json: which plugin, version and
+/// exact files each plugin target must use. Commit it, so every machine and CI run deploys with
+/// the same plugin. Written by <c>deployify plugin lock</c>. A plugin target it doesn't lock with
+/// a hash for this platform is refused unless unverified plugins are allowed.
 /// </summary>
 /// <remarks>
-/// The hash covers the file Deployify starts. For a self-contained executable or a <c>.dll</c>
-/// that is the plugin itself. A <c>dotnet tool</c> shim differs per machine, so lock those by
-/// version only (<c>deployify plugin lock --no-hash</c>).
+/// See <see cref="PluginFiles"/> for what the hash covers. Platform-specific plugins (a
+/// self-contained executable) get one hash per runtime ID, so run <c>deployify plugin lock</c>
+/// once on each platform that deploys.
 /// </remarks>
 public sealed class PluginLockFile
 {
@@ -80,6 +81,59 @@ public sealed record PluginLock
     /// <summary>The plugin version from its handshake; checked on every start.</summary>
     public string? Version { get; init; }
 
-    /// <summary>SHA-256 of the file Deployify starts; checked before starting it. Null to lock by version only.</summary>
-    public string? Sha256 { get; init; }
+    /// <summary>
+    /// SHA-256 of the plugin's files (see <see cref="PluginFiles"/>) by platform: a runtime ID such
+    /// as <c>linux-x64</c>, or <see cref="PluginFiles.AnyPlatform"/> for a plugin that is the same
+    /// everywhere. Checked before the plugin starts.
+    /// </summary>
+    [JsonConverter(typeof(PlatformHashesConverter))]
+    public SortedDictionary<string, string> Sha256 { get; init; } = new(StringComparer.Ordinal);
+
+    /// <summary>The locked hash for <paramref name="platform"/>, or null when there is none.</summary>
+    public string? HashFor(string platform) => Sha256.GetValueOrDefault(platform);
+}
+
+/// <summary>
+/// Reads <c>sha256</c> as an object of platform → hash. A single string, as earlier pre-releases
+/// wrote, is read as no hashes: it didn't say which platform or which files it covered.
+/// </summary>
+internal sealed class PlatformHashesConverter : JsonConverter<SortedDictionary<string, string>>
+{
+    public override bool HandleNull => true;
+
+    public override SortedDictionary<string, string> Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        var hashes = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        switch (reader.TokenType)
+        {
+            case JsonTokenType.Null:
+            case JsonTokenType.String:
+                return hashes;
+            case JsonTokenType.StartObject:
+                while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+                {
+                    var platform = reader.GetString()!;
+                    reader.Read();
+                    if (reader.TokenType == JsonTokenType.String && reader.GetString() is { Length: > 0 } hash)
+                    {
+                        hashes[platform] = hash;
+                    }
+                }
+
+                return hashes;
+            default:
+                throw new JsonException("'sha256' must be an object of platform → SHA-256.");
+        }
+    }
+
+    public override void Write(Utf8JsonWriter writer, SortedDictionary<string, string> value, JsonSerializerOptions options)
+    {
+        writer.WriteStartObject();
+        foreach (var (platform, hash) in value)
+        {
+            writer.WriteString(platform, hash);
+        }
+
+        writer.WriteEndObject();
+    }
 }

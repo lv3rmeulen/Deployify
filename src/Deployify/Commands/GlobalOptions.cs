@@ -56,6 +56,14 @@ public static class GlobalOptions
         DefaultValueFactory = _ => false
     };
 
+    public static readonly Option<bool> AllowUnverified = new("--allow-unverified")
+    {
+        Description = "Start target plugins that deployify-plugins.lock.json has no hash for, with a warning each time " +
+                      "(a plugin whose files don't match its locked hash is still refused). " +
+                      "Run 'deployify plugin lock' instead to verify them.",
+        DefaultValueFactory = _ => false
+    };
+
     public static readonly Option<VerbosityLevel> Verbosity = new("--verbosity", "-v")
     {
         Description = "Log verbosity: quiet | normal | verbose",

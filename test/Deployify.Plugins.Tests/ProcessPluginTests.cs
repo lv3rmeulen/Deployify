@@ -39,7 +39,7 @@ public sealed class ProcessPluginTests : IDisposable
     }
 
     private static PluginHost Host(string path)
-        => new(new PluginLaunchSpec { ExecutablePath = path, Source = "test" }, NullLoggerFactory.Instance,
+        => new(new PluginLaunchSpec { ExecutablePath = path, Source = "test", Unverified = UnverifiedPluginPolicy.Allow }, NullLoggerFactory.Instance,
             new PluginHostOptions { HandshakeTimeout = TimeSpan.FromSeconds(60) });
 
     private static AspireManifest Manifest() => JsonSerializer.Deserialize<AspireManifest>(
@@ -135,9 +135,23 @@ public sealed class ProcessPluginTests : IDisposable
               }
             }
             """, Ct);
-        WriteScript(
+        var script = WriteScript(
             Path.Combine(".deployify", "plugins", "deployify-target-compose-plugin"),
             $"exec dotnet \"{PluginDll}\"", windowsLine: $"@dotnet \"{PluginDll}\"", directory: project);
+
+        // Not locked yet: refused, before it runs.
+        await using (var unlocked = new ServiceCollection().AddLogging().AddDeployify().BuildServiceProvider())
+        {
+            var refused = await Should.ThrowAsync<PluginException>(() => DeploymentSessionResolver.ResolveAsync(
+                unlocked, new DeploymentSessionRequest { ProjectPath = project }, Ct));
+            refused.Message.ShouldContain("isn't verified");
+        }
+
+        // What 'deployify plugin lock' records.
+        var files = PluginFiles.ForSharedFolder(script);
+        var lockFile = new PluginLockFile();
+        lockFile.Plugins["compose-plugin"] = new PluginLock { Plugin = "compose-plugin", Sha256 = new() { [files.Platform] = files.ComputeHash() } };
+        await lockFile.SaveAsync(project, Ct);
 
         await using var services = new ServiceCollection().AddLogging().AddDeployify().BuildServiceProvider();
         RemoteDeploymentTarget remote;

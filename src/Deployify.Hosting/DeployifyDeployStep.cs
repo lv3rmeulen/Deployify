@@ -8,6 +8,7 @@ using Aspire.Hosting.Pipelines;
 using Deployify.Core.Deployments;
 using Deployify.Core.Models;
 using Deployify.Core.Rollouts;
+using Deployify.Plugins;
 using Deployify.Targets;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -37,7 +38,8 @@ internal static class DeployifyDeployStep
         var collection = new ServiceCollection()
             .AddSingleton(context.Services.GetRequiredService<ILoggerFactory>())
             .AddSingleton(typeof(ILogger<>), typeof(Logger<>))
-            .AddDeployify();
+            .AddDeployify()
+            .AddSingleton(new PluginHostOptions { AllowUnverified = options.AllowUnverifiedPlugins });
         resource.ConfigureServices?.Invoke(collection);
         await using var services = collection.BuildServiceProvider();
 
@@ -145,7 +147,8 @@ internal static class DeployifyDeployStep
                     : throw new InvalidOperationException($"Deployify:HealthTimeoutSeconds '{seconds}' is not a positive number of seconds.")
                 : code.HealthTimeout,
             AutoApprove = Bool(section, "AutoApprove") ?? code.AutoApprove,
-            Strict = Bool(section, "Strict") ?? code.Strict
+            Strict = Bool(section, "Strict") ?? code.Strict,
+            AllowUnverifiedPlugins = Bool(section, "AllowUnverifiedPlugins") ?? code.AllowUnverifiedPlugins
         };
 
         static string? Text(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();

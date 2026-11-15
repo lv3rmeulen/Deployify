@@ -42,6 +42,7 @@ public static class StateCommand
         cmd.Options.Add(GlobalOptions.ProjectPath);
         cmd.Options.Add(GlobalOptions.Environment);
         cmd.Options.Add(GlobalOptions.Target);
+        cmd.Options.Add(GlobalOptions.AllowUnverified);
         return cmd;
     }
 
@@ -52,7 +53,8 @@ public static class StateCommand
             return await DependencyInjection.ResolveAsync(
                 parseResult.GetValue(GlobalOptions.ProjectPath)!,
                 parseResult.GetValue(GlobalOptions.Environment),
-                parseResult.GetValue(GlobalOptions.Target), ct, lockFor);
+                parseResult.GetValue(GlobalOptions.Target), ct, lockFor,
+                allowUnverifiedPlugins: parseResult.GetValue(GlobalOptions.AllowUnverified));
         }
         catch (Exception ex)
         {

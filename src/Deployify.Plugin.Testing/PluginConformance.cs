@@ -109,7 +109,12 @@ public static class PluginConformance
         string executablePath, string targetId, ConformanceOptions options, CancellationToken ct = default)
     {
         await using var host = new PluginHost(
-            new PluginLaunchSpec { ExecutablePath = executablePath, Source = "conformance" }, NullLoggerFactory.Instance);
+            new PluginLaunchSpec
+            {
+                // The author's own build under test: there is no lock file to check it against.
+                ExecutablePath = executablePath, Source = "conformance", Unverified = UnverifiedPluginPolicy.Allow
+            },
+            NullLoggerFactory.Instance);
         return await RunAsync(host, targetId, options, ct);
     }
 
