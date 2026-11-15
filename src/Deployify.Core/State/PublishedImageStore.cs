@@ -30,7 +30,7 @@ public static class PublishedImageStore
     {
         if (await state.Backend.ReadAsync(Key(state), ct) is { } blob)
         {
-            images.Load(Read(blob.Data));
+            images.Load(Read(blob.Data, Describe(state)));
         }
     }
 
@@ -47,17 +47,34 @@ public static class PublishedImageStore
 
         await state.PutAsync(Key(state), current =>
         {
-            var merged = current is null ? new Dictionary<string, PublishedImage>(StringComparer.Ordinal) : Read(current);
+            var merged = current is null ? new Dictionary<string, PublishedImage>(StringComparer.Ordinal) : Read(current, Describe(state));
             foreach (var (key, image) in images.Recorded)
             {
                 merged[key] = image;
             }
 
-            return JsonSerializer.SerializeToUtf8Bytes(PublishedImages.Trim(merged, KeepPerRepository), s_json);
+            return StateFormat.WriteEntries(StateFormat.Images, "images",
+                PublishedImages.Trim(merged, KeepPerRepository), s_json);
         }, ct);
     }
 
-    private static Dictionary<string, PublishedImage> Read(byte[] data)
-        => JsonSerializer.Deserialize<Dictionary<string, PublishedImage>>(data, s_json)
-           ?? new Dictionary<string, PublishedImage>(StringComparer.Ordinal);
+    /// <summary>
+    /// Reads images.json of any supported format version. Throws <see cref="StateFormatException"/>
+    /// for one written by a newer Deployify.
+    /// </summary>
+    public static Dictionary<string, PublishedImage> Read(byte[] data, string what)
+    {
+        var entries = StateFormat.ReadEntries(data, "images", StateFormat.Images, what);
+        try
+        {
+            return new Dictionary<string, PublishedImage>(
+                entries.Deserialize<Dictionary<string, PublishedImage>>(s_json) ?? [], StringComparer.Ordinal);
+        }
+        catch (JsonException ex)
+        {
+            throw new StateFormatException($"{what} does not hold published images: {ex.Message}", ex);
+        }
+    }
+
+    private static string Describe(StateSession state) => $"State '{Key(state)}' in {state.Backend.Description}";
 }

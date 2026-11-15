@@ -87,7 +87,7 @@ public static class DeploymentSessionResolver
             {
                 await state.PullAsync(ct);
             }
-            catch (Exception ex) when (request.LockFor is null && ex is not OperationCanceledException)
+            catch (Exception ex) when (request.LockFor is null && ex is not (OperationCanceledException or StateFormatException))
             {
                 // Read-only runs still work from the local copy.
                 reporter.Warn($"Could not read remote state ({ex.Message}); using the local copy.");
@@ -98,7 +98,7 @@ public static class DeploymentSessionResolver
             {
                 await PublishedImageStore.LoadIntoAsync(state, config.PublishedImages, ct);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (ex is not (OperationCanceledException or StateFormatException))
             {
                 reporter.Warn($"Could not read published image digests ({ex.Message}); images are referenced by tag.");
             }

@@ -13,6 +13,13 @@ namespace Deployify.Core.Models;
 /// </summary>
 public sealed class DeployifyStateFile
 {
+    /// <summary>
+    /// Format version of this file; see <see cref="StateFormat.StateFile"/>. Files from before
+    /// versioning have none and read as version 0. Always written as the current version.
+    /// </summary>
+    [JsonPropertyOrder(-1)]
+    public int FormatVersion { get; set; } = StateFormat.StateFile;
+
     /// <summary>Name of the currently active environment.</summary>
     public string ActiveEnvironment { get; set; } = "local";
 

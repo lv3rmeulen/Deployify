@@ -132,7 +132,7 @@ public sealed class StateSessionTests : IDisposable
         await session.PullAsync(Ct);
         await session.PushParametersAsync(Ct);
 
-        var remote = JsonSerializer.Deserialize<Dictionary<string, string>>((await _remote.ReadAsync("deployify/prod/parameters.json", Ct))!.Data);
+        var remote = StateFormat.ReadParameters((await _remote.ReadAsync("deployify/prod/parameters.json", Ct))!.Data, "parameters.json");
         remote.ShouldBe(new Dictionary<string, string> { ["pg.value"] = "local-pw" });
     }
 
@@ -164,7 +164,7 @@ public sealed class StateSessionTests : IDisposable
 
         await session.PushParametersAsync(Ct);
 
-        var remote = JsonSerializer.Deserialize<Dictionary<string, string>>((await _remote.ReadAsync("deployify/prod/parameters.json", Ct))!.Data)!;
+        var remote = StateFormat.ReadParameters((await _remote.ReadAsync("deployify/prod/parameters.json", Ct))!.Data, "parameters.json")!;
         remote.Keys.Order().ShouldBe(["kafka.value", "pg.value", "redis.value"]);
         remote["redis.value"].ShouldBe("new-pw");
     }

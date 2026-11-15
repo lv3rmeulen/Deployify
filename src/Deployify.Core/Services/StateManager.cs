@@ -1,12 +1,14 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
 using Deployify.Core.SecretBackends;
+using Deployify.Core.State;
 
 namespace Deployify.Core.Services;
 
@@ -36,9 +38,30 @@ public sealed class StateManager(SecretRegistry? secrets = null) : IStateManager
             throw new FileNotFoundException($"State file not found at '{path}'. Run 'deployify init' first.");
         }
 
-        await using var stream = File.OpenRead(path);
-        return await JsonSerializer.DeserializeAsync<DeployifyStateFile>(stream, s_jsonOptions, ct)
-               ?? throw new InvalidDataException("Failed to deserialize state file.");
+        return Read(await File.ReadAllBytesAsync(path, ct), path);
+    }
+
+    /// <summary>
+    /// Reads a state file of any supported format version, upgraded to the current one (it is
+    /// written in the current format on the next save). Throws <see cref="StateFormatException"/>
+    /// for a file written by a newer Deployify.
+    /// </summary>
+    public static DeployifyStateFile Read(byte[] data, string path)
+    {
+        var root = StateFormat.ParseObject(data, path);
+        var version = StateFormat.ReadVersion(root, nameof(DeployifyStateFile.FormatVersion), StateFormat.StateFile, path);
+
+        // Upgrades, one version at a time. 0 -> 1 only added the version field.
+        if (version < 1)
+        {
+            version = 1;
+        }
+
+        root[nameof(DeployifyStateFile.FormatVersion)] = version;
+        var file = root.Deserialize<DeployifyStateFile>(s_jsonOptions)
+                   ?? throw new InvalidDataException("Failed to deserialize state file.");
+        file.FormatVersion = StateFormat.StateFile;
+        return file;
     }
 
     public async Task SaveFileAsync(DeployifyStateFile stateFile, string directory, CancellationToken ct = default)
@@ -47,6 +70,7 @@ public sealed class StateManager(SecretRegistry? secrets = null) : IStateManager
         var path = Path.Combine(directory, StateFileName);
         // Write to a temp file and move it into place, so a failure part-way through
         // can never leave a truncated state file behind.
+        stateFile.FormatVersion = StateFormat.StateFile;
         var json = JsonSerializer.Serialize(stateFile, s_jsonOptions);
         if (secrets is { Count: > 0 })
         {

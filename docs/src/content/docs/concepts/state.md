@@ -17,6 +17,16 @@ Next to the configuration in `deployify-state.json` (which you commit), Deployif
 By default it all lives in `.deployify/state/` next to the state file, which is fine for one
 machine. Keep `.deployify/` and `deployify-parameters.json` out of git.
 
+## Format versions
+
+`deployify-state.json` (`FormatVersion`), `inventory.json`, `images.json` and `parameters.json`
+(`formatVersion`) record the format they were written in. Files from the alphas have no version;
+Deployify still reads them and writes them in the current format the next time it saves them.
+A file written by a newer Deployify is refused with a message naming the file, instead of being
+read in part and overwritten. Update Deployify to work with it. Everyone sharing remote state
+should run the same Deployify version: an alpha build can't read `images.json` or
+`parameters.json` once a newer build has rewritten them.
+
 ## Ownership
 
 Every resource Deployify creates carries an ownership marker:

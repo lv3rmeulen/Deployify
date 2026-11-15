@@ -101,7 +101,7 @@ public sealed class StateSession : IAsyncDisposable
         var blob = await Backend.ReadAsync(ParametersKey, ct);
         if (blob is not null)
         {
-            var remote = JsonSerializer.Deserialize<Dictionary<string, string>>(blob.Data) ?? [];
+            var remote = StateFormat.ReadParameters(blob.Data, DescribeKey(ParametersKey));
             if (!SameValues(remote, ParameterStore.ReadSection(StateDirectory, Environment)))
             {
                 ParameterStore.WriteSection(StateDirectory, Environment, remote);
@@ -139,13 +139,13 @@ public sealed class StateSession : IAsyncDisposable
         {
             var merged = current is null
                 ? new Dictionary<string, string>(StringComparer.Ordinal)
-                : JsonSerializer.Deserialize<Dictionary<string, string>>(current) ?? [];
+                : StateFormat.ReadParameters(current, DescribeKey(ParametersKey));
             foreach (var (k, v) in local)
             {
                 merged[k] = v;
             }
 
-            return JsonSerializer.SerializeToUtf8Bytes(merged, s_json);
+            return StateFormat.WriteParameters(merged, s_json);
         }, ct);
         _pulledParameters = local;
     }
@@ -232,6 +232,8 @@ public sealed class StateSession : IAsyncDisposable
 
         (Backend as IDisposable)?.Dispose();
     }
+
+    private string DescribeKey(string key) => $"State '{key}' in {Backend.Description}";
 
     private static bool SameValues(IReadOnlyDictionary<string, string> a, IReadOnlyDictionary<string, string> b)
         => a.Count == b.Count && a.All(kv => b.TryGetValue(kv.Key, out var v) && v == kv.Value);

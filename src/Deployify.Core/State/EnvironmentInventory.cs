@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
@@ -15,6 +16,13 @@ namespace Deployify.Core.State;
 /// </summary>
 public sealed class EnvironmentInventory
 {
+    /// <summary>
+    /// Format version of the stored inventory; see <see cref="StateFormat.Inventory"/>. Inventories
+    /// from before versioning have none and read as version 0. Always written as the current version.
+    /// </summary>
+    [JsonPropertyOrder(-1)]
+    public int FormatVersion { get; set; } = StateFormat.Inventory;
+
     /// <summary>Set once, when the inventory is created; a push refuses to replace one lineage with another.</summary>
     public string Lineage { get; set; } = Guid.NewGuid().ToString("N");
 
@@ -108,7 +116,7 @@ public sealed class InventoryStore(IStateBackend backend, string key, string env
             inventory.Environment = environment;
             try
             {
-                await backend.WriteAsync(Key, JsonSerializer.SerializeToUtf8Bytes(inventory, Json), etag, ct);
+                await backend.WriteAsync(Key, Serialize(inventory), etag, ct);
                 return inventory;
             }
             catch (StateConflictException) when (attempt < 4)
@@ -120,7 +128,7 @@ public sealed class InventoryStore(IStateBackend backend, string key, string env
 
     /// <summary>Replaces the stored inventory wholesale (used by <c>state push</c>).</summary>
     public async Task ReplaceAsync(EnvironmentInventory inventory, string? expectedETag, CancellationToken ct = default)
-        => await backend.WriteAsync(Key, JsonSerializer.SerializeToUtf8Bytes(inventory, Json), expectedETag, ct);
+        => await backend.WriteAsync(Key, Serialize(inventory), expectedETag, ct);
 
     public async Task<(EnvironmentInventory Inventory, string? ETag)> ReadAsync(CancellationToken ct = default)
     {
@@ -130,8 +138,43 @@ public sealed class InventoryStore(IStateBackend backend, string key, string env
             return (new EnvironmentInventory { Environment = environment }, null);
         }
 
-        var inventory = JsonSerializer.Deserialize<EnvironmentInventory>(blob.Data, Json)
-                        ?? throw new StateBackendException($"State '{Key}' is not a valid inventory.");
-        return (inventory, blob.ETag);
+        return (Read(blob.Data, $"State '{Key}' in {backend.Description}"), blob.ETag);
+    }
+
+    /// <summary>
+    /// Reads an inventory of any supported format version, upgraded to the current one. Throws
+    /// <see cref="StateFormatException"/> for one written by a newer Deployify.
+    /// </summary>
+    public static EnvironmentInventory Read(byte[] data, string what)
+    {
+        var root = StateFormat.ParseObject(data, what);
+        var version = StateFormat.ReadVersion(root, StateFormat.VersionProperty, StateFormat.Inventory, what);
+
+        // Upgrades, one version at a time. 0 -> 1 only added the version field.
+        if (version < 1)
+        {
+            version = 1;
+        }
+
+        root[StateFormat.VersionProperty] = version;
+        EnvironmentInventory? inventory;
+        try
+        {
+            inventory = root.Deserialize<EnvironmentInventory>(Json);
+        }
+        catch (JsonException ex)
+        {
+            throw new StateBackendException($"{what} is not a valid inventory: {ex.Message}", ex);
+        }
+
+        inventory = inventory ?? throw new StateBackendException($"{what} is not a valid inventory.");
+        inventory.FormatVersion = StateFormat.Inventory;
+        return inventory;
+    }
+
+    private static byte[] Serialize(EnvironmentInventory inventory)
+    {
+        inventory.FormatVersion = StateFormat.Inventory;
+        return JsonSerializer.SerializeToUtf8Bytes(inventory, Json);
     }
 }
