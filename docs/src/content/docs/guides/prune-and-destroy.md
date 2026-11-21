@@ -57,5 +57,6 @@ What each target removes, and keeps:
 | Compose | the services' containers, then the project network; volumes with `--volumes` | images, volumes by default |
 | AWS ECS | `delete-service --force`, every revision of its task definition family, its SSM parameters under `<secretsPrefix>/<service>` (unless `--keep-secrets`) | the cluster, networking, load balancers, log groups, generated parameter values |
 | Azure Container Apps | each Container App | the resource group, the Container Apps environment, Key Vault secrets |
+| DigitalOcean App Platform (plugin) | each component, and the app with its dev databases once the last one goes; with `--volumes`, the database clusters Deployify created for the app | database clusters by default, clusters Deployify didn't create |
 
 Registry images are never deleted.

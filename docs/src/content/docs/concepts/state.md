@@ -38,6 +38,7 @@ Every resource Deployify creates carries an ownership marker:
 | Compose | the Compose project (`com.docker.compose.project` label) |
 | AWS ECS | service tags `deployify-managed-by=deployify` and `deployify-env=<environment>` |
 | Azure Container Apps | resource tags `deployify-managed-by=deployify` and `deployify-env=<environment>` |
+| DigitalOcean App Platform | the environment's App Platform app (`AppName`); database clusters Deployify creates are tagged `deployify` and `deployify-app-<app>` |
 
 ECS services and Container Apps are tagged when they are created and on every later deploy, so
 services that existed before tagging are adopted on their next `apply`. Plan only lists a service

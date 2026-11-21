@@ -133,7 +133,7 @@ In `Cluster` mode:
   `REDIS` to attach an older Redis cluster.
 
 Deployify tags the clusters it creates `deployify` and `deployify-app-<app>`. `destroy` keeps
-clusters and their data unless you pass `--remove-volumes`, and even then only deletes the
+clusters and their data unless you pass `--volumes`, and even then only deletes the
 clusters carrying the app's tag. A dev database is part of the app and goes when the app does.
 
 ## Plan and cost

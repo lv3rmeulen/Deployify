@@ -33,6 +33,7 @@ stores them its own way:
 | Compose | The service's `.env` file (`generateEnvFile`), or `${Parameters__name}` in `compose.yml` with the values in a `.env` next to it |
 | Kubernetes | A `<service>-secrets` Secret, loaded with `envFrom.secretRef` |
 | AzureContainerApps | `configuration.secrets`, referenced with `secretRef` |
+| digitalocean (plugin) | `SECRET` environment variables in the app spec, which App Platform encrypts; the spec file Deployify writes masks them |
 | AwsEcs | SSM Parameter Store SecureStrings under `secretsPrefix` (default `/deployify/<cluster>`), written by `apply` and referenced from the task definition's `secrets`. The execution role needs `ssm:GetParameters` |
 | Nomad / NomadConsul | Nomad Variables at `nomad/jobs/<job>`, written by `apply` and read by the job's template (Nomad 1.4+) |
 

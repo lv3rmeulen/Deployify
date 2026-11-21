@@ -517,7 +517,7 @@ public sealed class DoDeploymentTarget(IPublisher publisher, ILogger<DoDeploymen
         var kept = new List<string>();
         if (!options.RemoveVolumes)
         {
-            kept.Add("Managed Database clusters, with their data (pass --remove-volumes to delete the ones Deployify created)");
+            kept.Add("Managed Database clusters, with their data (pass --volumes to delete the ones Deployify created)");
         }
         else
         {

@@ -57,6 +57,7 @@ src/
   Deployify.Target.AwsEcs/
   Deployify.Target.AzureContainerApps/
   Deployify.Target.NomadConsul/
+  Deployify.Target.DigitalOcean/          DigitalOcean App Platform, shipped as a plugin (deployify-target-digitalocean)
   Shared/Yaml/                            YAML writer compiled into the Kubernetes and Compose targets
 test/
   Deployify.Core.Tests/
@@ -69,5 +70,6 @@ test/
   Deployify.Target.AwsEcs.Tests/
   Deployify.Target.AzureContainerApps.Tests/
   Deployify.Target.NomadConsul.Tests/
+  Deployify.Target.DigitalOcean.Tests/
   Deployify.Integration.Tests/
 ```

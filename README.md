@@ -1,6 +1,6 @@
 # Deployify
 
-Deploy .NET Aspire AppHost projects to any platform — Nomad, Kubernetes (with `kubectl`, Helm, or GitOps through Argo CD or Flux), OVHcloud Managed Kubernetes, Docker Compose, AWS ECS, Azure Container Apps, Nomad + Consul Connect, and IIS on Windows Server.
+Deploy .NET Aspire AppHost projects to any platform — Nomad, Kubernetes (with `kubectl`, Helm, or GitOps through Argo CD or Flux), OVHcloud Managed Kubernetes, Docker Compose, AWS ECS, Azure Container Apps, Nomad + Consul Connect, IIS on Windows Server, and DigitalOcean App Platform (as a plugin).
 
 ---
 
