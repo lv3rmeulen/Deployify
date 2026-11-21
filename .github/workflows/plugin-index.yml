@@ -30,7 +30,7 @@ jobs:
         with:
           global-json-file: global.json
 
-      - uses: sigstore/cosign-installer@v4
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
 
       # Downloads every package, checks its SHA-256 and its signature against the publisher the
       # entry names, and unpacks it. Any problem fails the run (and a pull request adding it).

@@ -99,7 +99,7 @@ permissions:
   packages: write   # pushing to GHCR
 
 steps:
-  - uses: sigstore/cosign-installer@v3
+  - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
   - uses: anchore/sbom-action/download-syft@v0
   - name: Deploy
     run: deployify ci --project-path src/MyApp.AppHost --env prod --auto-approve
@@ -173,7 +173,7 @@ permissions:
   id-token: write   # keyless cosign signing
 
 steps:
-  - uses: sigstore/cosign-installer@v3
+  - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
   - name: Deploy to staging
     run: deployify ci --env staging --image-tag "$GITHUB_SHA" --require-signature --auto-approve
   - name: Promote to production

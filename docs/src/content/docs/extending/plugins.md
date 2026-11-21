@@ -310,7 +310,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-dotnet@v5
-      - uses: sigstore/cosign-installer@v4
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
 
       - name: Package and sign
         env:
