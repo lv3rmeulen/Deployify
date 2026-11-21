@@ -1,0 +1,57 @@
+name: Plugin index
+
+# Builds the plugin index from plugin-index/plugins/*.json and, on main, signs it. Called by
+# docs.yml, which publishes it with the docs at https://lv3rmeulen.github.io/Deployify/plugins/.
+#
+# Deployify trusts the public index only when it is signed keyless by THIS workflow file run from
+# main (src/Deployify.Plugins/PluginIndexClient.cs, PluginIndexSource.DefaultIdentity). Renaming
+# or moving this file, or signing from another workflow, breaks `deployify plugin search/install`
+# for every released Deployify.
+
+on:
+  workflow_call:
+    inputs:
+      sign:
+        description: Sign the index. Only on main.
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    name: Build${{ inputs.sign && ' and sign' || '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # keyless signing; unused when not signing
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - uses: sigstore/cosign-installer@v4
+
+      # Downloads every package, checks its SHA-256 and its signature against the publisher the
+      # entry names, and unpacks it. Any problem fails the run (and a pull request adding it).
+      - name: Build index.json
+        run: dotnet run --project tools/Deployify.PluginIndex --configuration Release -- plugin-index/plugins out/plugins
+
+      - name: Sign index.json
+        if: inputs.sign
+        run: cosign sign-blob --yes --bundle out/plugins/index.json.sigstore.json out/plugins/index.json
+
+      - name: Check the signature as Deployify will
+        if: inputs.sign
+        run: >
+          cosign verify-blob
+          --bundle out/plugins/index.json.sigstore.json
+          --certificate-identity "https://github.com/lv3rmeulen/Deployify/.github/workflows/plugin-index.yml@refs/heads/main"
+          --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+          out/plugins/index.json
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: plugin-index
+          path: out/plugins/
+          if-no-files-found: error

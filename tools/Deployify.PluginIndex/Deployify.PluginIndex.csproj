@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Builds the plugin index from plugin-index/plugins/*.json: downloads every package, checks its
+    SHA-256 and signature, and writes index.json. .github/workflows/plugin-index.yml runs it and
+    signs the result. See plugin-index/README.md.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Deployify.Plugins\Deployify.Plugins.csproj" />
+  </ItemGroup>
+
+</Project>

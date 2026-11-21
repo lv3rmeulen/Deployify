@@ -13,6 +13,20 @@ Each release can have these sections: **Added**, **Changed**, **Deprecated**, **
 
 ### Added
 
+- Plugin index: `deployify plugin search` and `deployify plugin install <id>[@version]` find and
+  install third-party target plugins from a signed index, published with the docs at
+  `https://lv3rmeulen.github.io/Deployify/plugins/index.json` and built from
+  `plugin-index/plugins/*.json`. The index is signed keyless by `plugin-index.yml` on main and
+  expires after 30 days (it is re-signed weekly); each entry names the identity that signs that
+  plugin's packages, and each package is pinned by SHA-256 and must carry a Sigstore bundle
+  signed by that identity. Deployify checks all three with `cosign verify-blob` before
+  anything of the plugin runs, installs it into `~/.deployify/plugins/<id>/` (or the project's
+  with `--local`), and locks it with its `source`. `deployify plugin install` without arguments
+  installs every plugin the lock file records from an index, refusing files that don't match the
+  lock. Another index can be used with `--index` and `--index-identity`/`--index-key` (or
+  `DEPLOYIFY_PLUGIN_INDEX*`); unsigned indexes are never read. `tools/Deployify.PluginIndex`
+  builds an index, verifying every package. Releases attach a signed
+  `deployify-target-digitalocean-<version>-any.zip` package for the index.
 - Image signing: with `signing.enabled` in the environment, `publish`, `ci` and `aspire deploy`
   sign every image they push with `cosign sign`, by digest, keyless through Sigstore or with
   `signing.key`. SBOM attestations use `signing.key` unless `sbom.key` is set.
@@ -68,6 +82,10 @@ Each release can have these sections: **Added**, **Changed**, **Deprecated**, **
 
 ### Changed
 
+- `Deployify.Plugin.Sdk`: a plugin that doesn't pass a version to `Named` reports its package
+  version (the informational version without `+build` metadata) instead of its assembly
+  version, which MinVer keeps at `Major.0.0`. Relock a plugin built with this SDK:
+  `deployify plugin lock`.
 - `deployify-state.json`, `inventory.json`, `images.json` and `parameters.json` record a format
   version (1). Files from the alphas are read and upgraded the next time they're saved. A file
   from a newer Deployify is refused instead of being overwritten.

@@ -89,8 +89,25 @@ public sealed record PluginLock
     [JsonConverter(typeof(PlatformHashesConverter))]
     public SortedDictionary<string, string> Sha256 { get; init; } = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Where <c>deployify plugin install</c> installed it from. With it, <c>deployify plugin install</c>
+    /// without arguments installs the locked version again (on another machine, in CI). Null for a
+    /// plugin installed some other way and locked with <c>deployify plugin lock</c>.
+    /// </summary>
+    public PluginLockSource? Source { get; init; }
+
     /// <summary>The locked hash for <paramref name="platform"/>, or null when there is none.</summary>
     public string? HashFor(string platform) => Sha256.GetValueOrDefault(platform);
+}
+
+/// <summary>The plugin index a locked plugin was installed from.</summary>
+public sealed record PluginLockSource
+{
+    /// <summary>The index URL. Another index than the public one needs its signer given again when installing.</summary>
+    public required string Index { get; init; }
+
+    /// <summary>Who signed the package, for people reading the lock file. Checked against the index, not this.</summary>
+    public string? Signer { get; init; }
 }
 
 /// <summary>

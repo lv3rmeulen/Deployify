@@ -75,6 +75,23 @@ jobs:
             ./artifacts/packages/*.snupkg
           if-no-files-found: error
 
+      # Target plugins kept in this repository, as packages for the plugin index
+      # (plugin-index/plugins/). Framework-dependent without an apphost, so one package serves
+      # every platform. The publish job signs them.
+      - name: Package plugins
+        run: |
+          dotnet publish src/Deployify.Target.DigitalOcean \
+            --configuration Release --no-restore -p:UseAppHost=false \
+            --output ./artifacts/plugins/digitalocean
+          (cd ./artifacts/plugins/digitalocean && zip -r -X -q ../deployify-target-digitalocean-any.zip .)
+
+      - name: Upload plugin packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: plugin-packages
+          path: ./artifacts/plugins/*.zip
+          if-no-files-found: error
+
   publish:
     name: Publish
     if: github.event_name == 'release'
@@ -133,6 +150,28 @@ jobs:
           --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}"
           --skip-duplicate
 
+      - name: Download plugin packages
+        uses: actions/download-artifact@v8
+        with:
+          name: plugin-packages
+          path: ./artifacts/plugins
+
+      - uses: sigstore/cosign-installer@v4
+
+      # Signed keyless by this workflow at the release tag: the identity
+      # plugin-index/plugins/digitalocean.json trusts. Each package gets a .sigstore.json bundle.
+      - name: Sign plugin packages
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version="${RELEASE_TAG#v}"
+          cd ./artifacts/plugins
+          for package in *-any.zip; do
+            versioned="${package%-any.zip}-${version}-any.zip"
+            mv "$package" "$versioned"
+            cosign sign-blob --yes --bundle "$versioned.sigstore.json" "$versioned"
+          done
+
       - name: Attach packages to the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -140,4 +179,27 @@ jobs:
           gh release upload "${{ github.event.release.tag_name }}" \
             ./artifacts/*.nupkg \
             ./artifacts/*.snupkg \
+            ./artifacts/plugins/*.zip \
+            ./artifacts/plugins/*.sigstore.json \
             --repo "${{ github.repository }}"
+
+      # The index lists versions explicitly; adding this one is a reviewed pull request.
+      - name: Plugin index entries for this release
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version="${RELEASE_TAG#v}"
+          {
+            echo "### Plugin index"
+            echo
+            echo "Add this version to \`plugin-index/plugins/<id>.json\` in a pull request:"
+            echo
+            for package in ./artifacts/plugins/*-any.zip; do
+              name="$(basename "$package")"
+              echo '```json'
+              echo "{ \"version\": \"$version\", \"protocol\": \"1.0\", \"packages\": { \"any\": {"
+              echo "  \"url\": \"https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/$name\","
+              echo "  \"sha256\": \"$(sha256sum "$package" | cut -d' ' -f1)\" } } }"
+              echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

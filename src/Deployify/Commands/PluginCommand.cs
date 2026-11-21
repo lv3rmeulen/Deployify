@@ -14,14 +14,16 @@ using Spectre.Console;
 
 namespace Deployify.Commands;
 
-/// <summary><c>deployify plugin list | lock</c>: see and pin the target plugins a project uses.</summary>
-public static class PluginCommand
+/// <summary><c>deployify plugin list | lock | search | install</c>: find, install and pin the target plugins a project uses.</summary>
+public static partial class PluginCommand
 {
     public static Command Build()
     {
-        var cmd = new Command("plugin", "Show and lock the target plugins this project can use.");
+        var cmd = new Command("plugin", "Find, install, show and lock the target plugins this project can use.");
         cmd.Subcommands.Add(BuildList());
         cmd.Subcommands.Add(BuildLock());
+        cmd.Subcommands.Add(BuildSearch());
+        cmd.Subcommands.Add(BuildInstall());
         return cmd;
     }
 
@@ -169,14 +171,22 @@ public static class PluginCommand
 
                 // The same plugin version locked on another platform keeps that platform's hash.
                 var previous = lockFile.Find(target.Value);
-                var hashes = previous is not null &&
-                             string.Equals(previous.Plugin, info.Plugin.Name, StringComparison.Ordinal) &&
-                             string.Equals(previous.Version, info.Plugin.Version, StringComparison.OrdinalIgnoreCase)
-                    ? new SortedDictionary<string, string>(previous.Sha256, StringComparer.Ordinal)
+                var sameVersion = previous is not null &&
+                                  string.Equals(previous.Plugin, info.Plugin.Name, StringComparison.Ordinal) &&
+                                  string.Equals(previous.Version, info.Plugin.Version, StringComparison.OrdinalIgnoreCase);
+                var hashes = sameVersion
+                    ? new SortedDictionary<string, string>(previous!.Sha256, StringComparer.Ordinal)
                     : new SortedDictionary<string, string>(StringComparer.Ordinal);
                 hashes[plugin.Files.Platform] = hash;
 
-                var entry = new PluginLock { Plugin = info.Plugin.Name, Version = info.Plugin.Version, Sha256 = hashes };
+                // The same version keeps where it was installed from; another one wasn't installed from there.
+                var entry = new PluginLock
+                {
+                    Plugin = info.Plugin.Name,
+                    Version = info.Plugin.Version,
+                    Sha256 = hashes,
+                    Source = sameVersion ? previous!.Source : null
+                };
                 lockFile.Plugins[target.Value] = entry;
                 var others = hashes.Count > 1 ? $" (also locked for {string.Join(", ", hashes.Keys.Where(k => k != plugin.Files.Platform))})" : "";
                 AnsiConsole.MarkupLineInterpolated(

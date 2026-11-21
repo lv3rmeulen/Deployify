@@ -11,6 +11,7 @@
     <File Path=".gitattributes" />
     <File Path=".github/workflows/build.yml" />
     <File Path=".github/workflows/docs.yml" />
+    <File Path=".github/workflows/plugin-index.yml" />
     <File Path=".github/workflows/release.yml" />
     <File Path=".github/workflows/samples.yml" />
     <File Path=".gitignore" />
@@ -43,6 +44,7 @@
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/Deployify.DocGen/Deployify.DocGen.csproj" />
+    <Project Path="tools/Deployify.PluginIndex/Deployify.PluginIndex.csproj" />
   </Folder>
   <Folder Name="/test/">
     <Project Path="test/Deployify.Core.Tests/Deployify.Core.Tests.csproj" />

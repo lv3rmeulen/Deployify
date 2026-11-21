@@ -19,6 +19,15 @@ deployify plugin lock digitalocean     # commit deployify-plugins.lock.json
 deployify plugin list --check
 ```
 
+Each release also attaches a signed package for the [plugin index](/Deployify/extending/plugins/#install-from-the-plugin-index).
+Once a version is listed there, install it from the index instead: Deployify checks the
+package's signature first, and CI can install the locked version with a plain
+`deployify plugin install`:
+
+```bash
+deployify plugin install digitalocean  # also locks it; commit deployify-plugins.lock.json
+```
+
 Deployify reads the API token from the environment and never stores it. Create a token with read
 and write access to apps and databases at
 <https://cloud.digitalocean.com/account/api/tokens>:

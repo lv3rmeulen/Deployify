@@ -1,0 +1,12 @@
+{
+  "name": "DigitalOcean App Platform",
+  "description": "Deploys an Aspire app as one App Platform app, with Postgres and Redis on Managed Databases.",
+  "publisher": "Deployify",
+  "homepage": "https://lv3rmeulen.github.io/Deployify/targets/digitalocean/",
+  "license": "MIT",
+  "signer": {
+    "identityRegexp": "^https://github\\.com/lv3rmeulen/Deployify/\\.github/workflows/release\\.yml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$",
+    "issuer": "https://token.actions.githubusercontent.com"
+  },
+  "versions": []
+}

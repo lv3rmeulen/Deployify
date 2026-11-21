@@ -432,3 +432,6 @@ FodyWeavers.xsd
 deployify-state.json
 deployify-output/
 **/Properties/launchSettings.json
+
+# The plugin index the docs workflow builds into the site (plugin-index/README.md)
+docs/public/plugins/

@@ -8,15 +8,27 @@ on:
       - 'samples/**'
       - 'src/Deployify/Commands/**'
       - 'tools/Deployify.DocGen/**'
+      - 'tools/Deployify.PluginIndex/**'
+      - 'src/Deployify.Plugins/**'
+      - 'plugin-index/**'
       - '.github/workflows/docs.yml'
+      - '.github/workflows/plugin-index.yml'
   pull_request:
     paths:
       - 'docs/**'
       - 'samples/**'
       - 'src/Deployify/Commands/**'
       - 'tools/Deployify.DocGen/**'
+      - 'tools/Deployify.PluginIndex/**'
+      - 'src/Deployify.Plugins/**'
+      - 'plugin-index/**'
       - '.github/workflows/docs.yml'
+      - '.github/workflows/plugin-index.yml'
   workflow_dispatch:
+  # The plugin index expires after 30 days so an old signed copy can't hide a yanked version;
+  # rebuild and re-sign it weekly even when nothing changed.
+  schedule:
+    - cron: '17 4 * * 1'
 
 concurrency:
   group: docs-${{ github.ref }}
@@ -48,8 +60,18 @@ jobs:
             exit 1
           fi
 
+  plugin-index:
+    name: Plugin index
+    uses: ./.github/workflows/plugin-index.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      sign: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+
   build:
     name: Build site
+    needs: plugin-index
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -67,6 +89,13 @@ jobs:
           cache: npm
           cache-dependency-path: docs/package-lock.json
 
+      # Served at /Deployify/plugins/index.json, with its signature.
+      - name: Add the plugin index
+        uses: actions/download-artifact@v8
+        with:
+          name: plugin-index
+          path: docs/public/plugins
+
       - run: npm ci
       - run: npm run build
 
@@ -79,7 +108,7 @@ jobs:
   deploy:
     name: Publish to GitHub Pages
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs: [cli-reference, build]
+    needs: [cli-reference, plugin-index, build]
     runs-on: ubuntu-latest
     permissions:
       pages: write

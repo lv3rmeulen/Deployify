@@ -39,6 +39,75 @@ deployify plan --target example
 
 A plugin can't take over a built-in target ID: `compose` is always the built-in Compose target.
 
+### Install from the plugin index
+
+Third-party plugins are listed in a signed [plugin index](https://github.com/lv3rmeulen/Deployify/tree/main/plugin-index),
+published at `https://lv3rmeulen.github.io/Deployify/plugins/index.json`. Search it and install
+from it by target ID:
+
+```bash
+deployify plugin search             # every plugin in the index
+deployify plugin search cloud       # IDs, names, publishers and descriptions containing "cloud"
+deployify plugin install example    # the newest version
+deployify plugin install example@1.2.0
+deployify plugin install example --local   # into the project's .deployify/plugins/ instead of ~/.deployify/plugins/
+```
+
+Both need [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) 3.0.3 or later.
+Before anything of a plugin runs, Deployify checks:
+
+1. **The index's signature.** The public index is signed keyless by the workflow that builds it,
+   from main. Deployify won't read an index with any other signature, or none, and refuses an
+   index that has expired (it is re-signed weekly), so an old copy can't hide a withdrawn version.
+2. **The package's hash.** It must match the SHA-256 the index lists.
+3. **The package's signature.** Each index entry names who signs that plugin's packages,
+   usually the publisher's own release workflow. The package's Sigstore bundle must be signed
+   by exactly that identity.
+
+Then Deployify unpacks the package into `~/.deployify/plugins/<id>/`, starts it once to check
+that it reports the version and target the index promised, and, inside a project, locks it in
+`deployify-plugins.lock.json` together with where it came from:
+
+```json
+"example": {
+  "plugin": "example",
+  "version": "1.2.0",
+  "sha256": { "any": "3f9a…" },
+  "source": {
+    "index": "https://lv3rmeulen.github.io/Deployify/plugins/index.json",
+    "signer": "keyless, /^https://github\\.com/acme/deployify-target-example/…$/, issued by https://token.actions.githubusercontent.com"
+  }
+}
+```
+
+With no arguments, `deployify plugin install` installs every plugin the lock file records from an
+index, at its locked version. That is the step for CI and for a new machine:
+
+```bash
+deployify plugin install     # same versions, same files as the lock file; a different hash is refused
+deployify apply prod
+```
+
+A version the index has withdrawn (`yanked`) isn't installed by default. Installing it by version,
+or from the lock file, warns.
+
+#### Your own index
+
+A company can run its own index, for internal plugins, with the same format and checks. Point
+Deployify at it and say who signs it:
+
+```bash
+deployify plugin install example \
+  --index https://plugins.acme.internal/index.json \
+  --index-identity https://github.com/acme/deployify-plugins/.github/workflows/index.yml@refs/heads/main
+```
+
+Or set `DEPLOYIFY_PLUGIN_INDEX` and `DEPLOYIFY_PLUGIN_INDEX_IDENTITY` (and
+`DEPLOYIFY_PLUGIN_INDEX_ISSUER` outside GitHub Actions, or `DEPLOYIFY_PLUGIN_INDEX_KEY` for an
+index signed with a key). Deployify doesn't read an unsigned index. Build one with
+`tools/Deployify.PluginIndex` (see the [index's README](https://github.com/lv3rmeulen/Deployify/tree/main/plugin-index))
+and sign it with `cosign sign-blob --bundle index.json.sigstore.json index.json`.
+
 ### See what is installed
 
 ```bash
@@ -212,6 +281,61 @@ built executable, including one written in another language. The kit fills every
 parameter with a recognisable value and fails if that value shows up in `explain` output or a
 rollout snapshot.
 
+## Publishing a plugin
+
+To make a plugin installable with `deployify plugin install`, release it as a signed package and
+list it in the plugin index.
+
+**The package** is a `.zip` of the plugin's folder with `deployify-target-<id>` (or its `.dll`)
+at the top. Publish it framework-dependent without an apphost and one package serves every
+platform as `any`. A self-contained plugin needs a package per runtime ID (`linux-x64`,
+`win-x64`, `osx-arm64`, …).
+
+**The signature** is a Sigstore bundle next to the package, `<package>.sigstore.json`. Sign
+keyless from your release workflow, so the identity is your repository's workflow and no key
+can leak:
+
+```yaml
+# .github/workflows/release.yml
+on:
+  release:
+    types: [published]
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # attach to the release
+      id-token: write   # keyless signing
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+      - uses: sigstore/cosign-installer@v4
+
+      - name: Package and sign
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${TAG#v}"
+          package="deployify-target-example-$version-any.zip"
+          dotnet publish src/Example -c Release -p:UseAppHost=false -o out
+          (cd out && zip -r -X ../"$package" .)
+          cosign sign-blob --yes --bundle "$package.sigstore.json" "$package"
+          gh release upload "$TAG" "$package" "$package.sigstore.json"
+```
+
+The handshake version has to match the version in the index exactly. With
+`Deployify.Plugin.Sdk` a plugin reports its package version (without `+build` metadata) unless
+you pass one to `Named`.
+
+**The index entry** is a pull request adding `plugin-index/plugins/<id>.json`, naming your
+signing identity and each version's package. The
+[index's README](https://github.com/lv3rmeulen/Deployify/tree/main/plugin-index) describes the
+format. Pin `identityRegexp` to your repository and release workflow, anchored with `^…$`. The
+pull request's checks download each package, check its signature and unpack it. Add each new
+version the same way.
+
 ## The protocol
 
 The protocol is JSON-RPC 2.0 over the plugin's stdin and stdout. Each message is framed with
@@ -273,3 +397,10 @@ sandboxes it. Install plugins only from sources you trust, the same as any other
 on `PATH`. The lock file makes sure every machine runs the plugin files someone locked and
 committed, and stops them from changing without anyone noticing. It doesn't make an untrusted
 plugin safe.
+
+The plugin index adds who the plugin comes from. Listing a plugin means its signing identity
+was reviewed and merged into the index; it doesn't mean its code was reviewed. A package
+installed from the index was signed by that identity, is the exact file the index pinned, and
+was recorded in the public Sigstore transparency log when it was signed. If a publisher's
+release workflow or key is compromised, so are their signatures: the index can then yank the
+affected versions or replace the publisher's signer.

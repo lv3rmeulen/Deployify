@@ -45,11 +45,29 @@ public static class DeployifyPlugin
         return await RunAsync(configure, input, output, ct);
     }
 
+    /// <summary>
+    /// The version a plugin reports unless it names one: the entry assembly's informational
+    /// version (the package version, which MinVer sets from the git tag) without build metadata,
+    /// else its assembly version. MinVer keeps the assembly version at Major.0.0, which would
+    /// make every 1.x release report 1.0.0, and the plugin index and lock file match on this.
+    /// </summary>
+    internal static string? DefaultVersion(Assembly? assembly)
+    {
+        var informational = assembly?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        if (!string.IsNullOrWhiteSpace(informational))
+        {
+            var plus = informational.IndexOf('+', StringComparison.Ordinal);
+            return plus >= 0 ? informational[..plus] : informational;
+        }
+
+        return assembly?.GetName().Version?.ToString(3);
+    }
+
     /// <summary>Serves the protocol on the given streams. Used by tests and by hosts that start plugins in-process.</summary>
     public static async Task<int> RunAsync(Action<PluginBuilder> configure, Stream input, Stream output, CancellationToken ct = default)
     {
-        var entry = Assembly.GetEntryAssembly()?.GetName();
-        var builder = new PluginBuilder(entry?.Name ?? "plugin", entry?.Version?.ToString(3));
+        var assembly = Assembly.GetEntryAssembly();
+        var builder = new PluginBuilder(assembly?.GetName().Name ?? "plugin", DefaultVersion(assembly));
 
         JsonRpc rpc = null!;
         builder.Services
