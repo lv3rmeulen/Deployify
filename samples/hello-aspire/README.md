@@ -56,5 +56,6 @@ Aspire dashboard, or reads `Parameters:admin-key` from user secrets.
 Aspire creates `visitsdb` itself when it runs the app locally, but a deployed Postgres container
 doesn't. The AppHost sets `POSTGRES_DB` so the postgres image creates the database on first start.
 
-CI builds this sample and runs `deployify generate` on every pull request, and deploys it to
-Docker Compose nightly (`.github/workflows/samples.yml`).
+CI builds this sample and runs `deployify generate` on every pull request. It also publishes the
+`api` and `web` images to a throwaway registry and checks that the generated artifacts pin them by
+digest. Nightly, it deploys the sample to Docker Compose (`.github/workflows/samples.yml`).

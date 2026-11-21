@@ -44,6 +44,9 @@ Each sample under `samples/` is a self-contained solution (its own `Directory.Bu
 `Directory.Packages.props`) with a README. `.github/workflows/samples.yml`:
 
 - on every pull request, builds each sample and runs `deployify generate` against it;
+- on every pull request, publishes `hello-aspire`'s project and Dockerfile images to a `registry:2`
+  service container and checks that `images.json` records the digests the registry serves and that
+  the generated artifacts reference them as `@sha256:`;
 - nightly (and on demand), publishes and deploys the Compose samples on the runner's Docker,
   checks that they answer, and destroys them.
 

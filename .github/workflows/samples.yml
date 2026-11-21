@@ -66,6 +66,101 @@ jobs:
           path: ${{ matrix.apphost }}/deployify-output/
           if-no-files-found: error
 
+  # Every push and PR: publish hello-aspire's project (api) and Dockerfile build (web) to a real
+  # registry, then check that the digests Deployify recorded are what the registry serves and
+  # that the generated artifacts pin them.
+  publish-registry:
+    name: hello-aspire · publish to a registry, pin by digest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: samples/hello-aspire/HelloAspire.AppHost
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+    env:
+      DEPLOYIFY: dotnet ${{ github.workspace }}/src/Deployify/bin/Release/net10.0/deployify.dll
+      REGISTRY: localhost:5000
+      TAG: ${{ github.sha }}
+      # The .NET SDK pushes to the job's registry over plain HTTP. Docker allows localhost as is.
+      DOTNET_CONTAINER_INSECURE_REGISTRIES: localhost:5000
+      # The sample's secret parameter. A test value: the sample protects nothing.
+      Parameters__admin_key: ci-admin-key
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Build Deployify
+        working-directory: .
+        run: dotnet build src/Deployify/Deployify.csproj -c Release
+
+      # The image tag goes in the state file too: generate looks digests up by repository and tag.
+      - name: Use the job's registry and the commit tag
+        run: |
+          jq --arg registry "$REGISTRY" --arg tag "$TAG" \
+            '.Environments.local.ContainerRegistry = $registry | .Environments.local.ImageTag = $tag' \
+            deployify-state.json > deployify-state.tmp
+          mv deployify-state.tmp deployify-state.json
+
+      - name: deployify publish
+        run: $DEPLOYIFY publish
+
+      - name: deployify generate
+        run: $DEPLOYIFY generate
+
+      - name: images.json holds the digests the registry serves
+        run: |
+          images=.deployify/state/local/images.json
+          [ -f "$images" ] || { echo "::error::$images was not written"; exit 1; }
+          cat "$images"
+          accept='application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json'
+          for service in api web; do
+            repository="$REGISTRY/$service"
+            digest=$(jq -r --arg key "$repository:$TAG" '.images[$key].digest // empty' "$images")
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] \
+              || { echo "::error::images.json has no digest for $repository:$TAG"; exit 1; }
+            served=$(curl -fsS -o /dev/null -D - -H "Accept: $accept" "http://$REGISTRY/v2/$service/manifests/$TAG" \
+              | tr -d '\r' | awk -F': ' 'tolower($1) == "docker-content-digest" { print $2 }')
+            echo "$service: recorded $digest, registry serves $served for :$TAG"
+            [ "$served" = "$digest" ] \
+              || { echo "::error::$repository:$TAG is $served in the registry, but images.json recorded $digest"; exit 1; }
+          done
+
+      - name: The generated artifacts reference the images by digest
+        run: |
+          images=.deployify/state/local/images.json
+          for service in api web; do
+            repository="$REGISTRY/$service"
+            digest=$(jq -r --arg key "$repository:$TAG" '.images[$key].digest' "$images")
+            grep -rlF "$repository@$digest" deployify-output \
+              || { echo "::error::No generated artifact references $repository@$digest"; exit 1; }
+          done
+          # A built image referenced by tag would deploy whatever the tag points at later.
+          if grep -rnE "$REGISTRY/[a-z0-9._/-]+:[A-Za-z0-9._-]+" deployify-output; then
+            echo "::error::A generated artifact references a built image by tag"
+            exit 1
+          fi
+
+      - name: Upload the published state and generated artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: published-hello-aspire
+          path: |
+            samples/hello-aspire/HelloAspire.AppHost/.deployify/state/local/images.json
+            samples/hello-aspire/HelloAspire.AppHost/deployify-output/
+          include-hidden-files: true
+          if-no-files-found: warn
+
   # Nightly (or on demand): really deploy to Docker Compose on the runner, call it, tear it down.
   deploy-compose:
     name: hello-aspire · deploy to Docker Compose
