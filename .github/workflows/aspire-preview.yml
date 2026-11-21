@@ -21,8 +21,8 @@ concurrency:
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: '1'
   DOTNET_NOLOGO: '1'
-  # Aspire's daily builds (the aspire-daily source in nuget.config); the Aspire CLI's own
-  # "daily" channel uses this feed too.
+  # Aspire's daily builds; the Aspire CLI's own "daily" channel uses this feed too. Only this
+  # workflow uses it: the "Add the Aspire daily feed" step adds it to nuget.config for this run.
   DAILY_FEED: https://pkgs.dev.azure.com/dnceng/public/_packaging/dotnet9/nuget/v3/index.json
 
 jobs:
@@ -59,6 +59,32 @@ jobs:
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "pinned=$pinned" >> "$GITHUB_OUTPUT"
           echo "### Aspire $v (pinned: $pinned)" >> "$GITHUB_STEP_SUMMARY"
+
+      # nuget.config in the repo lists nuget.org only, so no other build depends on the daily
+      # feed. Aspire.* may come from either source (NuGet uses the most specific pattern, so
+      # Aspire.* is listed under nuget.org too, or released Aspire versions would only come from
+      # the daily feed); everything else from nuget.org.
+      - name: Add the Aspire daily feed
+        run: |
+          cat > nuget.config <<EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <packageSources>
+              <clear />
+              <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />
+              <add key="aspire-daily" value="$DAILY_FEED" protocolVersion="3" />
+            </packageSources>
+            <packageSourceMapping>
+              <packageSource key="nuget.org">
+                <package pattern="*" />
+                <package pattern="Aspire.*" />
+              </packageSource>
+              <packageSource key="aspire-daily">
+                <package pattern="Aspire.*" />
+              </packageSource>
+            </packageSourceMapping>
+          </configuration>
+          EOF
 
       - name: Move every Aspire pin to that version
         run: |
