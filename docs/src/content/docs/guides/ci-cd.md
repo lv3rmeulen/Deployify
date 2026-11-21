@@ -65,7 +65,7 @@ the drift check with the same tag: `deployify ci --skip-apply --fail-on-changes 
 
 The publish step builds projects and Dockerfile-based resources, then regenerates the
 artifacts so the apply step deploys each image by the digest it was just pushed with. See
-[publishing images](/guides/publishing-images/#pinning-images-by-digest).
+[publishing images](/Deployify/guides/publishing-images/#pinning-images-by-digest).
 
 Without a terminal, as on most CI runners, output is plain text with no colors, and long
 lines aren't wrapped, so each message stays on one line in the log. Set `COLUMNS` to wrap
@@ -117,7 +117,7 @@ first; the job then needs to be signed in to both registries.
       --skip-validate --auto-approve
 ```
 
-See [promoting images](/guides/publishing-images/#promoting-images-to-another-environment).
+See [promoting images](/Deployify/guides/publishing-images/#promoting-images-to-another-environment).
 
 ### Separate steps
 

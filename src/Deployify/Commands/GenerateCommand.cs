@@ -46,6 +46,15 @@ public static class GenerateCommand
                 return 1;
             }
 
+            // The errors were reported when the manifest was loaded. Generating anyway would write
+            // each parameter's placeholder into the artifacts as its value.
+            if (resolved.ManifestAudit.MissingValues.Count > 0)
+            {
+                AnsiConsole.MarkupLineInterpolated(
+                    $"[red]✗[/] {resolved.ManifestAudit.MissingValues.Count} parameter(s) have no value; nothing was generated.");
+                return 1;
+            }
+
             IReadOnlyList<string> paths;
             try
             {

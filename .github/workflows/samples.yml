@@ -28,6 +28,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      # hello-aspire's secret parameter. A test value: the sample protects nothing.
+      Parameters__admin_key: ci-admin-key
     strategy:
       fail-fast: false
       matrix:
@@ -76,6 +79,8 @@ jobs:
         working-directory: samples/hello-aspire/HelloAspire.AppHost
     env:
       DEPLOYIFY: dotnet ${{ github.workspace }}/src/Deployify/bin/Release/net10.0/deployify.dll
+      # The sample's secret parameter. A test value: the sample protects nothing.
+      Parameters__admin_key: ci-admin-key
     steps:
       - uses: actions/checkout@v6
         with:
@@ -98,12 +103,13 @@ jobs:
       - name: Apply
         run: $DEPLOYIFY apply --auto-approve --health-timeout 180
 
+      # The api answers once Redis and Postgres both do; "logged" comes from Postgres.
       - name: Smoke test
         run: |
           for i in $(seq 1 30); do
             if body=$(curl -fsS http://localhost:8080/); then
               echo "$body"
-              echo "$body" | grep -q '"visits"' && exit 0
+              echo "$body" | grep -q '"logged"' && exit 0
             fi
             sleep 2
           done
@@ -111,6 +117,16 @@ jobs:
           docker compose ls
           docker ps -a
           exit 1
+
+      - name: The static site answers
+        run: curl -fsS http://localhost:8085/ | grep -q 'deployed by Deployify'
+
+      - name: The admin key reached the api
+        run: |
+          without=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8080/reset)
+          with=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "X-Admin-Key: $Parameters__admin_key" http://localhost:8080/reset)
+          echo "POST /reset without the key: $without, with it: $with"
+          [ "$without" = 401 ] && [ "$with" = 204 ] || { echo "::error::Expected 401 without the admin key and 204 with it"; exit 1; }
 
       - name: Plan shows no drift after the deploy
         run: $DEPLOYIFY ci --skip-validate --skip-apply --fail-on-changes

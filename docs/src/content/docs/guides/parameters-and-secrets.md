@@ -12,6 +12,10 @@ resolved for every target. Values are looked up in this order:
 4. A generated value for inputs with `default.generate`, saved in `deployify-parameters.json` next to
    the state file so every deploy reuses the same password
 
+When none of these has a value for a parameter that a deployed service uses, directly or through a
+connection string, `plan` reports an error and exits 1, `generate` writes nothing and exits 1, and
+`apply`, `ci` and `aspire deploy` stop before changing anything.
+
 ```json
 "environments": {
   "prod": {
@@ -37,7 +41,7 @@ stores them its own way:
 | AwsEcs | SSM Parameter Store SecureStrings under `secretsPrefix` (default `/deployify/<cluster>`), written by `apply` and referenced from the task definition's `secrets`. The execution role needs `ssm:GetParameters` |
 | Nomad / NomadConsul | Nomad Variables at `nomad/jobs/<job>`, written by `apply` and read by the job's template (Nomad 1.4+) |
 
-`explain` masks secret values. A reference that can't be resolved is left in place and reported.
+`explain` masks secret values.
 
 To pass a literal `{name.property}` through without resolving it, double the braces: `{{name.property}}`.
 

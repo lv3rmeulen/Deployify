@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
 using Deployify.Core.SecretBackends;
@@ -237,6 +238,8 @@ public sealed record DeploymentSession(
                 .WithInferredReferences();
 
             ManifestAudit = Deployments.ManifestAudit.Run(manifest, Config.IgnoreResources, Target.AdditionalResourceTypes);
+            ManifestAudit = await Deployments.ManifestAudit.CheckParametersAsync(
+                ManifestAudit, manifest, ParameterResolution.For(Config), ct);
             Deployments.ManifestAudit.Report(ManifestAudit, Reporter);
             return manifest;
         }

@@ -6,6 +6,7 @@ description: Deploy the hello-aspire sample to Docker Compose on your own machin
 import { Code, Steps } from '@astrojs/starlight/components';
 import appHost from '../../../../../samples/hello-aspire/HelloAspire.AppHost/AppHost.cs?raw';
 import api from '../../../../../samples/hello-aspire/HelloAspire.Api/Program.cs?raw';
+import dockerfile from '../../../../../samples/hello-aspire/HelloAspire.Web/Dockerfile?raw';
 import state from '../../../../../samples/hello-aspire/HelloAspire.AppHost/deployify-state.json?raw';
 
 This walkthrough deploys [`samples/hello-aspire`](https://github.com/lv3rmeulen/Deployify/tree/main/samples/hello-aspire)
@@ -15,11 +16,20 @@ which CI builds and deploys every night.
 
 ## The app
 
-An API that counts visits in Redis. The AppHost declares both and the reference between them:
+The sample has one of each kind of resource Deployify deploys:
+
+- `api`, a **project**: an API that counts visits in Redis and logs them in Postgres
+- `web`, a **Dockerfile** build: a static site served by nginx
+- `cache` and `postgres`, **containers**: Redis, and Postgres with the `visitsdb` database
+- `admin-key`, a **secret parameter**: the key the API's `POST /reset` asks for
+
+The AppHost declares them and the references between them:
 
 <Code code={appHost} lang="csharp" title="HelloAspire.AppHost/AppHost.cs" />
 
 <Code code={api} lang="csharp" title="HelloAspire.Api/Program.cs" />
+
+<Code code={dockerfile} lang="dockerfile" title="HelloAspire.Web/Dockerfile" />
 
 ## The environment
 
@@ -41,37 +51,53 @@ You need the .NET 10 SDK, Docker (or Podman) and [the `deployify` tool](/Deployi
    cd Deployify/samples/hello-aspire/HelloAspire.AppHost
    ```
 
-2. Preview the deployment. Deployify runs the AppHost to get Aspire's manifest, writes the
+2. Choose the admin key. `admin-key` has no default, so you supply it, here with Aspire's
+   `Parameters__<name>` variable (a `-` in the name becomes `_`):
+
+   ```bash
+   export Parameters__admin_key=change-me
+   # PowerShell: $env:Parameters__admin_key = "change-me"
+   ```
+
+   Deployify keeps secret values out of `compose.yml`: the key goes into the api's `.env` file.
+
+3. Preview the deployment. Deployify runs the AppHost to get Aspire's manifest, writes the
    Compose files to `deployify-output/` and compares them with what's running:
 
    ```bash
    deployify plan
    ```
 
-   Expect `2 to create`: `cache` and `api`. The Redis password Aspire asks for is generated once
-   and saved in `deployify-parameters.json`, so every later deploy reuses it.
+   Expect `4 to create`: `cache`, `postgres`, `api` and `web`. The Redis and Postgres passwords
+   Aspire asks for are generated once and saved in `deployify-parameters.json`, so every later
+   deploy reuses them.
 
-3. Build the API image into your local Docker:
+4. Build the images into your local Docker: `api` with `dotnet publish`, `web` with `docker build`:
 
    ```bash
    deployify publish
    ```
 
-4. Deploy. `cache` goes first because `api` depends on it, and each wave has to be healthy
-   before the next one starts:
+5. Deploy. `cache` and `postgres` go before `api` because `api` depends on them, and each wave
+   has to be healthy before the next one starts:
 
    ```bash
    deployify apply --auto-approve
    ```
 
-5. Call the API:
+6. Call the API and open the site:
 
    ```bash
    curl http://localhost:8080/
-   # {"message":"Hello from Aspire, deployed by Deployify","visits":1}
+   # {"message":"Hello from Aspire, deployed by Deployify","visits":1,"logged":1}
+
+   curl http://localhost:8085/
+
+   curl -X POST -H "X-Admin-Key: change-me" http://localhost:8080/reset
+   # 204 No Content; without the key, 401
    ```
 
-6. Look around, then clean up:
+7. Look around, then clean up:
 
    ```bash
    deployify status                         # the rollout you just ran

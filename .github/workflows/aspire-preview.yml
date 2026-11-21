@@ -100,6 +100,8 @@ jobs:
         run: dotnet test --solution Deployify.slnx --configuration Release --no-build --report-github
 
       - name: Samples build and generate
+        env:
+          Parameters__admin_key: ci-admin-key # hello-aspire's secret parameter
         run: |
           for sample in hello-aspire/HelloAspire aspire-deploy/AspireDeploy; do
             echo "::group::$sample"

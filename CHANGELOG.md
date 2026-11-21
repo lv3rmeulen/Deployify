@@ -60,6 +60,9 @@ Each release can have these sections: **Added**, **Changed**, **Deprecated**, **
 - `init`, including how it handles secrets.
 - `ci` publishing and image tag checks.
 - Nomad services that referred to each other through `localhost`.
+- A parameter without a value no longer deploys its placeholder (`{name.inputs.value}`) as the
+  value. When a deployed service uses it, `plan` and `generate` exit 1 and `apply`, `ci` and
+  `aspire deploy` stop, on every target.
 
 ## 1.0.0-alpha.16 and earlier
 

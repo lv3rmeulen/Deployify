@@ -1,4 +1,4 @@
-# Written by deployify; deployify-parameters.json holds the generated Redis password.
+# Written by deployify; deployify-parameters.json holds the generated Redis and Postgres passwords.
 deployify-output/
 deployify-parameters.json
 .deployify/

@@ -52,7 +52,7 @@ current behavior.
 ### What Deployify creates on a platform
 
 `plan` and prune decide what belongs to Deployify from the names it gives resources and the
-[ownership markers](/concepts/state/#ownership) it puts on them. Within 1.x:
+[ownership markers](/Deployify/concepts/state/#ownership) it puts on them. Within 1.x:
 
 - Ownership markers, labels and tags don't change, so a newer release still recognizes what an
   older one deployed and never orphans or deletes it by mistake.
@@ -80,11 +80,11 @@ The files Deployify writes for itself, locally or in a remote backend: `deployif
 - The local layout (`.deployify/state/`, `.deployify/rollouts/`) and the remote key layout
   (`{prefix}/{env}/…`) don't change.
 
-See [Format versions](/concepts/state/#format-versions) for how this works.
+See [Format versions](/Deployify/concepts/state/#format-versions) for how this works.
 
 ### Plugin protocol 1.0
 
-Everything described under [The protocol](/extending/plugins/#the-protocol):
+Everything described under [The protocol](/Deployify/extending/plugins/#the-protocol):
 
 - Framing (JSON-RPC 2.0 with `Content-Length` headers over stdin and stdout), the
   `initialize` handshake and `shutdown`, and the `DEPLOYIFY_PLUGIN` and

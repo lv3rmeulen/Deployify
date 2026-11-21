@@ -1,6 +1,10 @@
+using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Deployify.Core.Deployments;
+using Deployify.Core.Expressions;
 using Deployify.Core.Models;
 using Shouldly;
 using Xunit;
@@ -186,5 +190,120 @@ public sealed class ManifestAuditTests
         """);
 
         ManifestAudit.Run(manifest).Diagnostics.ShouldBeEmpty();
+    }
+
+    /// <summary>Parameters the way Aspire writes them, and who uses them.</summary>
+    private const string WithParameters = """
+    {
+      "resources": {
+        "api":      { "type": "project.v0", "path": "Api/Api.csproj",
+                      "env": { "ADMIN_KEY": "{admin-key.value}", "ConnectionStrings__db": "{db.connectionString}", "REGION": "{region.value}" } },
+        "pg":       { "type": "container.v0", "image": "postgres:17", "env": { "POSTGRES_PASSWORD": "{pg-password.value}" },
+                      "connectionString": "Host=pg;Password={pg-password.value}" },
+        "db":       { "type": "value.v0", "connectionString": "{pg.connectionString};Username={db-user.value}" },
+        "admin-key":   { "type": "parameter.v0", "value": "{admin-key.inputs.value}",
+                         "inputs": { "value": { "type": "string", "secret": true } } },
+        "db-user":     { "type": "parameter.v0", "value": "{db-user.inputs.value}",
+                         "inputs": { "value": { "type": "string" } } },
+        "region":      { "type": "parameter.v0", "value": "{region.inputs.value}",
+                         "inputs": { "value": { "type": "string", "default": { "value": "westeurope" } } } },
+        "pg-password": { "type": "parameter.v0", "value": "{pg-password.inputs.value}",
+                         "inputs": { "value": { "type": "string", "secret": true, "default": { "generate": { "minLength": 22 } } } } },
+        "unused":      { "type": "parameter.v0", "value": "{unused.inputs.value}",
+                         "inputs": { "value": { "type": "string", "secret": true } } }
+      }
+    }
+    """;
+
+    /// <summary>The usual lookup order with only <paramref name="values"/> set and no environment variables.</summary>
+    private static IParameterSource Source(params (string Name, string Value)[] values)
+        => ParameterSources.Default(values.ToDictionary(v => v.Name, v => v.Value), getVariable: _ => null);
+
+    private static Task<ManifestAuditResult> CheckParametersAsync(IParameterSource parameters)
+    {
+        var manifest = Parse(WithParameters);
+        return ManifestAudit.CheckParametersAsync(
+            ManifestAudit.Run(manifest), manifest, parameters, TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task ParameterWithoutValue_ThatAServiceUses_IsAnError()
+    {
+        var result = await CheckParametersAsync(Source(("db-user", "app")));
+
+        var error = result.Diagnostics.ShouldHaveSingleItem();
+        error.Resource.ShouldBe("admin-key");
+        error.Severity.ShouldBe(ManifestDiagnosticSeverity.Error);
+        error.Message.ShouldStartWith("Secret parameter 'admin-key' has no value, and 'api' depends on it.");
+        error.Message.ShouldContain("Parameters__admin_key");
+        error.Message.ShouldContain("\"admin-key\": \"env:NAME\"");
+        result.Blocks(strict: false).ShouldBeTrue();
+        result.BlockedSummary(strict: false).ShouldBe(
+            "1 problem(s) with resources that deployed services depend on; nothing was changed.");
+        result.MissingValues.ShouldBe([error]);
+    }
+
+    [Fact]
+    public async Task ParameterUsedThroughAConnectionString_IsChecked()
+    {
+        var result = await CheckParametersAsync(Source(("admin-key", "k")));
+
+        var error = result.Diagnostics.ShouldHaveSingleItem();
+        error.Resource.ShouldBe("db-user");
+        error.Message.ShouldStartWith("Parameter 'db-user' has no value, and 'api' depends on it.");
+    }
+
+    [Fact]
+    public async Task EveryValueSupplied_HasNoFindings()
+    {
+        var result = await CheckParametersAsync(Source(("admin-key", "k"), ("db-user", "app")));
+
+        result.Diagnostics.ShouldBeEmpty();
+        result.MissingValues.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ValueFromAnEnvironmentVariable_Counts()
+    {
+        var variables = new Dictionary<string, string>
+        {
+            ["Parameters__admin_key"] = "k",
+            ["Parameters__db_user"] = "app"
+        };
+
+        var result = await CheckParametersAsync(ParameterSources.Default(getVariable: name => variables.GetValueOrDefault(name)));
+
+        result.Diagnostics.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task GeneratedInputs_AreNotAskedFor_SoNothingIsGenerated()
+    {
+        var asked = new AskedSource(Source(("admin-key", "k"), ("db-user", "app")));
+
+        await CheckParametersAsync(asked);
+
+        asked.Asked.ShouldNotContain("pg-password");
+        asked.Asked.Order().ShouldBe(["admin-key", "db-user", "region"]);
+    }
+
+    [Fact]
+    public async Task ParameterNoDeployedServiceUses_IsNotChecked()
+    {
+        var result = await CheckParametersAsync(Source(("admin-key", "k"), ("db-user", "app")));
+
+        result.Diagnostics.ShouldNotContain(d => d.Resource == "unused");
+    }
+
+    /// <summary>Records which parameters were asked for.</summary>
+    private sealed class AskedSource(IParameterSource inner) : IParameterSource
+    {
+        public List<string> Asked { get; } = [];
+
+        public ValueTask<string?> GetValueAsync(string parameter, ParameterInput input, CancellationToken ct = default)
+        {
+            Asked.Add(parameter);
+            return inner.GetValueAsync(parameter, input, ct);
+        }
     }
 }

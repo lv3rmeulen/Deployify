@@ -2,6 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
+using Deployify.Core.Expressions;
 using Deployify.Core.Models;
 
 namespace Deployify.Core.Deployments;
@@ -14,7 +17,10 @@ public enum ManifestDiagnosticSeverity
     /// <summary>Not deployed, and nothing deployed depends on it. Blocks only with --strict.</summary>
     Warning,
 
-    /// <summary>Not deployed, but a deployed service depends on it. Blocks deploying.</summary>
+    /// <summary>
+    /// A deployed service depends on it and would be deployed without it: a resource that isn't
+    /// deployed, or a parameter without a value. Blocks deploying.
+    /// </summary>
     Error
 }
 
@@ -26,10 +32,14 @@ public sealed class ManifestAuditResult
 {
     public static readonly ManifestAuditResult Empty = new([], []);
 
-    public ManifestAuditResult(IReadOnlyList<ManifestDiagnostic> diagnostics, IReadOnlyList<PlanSkipped> skipped)
+    public ManifestAuditResult(
+        IReadOnlyList<ManifestDiagnostic> diagnostics,
+        IReadOnlyList<PlanSkipped> skipped,
+        IReadOnlyList<ManifestDiagnostic>? missingValues = null)
     {
         Diagnostics = diagnostics;
         Skipped = skipped;
+        MissingValues = missingValues ?? [];
     }
 
     /// <summary>Findings, errors first, then by resource name.</summary>
@@ -37,6 +47,13 @@ public sealed class ManifestAuditResult
 
     /// <summary>Every resource in the manifest that won't be deployed although it may matter, with why.</summary>
     public IReadOnlyList<PlanSkipped> Skipped { get; }
+
+    /// <summary>
+    /// The errors (also in <see cref="Diagnostics"/>) for parameters a deployed service uses that have
+    /// no value. Anything generated now would hold the placeholder instead, so even
+    /// <c>generate</c> stops on these.
+    /// </summary>
+    public IReadOnlyList<ManifestDiagnostic> MissingValues { get; }
 
     public bool HasErrors => Diagnostics.Any(d => d.Severity == ManifestDiagnosticSeverity.Error);
 
@@ -54,7 +71,7 @@ public sealed class ManifestAuditResult
         var errors = Diagnostics.Count(d => d.Severity == ManifestDiagnosticSeverity.Error);
         var warnings = Diagnostics.Count(d => d.Severity == ManifestDiagnosticSeverity.Warning);
         return errors > 0
-            ? $"{errors} resource(s) that deployed services depend on can't be deployed; nothing was changed."
+            ? $"{errors} problem(s) with resources that deployed services depend on; nothing was changed."
             : $"{warnings} manifest resource(s) won't be deployed and --strict is set; nothing was changed.";
     }
 }
@@ -100,10 +117,7 @@ public static class ManifestAudit
 
             var reason = classification.Reason!;
             skipped.Add(new PlanSkipped(name, resource.Type, reason));
-            var users = dependents.TryGetValue(name, out var u) ? u : [];
-            var usedBy = users.Count > 0
-                ? $"{string.Join(", ", users.Select(w => $"'{w}'"))} depend{(users.Count == 1 ? "s" : "")} on it"
-                : null;
+            var usedBy = dependents.TryGetValue(name, out var users) ? UsedBy(users) : null;
 
             if (ignored.Contains(name))
             {
@@ -135,6 +149,59 @@ public static class ManifestAudit
             [.. diagnostics.OrderByDescending(d => d.Severity).ThenBy(d => d.Resource, StringComparer.Ordinal)],
             skipped);
     }
+
+    /// <summary>
+    /// Adds an error to <paramref name="result"/> for each parameter input that a deployed service
+    /// depends on and that <paramref name="parameters"/> has no value for. Without this check the
+    /// target would deploy the placeholder itself (<c>{name.inputs.value}</c>) as the value.
+    /// Inputs with <c>default.generate</c> always get a value and aren't asked for, so the check
+    /// never generates a password.
+    /// </summary>
+    /// <param name="parameters">The run's parameter source, the one the targets resolve with.</param>
+    public static async Task<ManifestAuditResult> CheckParametersAsync(
+        ManifestAuditResult result, AspireManifest manifest, IParameterSource parameters, CancellationToken ct = default)
+    {
+        var missing = new List<ManifestDiagnostic>();
+        foreach (var (name, users) in Dependents(manifest).OrderBy(d => d.Key, StringComparer.Ordinal))
+        {
+            var resource = manifest.Resources[name];
+            if (resource.Type != ResourceTypes.Parameter)
+            {
+                continue;
+            }
+
+            foreach (var input in ParameterInput.ReadAll(resource).Values)
+            {
+                if (input.Generate is null && await parameters.GetValueAsync(name, input, ct) is null)
+                {
+                    missing.Add(new(name, resource.Type, ManifestDiagnosticSeverity.Error,
+                        MissingValueMessage(name, input, users)));
+                }
+            }
+        }
+
+        return missing.Count == 0
+            ? result
+            : new ManifestAuditResult(
+                [.. result.Diagnostics.Concat(missing)
+                    .OrderByDescending(d => d.Severity).ThenBy(d => d.Resource, StringComparer.Ordinal)],
+                result.Skipped,
+                [.. result.MissingValues.Concat(missing)]);
+    }
+
+    private static string MissingValueMessage(string name, ParameterInput input, SortedSet<string> users)
+    {
+        var label = input.Name == "value" ? $"'{name}'" : $"'{name}' (input '{input.Name}')";
+        var key = input.Name == "value" ? name : $"{name}.{input.Name}";
+
+        // The underscore spelling, since most shells can't export a name with a dash in it.
+        var variable = EnvironmentParameterSource.VariableNames(name, input.Name).Last();
+        return $"{(input.Secret ? "Secret parameter" : "Parameter")} {label} has no value, and {UsedBy(users)}. " +
+               $"Set the {variable} environment variable, or add \"{key}\": \"env:NAME\" to the environment's parameters.";
+    }
+
+    private static string UsedBy(IReadOnlyCollection<string> users)
+        => $"{string.Join(", ", users.Select(w => $"'{w}'"))} depend{(users.Count == 1 ? "s" : "")} on it";
 
     /// <summary>Writes the findings to <paramref name="reporter"/>: errors, warnings and info lines.</summary>
     public static void Report(ManifestAuditResult result, IDeploymentReporter reporter)

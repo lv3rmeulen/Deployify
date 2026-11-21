@@ -63,6 +63,14 @@ public sealed class SecretBackendCommandTests
         await sm.SaveFileAsync(state, dir, ct);
     }
 
+    private static async Task SetParameterAsync(string dir, string name, string value, CancellationToken ct)
+    {
+        var sm = new StateManager();
+        var state = await sm.LoadFileAsync(dir, ct);
+        state.Environments[state.ActiveEnvironment].Parameters[name] = value;
+        await sm.SaveFileAsync(state, dir, ct);
+    }
+
     [Fact]
     public async Task Generate_KubernetesSecret_KeepsValuesOutOfOutputAndParametersFile()
     {
@@ -103,6 +111,7 @@ public sealed class SecretBackendCommandTests
         var ct = TestContext.Current.CancellationToken;
         using var dir = new TempDir();
         await Harness.WriteKubernetesStateAsync(dir.Path, ct: ct);
+        await SetParameterAsync(dir.Path, "pg-password", Secret, ct);
         await WriteSecretManifestAsync(dir.Path, ct);
 
         var code = await Root().InvokeAsync(["generate", "--project-path", dir.Path], ct);
@@ -110,6 +119,23 @@ public sealed class SecretBackendCommandTests
         code.ShouldBe(0);
         File.Exists(Path.Combine(dir.Path, ParameterStore.FileName)).ShouldBeTrue();
         File.Exists(Path.Combine(dir.Path, "deployify-output", "api", "secret.yaml")).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Generate_ParameterWithoutAValue_FailsAndWritesNothing()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var dir = new TempDir();
+        await Harness.WriteKubernetesStateAsync(dir.Path, ct: ct);
+        await WriteSecretManifestAsync(dir.Path, ct);
+
+        // pg-password has no value: no parameters entry, no Parameters__pg_password, no default.
+        var code = await Root().InvokeAsync(["generate", "--project-path", dir.Path], ct);
+
+        code.ShouldBe(1);
+        Directory.GetFiles(Path.Combine(dir.Path, "deployify-output"), "*", SearchOption.AllDirectories)
+            .Select(Path.GetFileName).ShouldBe(["manifest.json"]);
+        File.Exists(Path.Combine(dir.Path, ParameterStore.FileName)).ShouldBeFalse();
     }
 
     [Theory]

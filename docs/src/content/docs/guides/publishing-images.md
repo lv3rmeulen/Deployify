@@ -43,7 +43,7 @@ deploy runs exactly the image that was published, and a rollback runs exactly th
 one, even if the tag is pushed again later.
 
 The digests are kept in the environment's deployment state (`images.json`, next to the
-inventory), locally or in the [remote state backend](/concepts/state/#remote-state), so a later
+inventory), locally or in the [remote state backend](/Deployify/concepts/state/#remote-state), so a later
 `apply`, a rollback or a drift check in another CI job finds them. A digest is used only for the
 exact repository and tag it was published as: change the tag and the artifacts reference the new
 tag until it is published. Images in the local store (no registry) are referenced by tag.

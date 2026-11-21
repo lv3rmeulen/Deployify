@@ -24,8 +24,12 @@ A service that exists on the target but couldn't be compared is listed under **C
 Manifest resources Deployify can't deploy (executables, Azure or AWS infrastructure, unknown
 types) are reported before the plan and counted as **not deployed** in
 its summary. When a deployed service depends on one, `plan` exits 1, and `apply` and `ci` stop
-before changing anything. See [ignored resources](/reference/state-file/#ignored-resources) to
+before changing anything. See [ignored resources](/Deployify/reference/state-file/#ignored-resources) to
 mark the ones you deploy another way.
+
+The same goes for a parameter a deployed service uses that has no value: `plan` and `generate` exit 1,
+and `apply`, `ci` and `aspire deploy` stop, naming the parameter and the variable to set. See
+[parameters and secrets](/Deployify/guides/parameters-and-secrets/).
 
 ```bash
 deployify plan
