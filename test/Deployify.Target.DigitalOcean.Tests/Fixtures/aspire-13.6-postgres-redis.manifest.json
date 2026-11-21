@@ -1,0 +1,129 @@
+{
+  "resources": {
+    "cache": {
+      "type": "container.v0",
+      "connectionString": "{cache.bindings.tcp.host}:{cache.bindings.tcp.port},password={cache-password.value}{cond-cache-bindings-tcp-tlsenabled-3eddb73a.connectionString}",
+      "image": "docker.io/library/redis:8.6",
+      "entrypoint": "/bin/sh",
+      "args": [
+        "-c",
+        "redis-server --requirepass $REDIS_PASSWORD"
+      ],
+      "env": {
+        "REDIS_PASSWORD": "{cache-password.value}"
+      },
+      "bindings": {
+        "tcp": {
+          "scheme": "redis",
+          "protocol": "tcp",
+          "transport": "tcp",
+          "targetPort": 6379
+        }
+      }
+    },
+    "pg": {
+      "type": "container.v0",
+      "connectionString": "Host={pg.bindings.tcp.host};Port={pg.bindings.tcp.port};Username=postgres;Password={pg-password.value}",
+      "image": "docker.io/library/postgres:18.3",
+      "env": {
+        "POSTGRES_HOST_AUTH_METHOD": "scram-sha-256",
+        "POSTGRES_INITDB_ARGS": "--auth-host=scram-sha-256 --auth-local=scram-sha-256",
+        "POSTGRES_USER": "postgres",
+        "POSTGRES_PASSWORD": "{pg-password.value}"
+      },
+      "bindings": {
+        "tcp": {
+          "scheme": "tcp",
+          "protocol": "tcp",
+          "transport": "tcp",
+          "targetPort": 5432
+        }
+      }
+    },
+    "appdb": {
+      "type": "value.v0",
+      "connectionString": "{pg.connectionString};Database=appdb"
+    },
+    "api": {
+      "type": "project.v0",
+      "path": "../HelloAspire.Api/HelloAspire.Api.csproj",
+      "env": {
+        "OTEL_DOTNET_EXPERIMENTAL_OTLP_RETRY": "in_memory",
+        "ASPNETCORE_FORWARDEDHEADERS_ENABLED": "true",
+        "HTTP_PORTS": "{api.bindings.http.targetPort}",
+        "ConnectionStrings__cache": "{cache.connectionString}",
+        "CACHE_HOST": "{cache.bindings.tcp.host}",
+        "CACHE_PORT": "{cache.bindings.tcp.port}",
+        "CACHE_PASSWORD": "{cache-password.value}",
+        "CACHE_URI": "{cache.bindings.tcp.scheme}://:{cache-password-uri-encoded.value}@{cache.bindings.tcp.host}:{cache.bindings.tcp.port}",
+        "ConnectionStrings__appdb": "{appdb.connectionString}",
+        "APPDB_HOST": "{pg.bindings.tcp.host}",
+        "APPDB_PORT": "{pg.bindings.tcp.port}",
+        "APPDB_USERNAME": "postgres",
+        "APPDB_PASSWORD": "{pg-password.value}",
+        "APPDB_URI": "postgresql://postgres:{pg-password-uri-encoded.value}@{pg.bindings.tcp.host}:{pg.bindings.tcp.port}/appdb",
+        "APPDB_JDBCCONNECTIONSTRING": "jdbc:postgresql://{pg.bindings.tcp.host}:{pg.bindings.tcp.port}/appdb",
+        "APPDB_DATABASENAME": "appdb"
+      },
+      "bindings": {
+        "http": {
+          "scheme": "http",
+          "protocol": "tcp",
+          "transport": "http",
+          "external": true
+        },
+        "https": {
+          "scheme": "https",
+          "protocol": "tcp",
+          "transport": "http",
+          "external": true
+        }
+      }
+    },
+    "cache-password": {
+      "type": "parameter.v0",
+      "value": "{cache-password.inputs.value}",
+      "inputs": {
+        "value": {
+          "type": "string",
+          "secret": true,
+          "default": {
+            "generate": {
+              "minLength": 22,
+              "special": false
+            }
+          }
+        }
+      }
+    },
+    "cache-password-uri-encoded": {
+      "type": "annotated.string",
+      "value": "{cache-password.value}",
+      "filter": "uri"
+    },
+    "pg-password": {
+      "type": "parameter.v0",
+      "value": "{pg-password.inputs.value}",
+      "inputs": {
+        "value": {
+          "type": "string",
+          "secret": true,
+          "default": {
+            "generate": {
+              "minLength": 22
+            }
+          }
+        }
+      }
+    },
+    "pg-password-uri-encoded": {
+      "type": "annotated.string",
+      "value": "{pg-password.value}",
+      "filter": "uri"
+    },
+    "cond-cache-bindings-tcp-tlsenabled-3eddb73a": {
+      "type": "value.v0",
+      "connectionString": ""
+    }
+  }
+}

@@ -8,3 +8,7 @@ Any other platform can be added as an out-of-process plugin: an executable named
 `~/.deployify/plugins` or on `PATH`, and talks to over JSON-RPC. Set `"Target": "<id>"` and
 use it like a built-in target. See [docs/plugins.md](/Deployify/extending/plugins/) for using, locking,
 writing (with `Deployify.Plugin.Sdk`) and testing plugins.
+
+Plugin targets maintained in this repository:
+
+- [DigitalOcean App Platform](/Deployify/targets/digitalocean/) (`digitalocean`)

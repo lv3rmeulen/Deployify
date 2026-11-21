@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="NSubstitute" />
+    <PackageReference Include="Shouldly" />
+    <PackageReference Include="GitHubActionsTestLogger" />
+    <PackageReference Include="Microsoft.Extensions.Logging" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Deployify.Target.DigitalOcean\Deployify.Target.DigitalOcean.csproj" />
+    <ProjectReference Include="..\..\src\Deployify.Plugin.Testing\Deployify.Plugin.Testing.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared\Snapshot.cs" Link="Shared\Snapshot.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- A manifest Aspire 13.6.5 wrote for an AppHost with AddPostgres().AddDatabase() and AddRedis(). -->
+    <None Include="Fixtures\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

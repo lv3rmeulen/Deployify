@@ -28,6 +28,10 @@ Each release can have these sections: **Added**, **Changed**, **Deprecated**, **
   `--allow-unverified` (`AllowUnverifiedPlugins` for `aspire deploy`) to start one anyway, with a
   warning each time. `dotnet tool` installs are hashed by the tool behind the launcher, and
   self-contained plugins get a hash per platform.
+- DigitalOcean App Platform target, shipped as the `Deployify.Target.DigitalOcean` plugin (target
+  ID `digitalocean`). It deploys the app as one App Platform app, maps Postgres and Redis
+  containers to Managed Databases (dev databases or clusters it can create), and prices the
+  plan with App Platform's propose endpoint.
 - `promote`: deploy the images another environment already published, by digest, copying them
   between registries when needed.
 - `dashboard`: serve an environment's deployed resources to the Aspire dashboard.

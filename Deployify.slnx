@@ -29,6 +29,7 @@
     <Project Path="src/Deployify.Target.AwsEcs/Deployify.Target.AwsEcs.csproj" />
     <Project Path="src/Deployify.Target.AzureContainerApps/Deployify.Target.AzureContainerApps.csproj" />
     <Project Path="src/Deployify.Target.Compose/Deployify.Target.Compose.csproj" />
+    <Project Path="src/Deployify.Target.DigitalOcean/Deployify.Target.DigitalOcean.csproj" />
     <Project Path="src/Deployify.Target.GitOps/Deployify.Target.GitOps.csproj" />
     <Project Path="src/Deployify.Target.Helm/Deployify.Target.Helm.csproj" />
     <Project Path="src/Deployify.Target.Iis/Deployify.Target.Iis.csproj" />
@@ -52,6 +53,7 @@
     <Project Path="test/Deployify.Target.AwsEcs.Tests/Deployify.Target.AwsEcs.Tests.csproj" />
     <Project Path="test/Deployify.Target.AzureContainerApps.Tests/Deployify.Target.AzureContainerApps.Tests.csproj" />
     <Project Path="test/Deployify.Target.Compose.Tests/Deployify.Target.Compose.Tests.csproj" />
+    <Project Path="test/Deployify.Target.DigitalOcean.Tests/Deployify.Target.DigitalOcean.Tests.csproj" />
     <Project Path="test/Deployify.Target.GitOps.Tests/Deployify.Target.GitOps.Tests.csproj" />
     <Project Path="test/Deployify.Target.Helm.Tests/Deployify.Target.Helm.Tests.csproj" />
     <Project Path="test/Deployify.Target.Iis.Tests/Deployify.Target.Iis.Tests.csproj" />

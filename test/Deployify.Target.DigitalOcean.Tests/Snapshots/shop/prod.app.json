@@ -1,0 +1,125 @@
+{
+  "name": "deployify-prod",
+  "region": "ams",
+  "services": [
+    {
+      "name": "catalog",
+      "image": {
+        "registry_type": "GHCR",
+        "registry": "acme",
+        "repository": "catalog",
+        "tag": "2.1"
+      },
+      "instance_size_slug": "apps-s-1vcpu-0.5gb",
+      "instance_count": 1,
+      "envs": [
+        {
+          "key": "PORT",
+          "value": "9000",
+          "scope": "RUN_TIME",
+          "type": "GENERAL"
+        }
+      ],
+      "internal_ports": [
+        9000
+      ]
+    },
+    {
+      "name": "api",
+      "image": {
+        "registry_type": "DOCR",
+        "repository": "api",
+        "tag": "v1.2.0"
+      },
+      "instance_size_slug": "apps-s-1vcpu-0.5gb",
+      "instance_count": 1,
+      "envs": [
+        {
+          "key": "CATALOG_HTTP",
+          "value": "http://catalog:9000",
+          "scope": "RUN_TIME",
+          "type": "GENERAL"
+        },
+        {
+          "key": "ConnectionStrings__appdb",
+          "value": "Host=${pg.HOSTNAME};Port=${pg.PORT};Username=${pg.USERNAME};Password=${pg.PASSWORD};Database=appdb;SSL Mode=Require",
+          "scope": "RUN_TIME",
+          "type": "GENERAL"
+        },
+        {
+          "key": "ConnectionStrings__cache",
+          "value": "${cache.HOSTNAME}:${cache.PORT},user=${cache.USERNAME},password=${cache.PASSWORD},ssl=true",
+          "scope": "RUN_TIME",
+          "type": "GENERAL"
+        },
+        {
+          "key": "HTTP_PORTS",
+          "value": "8080",
+          "scope": "RUN_TIME",
+          "type": "GENERAL"
+        },
+        {
+          "key": "API_KEY",
+          "value": "****",
+          "scope": "RUN_TIME",
+          "type": "SECRET"
+        }
+      ],
+      "http_port": 8080
+    }
+  ],
+  "workers": [
+    {
+      "name": "orders",
+      "image": {
+        "registry_type": "DOCR",
+        "repository": "orders",
+        "tag": "v1.2.0"
+      },
+      "instance_size_slug": "apps-s-1vcpu-0.5gb",
+      "instance_count": 1,
+      "envs": [
+        {
+          "key": "ConnectionStrings__appdb",
+          "value": "Host=${pg.HOSTNAME};Port=${pg.PORT};Username=${pg.USERNAME};Password=${pg.PASSWORD};Database=appdb;SSL Mode=Require",
+          "scope": "RUN_TIME",
+          "type": "GENERAL"
+        },
+        {
+          "key": "ConnectionStrings__cache",
+          "value": "${cache.HOSTNAME}:${cache.PORT},user=${cache.USERNAME},password=${cache.PASSWORD},ssl=true",
+          "scope": "RUN_TIME",
+          "type": "GENERAL"
+        }
+      ]
+    }
+  ],
+  "databases": [
+    {
+      "name": "pg",
+      "engine": "PG",
+      "version": "17",
+      "db_name": "appdb"
+    },
+    {
+      "name": "cache",
+      "engine": "VALKEY",
+      "production": true,
+      "cluster_name": "deployify-prod-cache"
+    }
+  ],
+  "ingress": {
+    "rules": [
+      {
+        "match": {
+          "path": {
+            "prefix": "/"
+          }
+        },
+        "component": {
+          "name": "api"
+        }
+      }
+    ]
+  }
+}

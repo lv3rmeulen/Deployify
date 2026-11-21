@@ -12,6 +12,7 @@ Deploy .NET Aspire AppHost projects to any platform — Nomad, Kubernetes (with 
 - For the Argo CD and Flux targets: `git` with access to the config repository, `kubectl`, and the controller installed in the cluster
 - For the OVHcloud target: `kubectl`, and OVHcloud API credentials (an API application or a service account)
 - For the IIS target: PowerShell 7 (or Windows PowerShell on Windows), and a Windows Server with IIS and the ASP.NET Core Hosting Bundle
+- For the DigitalOcean target: the `Deployify.Target.DigitalOcean` plugin and a DigitalOcean API token in `DIGITALOCEAN_ACCESS_TOKEN`
 
 ---
 
@@ -55,7 +56,7 @@ deployify ci --skip-validate
 | | |
 |---|---|
 | [Your first deployment](https://lv3rmeulen.github.io/Deployify/getting-started/first-deployment/) | Deploy the `hello-aspire` sample to Docker Compose in five minutes |
-| [Deployment targets](https://lv3rmeulen.github.io/Deployify/targets/compose/) | Compose, Kubernetes, Helm, Argo CD / Flux, OVHcloud, Nomad, Nomad + Consul, AWS ECS, Azure Container Apps, IIS |
+| [Deployment targets](https://lv3rmeulen.github.io/Deployify/targets/compose/) | Compose, Kubernetes, Helm, Argo CD / Flux, OVHcloud, Nomad, Nomad + Consul, AWS ECS, Azure Container Apps, IIS, and DigitalOcean App Platform as a plugin |
 | [Health-gated rollouts](https://lv3rmeulen.github.io/Deployify/guides/rollouts/) | Wave-by-wave deploys with automatic rollback |
 | [Parameters and secrets](https://lv3rmeulen.github.io/Deployify/guides/parameters-and-secrets/) | Aspire parameters, secret backends (Vault, Key Vault, SSM) |
 | [Running from `aspire deploy`](https://lv3rmeulen.github.io/Deployify/guides/aspire-deploy/) | `builder.AddDeployify()` in your AppHost |

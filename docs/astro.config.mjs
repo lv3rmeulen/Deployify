@@ -56,6 +56,7 @@ export default defineConfig({
 						'targets/nomad-consul',
 						'targets/aws-ecs',
 						'targets/azure-container-apps',
+						'targets/digitalocean',
 						'targets/iis',
 						'targets/plugins',
 					],
