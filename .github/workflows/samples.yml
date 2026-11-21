@@ -301,6 +301,158 @@ jobs:
         if: always()
         run: $DEPLOYIFY destroy --env prod --auto-approve --volumes
 
+  # Every push and PR: deploy hello-aspire to a kind cluster with `ci --auto-approve`, once with the
+  # Kubernetes target (kubectl) and once with the Helm target (one chart per service), call it,
+  # then destroy it. Images go through a registry the cluster's nodes pull from, as in a real cluster.
+  deploy-kind:
+    name: hello-aspire · ci on kind (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [Kubernetes, Helm]
+    defaults:
+      run:
+        working-directory: samples/hello-aspire/HelloAspire.AppHost
+    env:
+      DEPLOYIFY: dotnet ${{ github.workspace }}/src/Deployify/bin/Release/net10.0/deployify.dll
+      KIND_VERSION: v0.31.0
+      CLUSTER: deployify
+      # Pushed to from the runner as localhost:5001; the nodes reach the same registry as
+      # kind-registry:5000 (see "Create the kind cluster").
+      REGISTRY: localhost:5001
+      PREFIX: hello-aspire
+      TAG: ${{ github.sha }}
+      # The .NET SDK pushes to the registry over plain HTTP. Docker allows localhost as is.
+      DOTNET_CONTAINER_INSECURE_REGISTRIES: localhost:5001
+      # The sample's secret parameter. A test value: the sample protects nothing.
+      Parameters__admin_key: ci-admin-key
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Build Deployify
+        working-directory: .
+        run: dotnet build src/Deployify/Deployify.csproj -c Release
+
+      - name: Install kind
+        working-directory: ${{ runner.temp }}
+        run: |
+          base="https://github.com/kubernetes-sigs/kind/releases/download/$KIND_VERSION"
+          curl -fsSLo kind-linux-amd64 "$base/kind-linux-amd64"
+          curl -fsSLo kind-linux-amd64.sha256sum "$base/kind-linux-amd64.sha256sum"
+          sha256sum -c kind-linux-amd64.sha256sum
+          sudo install kind-linux-amd64 /usr/local/bin/kind
+          kind version
+          kubectl version --client
+          helm version --short
+
+      # kind's local registry recipe (https://kind.sigs.k8s.io/docs/user/local-registry/). Node
+      # images from kind v0.27 on read /etc/containerd/certs.d, so no containerd patch is needed.
+      - name: Create the kind cluster with a local registry
+        run: |
+          docker run -d --restart=always -p 127.0.0.1:5001:5000 --network bridge --name kind-registry registry:3
+          kind create cluster --name "$CLUSTER" --wait 120s
+          for node in $(kind get nodes --name "$CLUSTER"); do
+            docker exec "$node" mkdir -p /etc/containerd/certs.d/localhost:5001
+            printf '[host."http://kind-registry:5000"]\n' \
+              | docker exec -i "$node" cp /dev/stdin /etc/containerd/certs.d/localhost:5001/hosts.toml
+          done
+          docker network connect kind kind-registry
+          kubectl cluster-info --context "kind-$CLUSTER"
+
+      - name: Point the sample at the cluster with the ${{ matrix.target }} target
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          jq --arg target "$TARGET" --arg registry "$REGISTRY" --arg prefix "$PREFIX" --arg context "kind-$CLUSTER" '
+            .Environments.local.Target = $target
+            | .Environments.local.ContainerRegistry = $registry
+            | .Environments.local.TargetConfig = {
+                kubernetes: { Context: $context, NamespacePrefix: $prefix }
+              }' deployify-state.json > deployify-state.tmp
+          mv deployify-state.tmp deployify-state.json
+          cat deployify-state.json
+
+      - name: deployify ci --auto-approve
+        run: $DEPLOYIFY ci --auto-approve --image-tag "$TAG" --health-timeout 300
+
+      - name: The built images run pinned by digest
+        run: |
+          for service in api web; do
+            image=$(kubectl get deployment "$service" -n "$PREFIX-$service" \
+              -o jsonpath='{.spec.template.spec.containers[0].image}')
+            echo "$service runs $image"
+            case "$image" in
+              "$REGISTRY/$service@sha256:"*) ;;
+              *) echo "::error::$service is not running $REGISTRY/$service by digest: '$image'"; exit 1 ;;
+            esac
+          done
+
+      # The api answers once Redis and Postgres both do; "logged" comes from Postgres.
+      - name: Smoke test
+        run: |
+          forward() { # service local-port
+            port=$(kubectl get service "$1" -n "$PREFIX-$1" -o jsonpath='{.spec.ports[0].port}')
+            kubectl port-forward -n "$PREFIX-$1" "service/$1" "$2:$port" > "$RUNNER_TEMP/forward-$1.log" 2>&1 &
+          }
+          forward api 18080
+          forward web 18085
+
+          for i in $(seq 1 30); do
+            if body=$(curl -fsS http://localhost:18080/); then
+              echo "$body"
+              echo "$body" | grep -q '"logged"' && break
+            fi
+            [ "$i" = 30 ] && { echo "::error::The api did not answer through kubectl port-forward"; cat "$RUNNER_TEMP"/forward-api.log; exit 1; }
+            sleep 2
+          done
+
+          curl -fsS http://localhost:18085/ | grep -q 'deployed by Deployify' \
+            || { echo "::error::The static site did not answer"; cat "$RUNNER_TEMP"/forward-web.log; exit 1; }
+
+          without=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:18080/reset)
+          with=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "X-Admin-Key: $Parameters__admin_key" http://localhost:18080/reset)
+          echo "POST /reset without the key: $without, with it: $with"
+          [ "$without" = 401 ] && [ "$with" = 204 ] || { echo "::error::Expected 401 without the admin key and 204 with it"; exit 1; }
+
+      - name: Cluster state
+        if: failure()
+        run: |
+          kubectl get all,pvc,secrets,configmaps -A -l app.kubernetes.io/managed-by=deployify || true
+          kubectl get events -A --sort-by=.lastTimestamp | tail -50 || true
+          for ns in $(kubectl get ns -o name | grep "/$PREFIX-" | cut -d/ -f2); do
+            kubectl describe pods -n "$ns" || true
+            kubectl logs -n "$ns" --all-containers --tail=100 -l app || true
+          done
+          [ "${{ matrix.target }}" = Helm ] && helm list -A || true
+
+      - name: Status
+        if: always()
+        run: $DEPLOYIFY status
+
+      - name: Destroy
+        if: always()
+        run: $DEPLOYIFY destroy --auto-approve --volumes
+
+      # Destroy leaves only the "<prefix>-system" namespace with the generated parameter values.
+      - name: Destroy removed every service
+        run: |
+          left=$(kubectl get ns -o name | cut -d/ -f2 | grep "^$PREFIX-" | grep -vx "$PREFIX-system" || true)
+          [ -z "$left" ] || { echo "::error::Namespaces left after destroy: $left"; exit 1; }
+          if [ "${{ matrix.target }}" = Helm ]; then
+            releases=$(helm list -A -q)
+            [ -z "$releases" ] || { echo "::error::Helm releases left after destroy: $releases"; exit 1; }
+          fi
+
   # Nightly (or on demand): really deploy to Docker Compose on the runner, call it, tear it down.
   deploy-compose:
     name: hello-aspire · deploy to Docker Compose

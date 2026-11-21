@@ -169,10 +169,17 @@ public sealed class KubectlRunner(KubernetesTargetConfig config, ILogger logger,
         return message.Length == 0 ? "kubectl diff failed without an error message." : message.Split('\n')[0].Trim();
     }
 
-    /// <summary>Validates a YAML file using dry-run.</summary>
-    public async Task<IReadOnlyList<string>> ValidateFileAsync(string yamlPath, CancellationToken ct = default)
+    /// <summary>
+    /// Validates a YAML file with a server-side dry run. When the file's namespace doesn't exist
+    /// yet (a first deploy: apply creates it before the rest), the server would reject every
+    /// object in it, so <paramref name="namespaceExists"/> false dry-runs on the client instead,
+    /// still checked against the cluster's schema.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> ValidateFileAsync(string yamlPath, CancellationToken ct = default,
+        bool namespaceExists = true)
     {
-        var result = await RunAsync(ct, "apply", "-f", yamlPath, "--dry-run=server");
+        var result = await RunAsync(ct, "apply", "-f", yamlPath,
+            namespaceExists ? "--dry-run=server" : "--dry-run=client", "--validate=strict");
         if (result.Ok)
         {
             return [];

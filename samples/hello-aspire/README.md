@@ -59,5 +59,7 @@ doesn't. The AppHost sets `POSTGRES_DB` so the postgres image creates the databa
 CI builds this sample and runs `deployify generate` on every pull request. It also publishes the
 `api` and `web` images to a throwaway registry and checks that the generated artifacts pin them by
 digest. It then promotes them with `crane` to a second path on that registry and deploys that
-copy with `--require-digest`, checking the digests didn't change. Nightly, it deploys the sample
-to Docker Compose (`.github/workflows/samples.yml`).
+copy with `--require-digest`, checking the digests didn't change. On every pull request it also
+deploys the sample to a [kind](https://kind.sigs.k8s.io/) cluster with `deployify ci
+--auto-approve`, once with the Kubernetes target and once with the Helm target, calls it and
+destroys it. Nightly, it deploys the sample to Docker Compose (`.github/workflows/samples.yml`).

@@ -246,11 +246,19 @@ public sealed class KubernetesDeploymentTarget(
         if (await KubectlAvailableAsync(ct))
         {
             var kubectl = Kubectl(kubernetesConfig);
+            var existing = await kubectl.GetNamespacesWithPrefixAsync(kubernetesConfig.NamespacePrefix, ct);
             foreach (var svc in services)
             {
+                var namespaceExists = existing.Contains(svc.Namespace, StringComparer.OrdinalIgnoreCase);
                 foreach (var file in await _generator.WriteYamlAsync(svc, outputDirectory, ct))
                 {
-                    results.Add(new ValidationResult { ArtifactName = file, Errors = await kubectl.ValidateFileAsync(file, ct) });
+                    // The Namespace itself is cluster-scoped: the server can always dry-run it.
+                    var serverSide = namespaceExists || Path.GetFileName(file) == "namespace.yaml";
+                    results.Add(new ValidationResult
+                    {
+                        ArtifactName = file,
+                        Errors = await kubectl.ValidateFileAsync(file, ct, namespaceExists: serverSide)
+                    });
                 }
             }
         }

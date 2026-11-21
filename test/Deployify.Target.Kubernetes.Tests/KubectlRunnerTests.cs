@@ -57,6 +57,19 @@ public sealed class KubectlRunnerTests
         ex.Message.ShouldContain("Unable to connect to the server");
     }
 
+    [Theory]
+    [InlineData(true, "--dry-run=server")]
+    [InlineData(false, "--dry-run=client")]
+    public async Task Validate_DryRunsOnTheClient_WhenTheNamespaceIsNotThereYet(bool namespaceExists, string dryRun)
+    {
+        var fake = new FakeProcessRunner { Default = new ProcessResult(0, "", "") };
+
+        var errors = await Kubectl(fake).ValidateFileAsync("deployment.yaml", Ct, namespaceExists);
+
+        errors.ShouldBeEmpty();
+        fake.Calls.Single().Args.ShouldBe(["apply", "-f", "deployment.yaml", dryRun, "--validate=strict"]);
+    }
+
     [Fact]
     public async Task SecretRead_IsNotLogged()
     {
