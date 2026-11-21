@@ -114,11 +114,24 @@ jobs:
           gh label create aspire-preview --color FBCA04 --description "Breaks on the next Aspire release" --force
           issue=$(gh issue list --label aspire-preview --state open --json number --jq '.[0].number // empty')
           if [ "$RESULT" = failure ]; then
-            body="Deployify fails against Aspire ${VERSION:-daily} (pinned: $PINNED): $RUN_URL"
+            v=${VERSION:-daily}
+            # The marker records which Aspire version a post was about. A failure is only reported
+            # again for a different release or preview: daily builds of the same preview
+            # (14.0.0-preview.1.26473.1, 14.0.0-preview.1.26520.4) count as one.
+            release() { sed -E 's/^([0-9]+\.[0-9]+\.[0-9]+-[A-Za-z]+\.[0-9]+)\..*/\1/' <<<"$1"; }
+            body="Deployify fails against Aspire $v (pinned: $PINNED): $RUN_URL
+
+          <!-- aspire-version: $v -->"
             if [ -z "$issue" ]; then
               gh issue create --label aspire-preview --title "The next Aspire release breaks Deployify" --body "$body"
             else
-              gh issue comment "$issue" --body "Still failing. $body"
+              reported=$(gh issue view "$issue" --json body,comments \
+                --jq '[.body, .comments[].body][] | capture("<!-- aspire-version: (?<v>[^ ]+) -->") | .v' | tail -n1)
+              if [ "$(release "$reported")" != "$(release "$v")" ]; then
+                gh issue comment "$issue" --body "Still failing. $body"
+              else
+                echo "Already reported for Aspire $(release "$v") (last: $reported): #$issue"
+              fi
             fi
           elif [ "$RESULT" = success ] && [ -n "$issue" ]; then
             gh issue close "$issue" --comment "Passes again against Aspire $VERSION: $RUN_URL"
