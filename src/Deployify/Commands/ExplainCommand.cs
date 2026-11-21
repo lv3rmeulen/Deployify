@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.CommandLine;
 using System.Linq;
+using Deployify.Commands.Json;
 using Spectre.Console;
 
 namespace Deployify.Commands;
@@ -21,7 +23,9 @@ public static class ExplainCommand
         cmd.Options.Add(GlobalOptions.AllowUnverified);
         cmd.Options.Add(serviceOpt);
 
-        cmd.SetAction(async (parseResult, ct) =>
+        cmd.Options.Add(GlobalOptions.Output);
+
+        cmd.SetAction((parseResult, ct) => JsonOutput.RunAsync(parseResult, "explain", async json =>
         {
             var projectPath = parseResult.GetValue(GlobalOptions.ProjectPath)!;
             var envOverride = parseResult.GetValue(GlobalOptions.Environment);
@@ -36,10 +40,11 @@ public static class ExplainCommand
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {ex.Message}");
+                ConsoleDeploymentReporter.Instance.Error(ex.Message);
                 return 1;
             }
 
+            json?.Use(resolved);
             var (_, config, envName, _, target, _) = resolved;
             AnsiConsole.MarkupLineInterpolated($"[dim]Environment: [cyan]{envName}[/] Target: [cyan]{target.DisplayName}[/][/]\n");
 
@@ -58,6 +63,11 @@ public static class ExplainCommand
                     .. explanations
                         .Where(e => e.Name.Equals(serviceFilter, StringComparison.OrdinalIgnoreCase))
                 ];
+            }
+
+            if (json is not null)
+            {
+                json.Result = ToJson(explanations);
             }
 
             if (!explanations.Any())
@@ -98,8 +108,16 @@ public static class ExplainCommand
             }
 
             return 0;
-        });
+        }));
 
         return cmd;
     }
+
+    /// <summary>
+    /// The <c>result</c> of <c>explain --output json</c>. Environment variables stay out, as in
+    /// the text output: they can hold resolved secrets.
+    /// </summary>
+    internal static JsonExplain ToJson(IEnumerable<ServiceExplanation> explanations) => new(
+        [.. explanations.Select(e => new JsonService(e.Name, e.Image, e.ImageTag, e.Count,
+            e.Ports, e.Dependencies, new SortedDictionary<string, string>(e.AdditionalInfo, StringComparer.Ordinal)))]);
 }

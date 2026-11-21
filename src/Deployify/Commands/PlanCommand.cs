@@ -2,6 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.CommandLine;
 using System.IO;
+using System.Linq;
+using Deployify.Commands.Json;
+using Deployify.Core.Deployments;
 using Deployify.Core.Models;
 using Spectre.Console;
 
@@ -18,7 +21,9 @@ public static class PlanCommand
         cmd.Options.Add(GlobalOptions.AllowUnverified);
         cmd.Options.Add(GlobalOptions.Strict);
 
-        cmd.SetAction(async (parseResult, ct) =>
+        cmd.Options.Add(GlobalOptions.Output);
+
+        cmd.SetAction((parseResult, ct) => JsonOutput.RunAsync(parseResult, "plan", async json =>
         {
             var projectPath = parseResult.GetValue(GlobalOptions.ProjectPath)!;
             var envOverride = parseResult.GetValue(GlobalOptions.Environment);
@@ -33,10 +38,11 @@ public static class PlanCommand
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {ex.Message}");
+                ConsoleDeploymentReporter.Instance.Error(ex.Message);
                 return 1;
             }
 
+            json?.Use(resolved);
             var (_, config, envName, targetType, target, directory) = resolved;
             var outputDir = Path.Combine(directory, config.OutputPath);
 
@@ -60,7 +66,7 @@ public static class PlanCommand
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] Plan failed: {ex.Message}");
+                ConsoleDeploymentReporter.Instance.Error($"Plan failed: {ex.Message}");
                 return 1;
             }
 
@@ -79,11 +85,38 @@ public static class PlanCommand
             }
 
             // Plan is the pre-flight check: fail when apply would refuse.
-            return PlanOutput.AuditBlocks(resolved, strict) ? 1 : 0;
-        });
+            var blocked = PlanOutput.AuditBlocks(resolved, strict);
+            if (json is not null)
+            {
+                json.Result = ToJson(plan, resolved, strict, blocked);
+            }
+
+            return blocked ? 1 : 0;
+        }));
 
         return cmd;
     }
+
+    /// <summary>The <c>result</c> of <c>plan --output json</c>.</summary>
+    internal static JsonPlan ToJson(PlanResult plan, ResolvedContext resolved, bool strict, bool blocked) => new(
+        Create: plan.ToCreate,
+        Update: plan.ToUpdate,
+        Delete: plan.ToDelete,
+        Unchanged: plan.Unchanged,
+        Unknown: [.. plan.Unknown.Select(u => new JsonPlanUnknown(u.ServiceName, u.Reason))],
+        Skipped: [.. plan.Skipped.Select(s => new JsonSkippedResource(s.Name, s.Type, s.Reason))],
+        UpToDate: plan.IsUpToDate,
+        // Compose removes a project's orphaned containers on every 'up' (see StateCli.PrintLeftInPlace).
+        DeletesOnApply: resolved.Config.Prune || resolved.TargetType == DeploymentTargetType.Compose,
+        Blocked: blocked,
+        BlockedReason: blocked ? resolved.ManifestAudit.BlockedSummary(strict) : null,
+        ManifestFindings: [.. resolved.ManifestAudit.Diagnostics.Select(d => new JsonManifestFinding(
+            d.Resource, d.Type, d.Severity switch
+            {
+                ManifestDiagnosticSeverity.Error => JsonSeverity.Error,
+                ManifestDiagnosticSeverity.Warning => JsonSeverity.Warning,
+                _ => JsonSeverity.Info
+            }, d.Message))]);
 
     private static void PrintSection(IReadOnlyList<string> items, string heading, Color color)
     {

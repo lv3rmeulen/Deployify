@@ -41,7 +41,7 @@ internal static class PlanOutput
             return false;
         }
 
-        AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {resolved.ManifestAudit.BlockedSummary(strict)}");
+        ConsoleDeploymentReporter.Instance.Error(resolved.ManifestAudit.BlockedSummary(strict));
         return true;
     }
 

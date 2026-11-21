@@ -52,6 +52,19 @@ deployify diff
 deployify diff --env prod
 ```
 
+`diff` lists each service with how it differs, then what changed where the target says: a
+single value on one line (`api instance_count: 1 → 2`), or for Kubernetes and Helm the whole
+`kubectl diff` or `helm diff` output under the service, with added lines in green and removed
+lines in red. Secret values Deployify resolved during the run are shown as `****`; Kubernetes
+Secrets are hidden by `kubectl diff` and helm-diff themselves. The same values are in
+`--output json`.
+
+A Kubernetes or Helm diff can be long. `--summary` prints only the table and the counts:
+
+```bash
+deployify diff --env prod --summary
+```
+
 ## `validate`
 
 ```bash

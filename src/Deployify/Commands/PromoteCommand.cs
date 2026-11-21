@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.CommandLine;
 using System.Linq;
+using Deployify.Commands.Json;
 using Deployify.Core.Deployments;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Services;
@@ -57,8 +59,9 @@ public static class PromoteCommand
         cmd.Options.Add(imageTagOpt);
         cmd.Options.Add(copyWithOpt);
         cmd.Options.Add(GlobalOptions.DryRun);
+        cmd.Options.Add(GlobalOptions.Output);
 
-        cmd.SetAction(async (parseResult, ct) =>
+        cmd.SetAction((parseResult, ct) => JsonOutput.RunAsync(parseResult, "promote", async json =>
         {
             var projectPath = parseResult.GetValue(GlobalOptions.ProjectPath)!;
             var from = parseResult.GetValue(fromOpt)!;
@@ -71,7 +74,7 @@ public static class PromoteCommand
 
             if (string.Equals(from, to, StringComparison.Ordinal))
             {
-                AnsiConsole.MarkupLine("[red]✗[/] --from and --to name the same environment.");
+                ConsoleDeploymentReporter.Instance.Error("--from and --to name the same environment.");
                 return 1;
             }
 
@@ -85,11 +88,12 @@ public static class PromoteCommand
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {ex.Message}");
+                ConsoleDeploymentReporter.Instance.Error(ex.Message);
                 return 1;
             }
 
             await using var _ = resolved;
+            json?.Use(resolved);
             var target = resolved.Config;
 
             Core.Models.EnvironmentConfig source;
@@ -103,7 +107,7 @@ public static class PromoteCommand
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] Could not read the published images of {from}: {ex.Message}");
+                ConsoleDeploymentReporter.Instance.Error($"Could not read the published images of {from}: {ex.Message}");
                 return 1;
             }
 
@@ -121,6 +125,17 @@ public static class PromoteCommand
             }
 
             var entries = ImagePromotion.Plan(manifest, source, from, target);
+            var copied = new HashSet<string>(StringComparer.Ordinal);
+            string? copyToolName = null;
+            void SetResult(bool promoted, int recorded)
+            {
+                if (json is not null)
+                {
+                    json.Result = ToJson(from, to, tag, dryRun, promoted, recorded, copyToolName, entries, copied);
+                }
+            }
+
+            SetResult(promoted: false, recorded: 0);
             if (entries.Count == 0)
             {
                 AnsiConsole.MarkupLine("[yellow]![/] The AppHost has no projects or Dockerfile builds; there is nothing to promote.");
@@ -148,8 +163,8 @@ public static class PromoteCommand
             if (problems > 0)
             {
                 // All or nothing: a partly promoted environment would deploy a mix of builds.
-                AnsiConsole.MarkupLineInterpolated(
-                    $"\n[red]✗[/] {problems} image(s) can't be promoted, so nothing was promoted.");
+                AnsiConsole.WriteLine();
+                ConsoleDeploymentReporter.Instance.Error($"{problems} image(s) can't be promoted, so nothing was promoted.");
                 return 1;
             }
 
@@ -164,6 +179,8 @@ public static class PromoteCommand
                 }
 
                 tool = found;
+                copyToolName = tool.ToString().ToLowerInvariant();
+                SetResult(promoted: false, recorded: 0);
                 AnsiConsole.MarkupLineInterpolated(
                     $"\n[dim]{copies.Count} image(s) are copied to {to}'s registry with {tool.ToString().ToLowerInvariant()}.[/]");
             }
@@ -188,11 +205,13 @@ public static class PromoteCommand
 
                     await ConsoleStatus.RunAsync($"Copying {e.Service}...",
                         () => copier.CopyAsync(tool, e.SourceRepository, e.Digest!, e.TargetRepository, e.TargetTag, ct));
+                    copied.Add(e.Service);
+                    SetResult(promoted: false, recorded: 0);
                     AnsiConsole.MarkupLineInterpolated($"  [green]✓[/] {e.Service}: copied to {e.TargetRepository}:{e.TargetTag}");
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {e.Service}: {ex.Message}");
+                    ConsoleDeploymentReporter.Instance.Error($"{e.Service}: {ex.Message}");
                     AnsiConsole.MarkupLine("Nothing was recorded. Fix the problem and promote again; images already copied are skipped.");
                     return 1;
                 }
@@ -207,21 +226,29 @@ public static class PromoteCommand
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    AnsiConsole.MarkupLineInterpolated(
-                        $"[red]✗[/] Could not record the digests in {to}'s state ({resolved.State.Backend.Description}): {ex.Message}");
+                    ConsoleDeploymentReporter.Instance.Error(
+                        $"Could not record the digests in {to}'s state ({resolved.State.Backend.Description}): {ex.Message}");
                     return 1;
                 }
             }
 
+            SetResult(promoted: true, recorded);
             AnsiConsole.MarkupLineInterpolated(
                 $"\n[green]✓[/] Promoted {entries.Count} image(s) to [cyan]{to}[/] ({recorded} newly recorded).");
             AnsiConsole.MarkupLineInterpolated(
                 $"[dim]Deploy them with: deployify apply --env {to} --image-tag {tag} --require-digest[/]");
             return 0;
-        });
+        }));
 
         return cmd;
     }
+
+    /// <summary>The <c>result</c> of <c>promote --output json</c>.</summary>
+    internal static JsonPromotion ToJson(string from, string to, string tag, bool dryRun, bool promoted, int recorded,
+        string? copyTool, IEnumerable<ImagePromotionEntry> entries, IReadOnlySet<string> copied) => new(
+        from, to, tag, dryRun, promoted, recorded, copyTool,
+        [.. entries.Select(e => new JsonPromotedImage(e.Service, e.TargetRepository, e.TargetTag, e.Digest,
+            e.SourceRepository, e.SourceTag, e.NeedsCopy, e.AlreadyPromoted, copied.Contains(e.Service), e.Problem))]);
 
     /// <summary>The copy tool asked for (when installed), else the first one installed. Null after saying why.</summary>
     private static async System.Threading.Tasks.Task<ImageCopyTool?> ResolveCopyToolAsync(
@@ -234,8 +261,8 @@ public static class PromoteCommand
                 return tool;
             }
 
-            AnsiConsole.MarkupLineInterpolated(
-                $"[red]✗[/] --copy-with {tool.ToString().ToLowerInvariant()} is set, but it isn't installed or doesn't run.");
+            ConsoleDeploymentReporter.Instance.Error(
+                $"--copy-with {tool.ToString().ToLowerInvariant()} is set, but it isn't installed or doesn't run.");
             return null;
         }
 
@@ -244,7 +271,7 @@ public static class PromoteCommand
             return detected;
         }
 
-        AnsiConsole.MarkupLine("[red]✗[/] The target uses another registry, so the images have to be copied there, " +
+        ConsoleDeploymentReporter.Instance.Error("The target uses another registry, so the images have to be copied there, " +
             "but none of crane, skopeo or docker buildx is installed. Install one of them; they sign in with your " +
             "docker login credentials.");
         return null;

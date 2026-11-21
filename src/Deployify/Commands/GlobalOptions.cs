@@ -64,6 +64,18 @@ public static class GlobalOptions
         DefaultValueFactory = _ => false
     };
 
+    /// <summary>
+    /// <c>--output json</c>: one JSON document on stdout, in the schema documented under
+    /// reference/json-output, and the human-readable output on stderr instead.
+    /// See <see cref="Json.JsonOutput"/>.
+    /// </summary>
+    public static readonly Option<OutputFormat> Output = new("--output", "-o")
+    {
+        Description = "Output format: text | json. With json, stdout gets one JSON document (see the JSON output " +
+                      "reference) and the human-readable output goes to stderr.",
+        DefaultValueFactory = _ => OutputFormat.Text
+    };
+
     public static readonly Option<VerbosityLevel> Verbosity = new("--verbosity", "-v")
     {
         Description = "Log verbosity: quiet | normal | verbose",
@@ -76,4 +88,14 @@ public static class GlobalOptions
         Normal,
         Verbose
     }
+}
+
+/// <summary>What <see cref="GlobalOptions.Output"/> accepts.</summary>
+public enum OutputFormat
+{
+    /// <summary>Human-readable output on stdout (the default).</summary>
+    Text,
+
+    /// <summary>One JSON document on stdout; human-readable output on stderr.</summary>
+    Json
 }

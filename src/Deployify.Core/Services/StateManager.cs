@@ -1,5 +1,7 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -22,6 +24,11 @@ public sealed class StateManager(SecretRegistry? secrets = null) : IStateManager
 
     private static readonly JsonSerializerOptions s_jsonOptions = new()
     {
+        // Keys are case-insensitive ("target" and "Target" are the same key), as the stability
+        // policy promises. A file that sets the same key twice in different case is refused
+        // instead of one of them winning silently.
+        PropertyNameCaseInsensitive = true,
+        AllowDuplicateProperties = false,
         WriteIndented = true,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         Converters = { new JsonStringEnumConverter() }
@@ -49,7 +56,20 @@ public sealed class StateManager(SecretRegistry? secrets = null) : IStateManager
     public static DeployifyStateFile Read(byte[] data, string path)
     {
         var root = StateFormat.ParseObject(data, path);
-        var version = StateFormat.ReadVersion(root, nameof(DeployifyStateFile.FormatVersion), StateFormat.StateFile, path);
+
+        // The version key is case-insensitive like every other key: "formatVersion": 2 must be
+        // refused as a newer format, not read as a file without a version.
+        var versionKeys = root.Select(p => p.Key)
+            .Where(k => string.Equals(k, nameof(DeployifyStateFile.FormatVersion), StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (versionKeys.Count > 1)
+        {
+            throw new StateFormatException(
+                $"{path} sets {nameof(DeployifyStateFile.FormatVersion)} more than once ({string.Join(", ", versionKeys)}); keep one.");
+        }
+
+        var versionKey = versionKeys.SingleOrDefault() ?? nameof(DeployifyStateFile.FormatVersion);
+        var version = StateFormat.ReadVersion(root, versionKey, StateFormat.StateFile, path);
 
         // Upgrades, one version at a time. 0 -> 1 only added the version field.
         if (version < 1)
@@ -57,9 +77,25 @@ public sealed class StateManager(SecretRegistry? secrets = null) : IStateManager
             version = 1;
         }
 
+        root.Remove(versionKey);
         root[nameof(DeployifyStateFile.FormatVersion)] = version;
-        var file = root.Deserialize<DeployifyStateFile>(s_jsonOptions)
+        DeployifyStateFile file;
+        try
+        {
+            file = root.Deserialize<DeployifyStateFile>(s_jsonOptions)
                    ?? throw new InvalidDataException("Failed to deserialize state file.");
+        }
+        catch (JsonException ex)
+        {
+            // A duplicate key, or a value of the wrong type. Path is where in the file.
+            throw new StateFormatException($"{path} can't be read{(ex.Path is { } at ? $" at {at}" : "")}: {ex.Message}", ex);
+        }
+        catch (ArgumentException ex)
+        {
+            // Two TargetConfig sections whose names differ only in case.
+            throw new StateFormatException($"{path} can't be read: {ex.Message}", ex);
+        }
+
         file.FormatVersion = StateFormat.StateFile;
         return file;
     }

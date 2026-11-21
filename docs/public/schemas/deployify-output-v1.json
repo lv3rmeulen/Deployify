@@ -1,0 +1,791 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lv3rmeulen.github.io/Deployify/schemas/deployify-output-v1.json",
+  "title": "Deployify --output json, schema version 1",
+  "description": "The document plan, diff, status, explain and promote write to stdout with --output json. Within schema version 1, properties are only added: consumers must ignore properties they don't know.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "command",
+    "success",
+    "exitCode",
+    "error",
+    "environment",
+    "target",
+    "diagnostics",
+    "result"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1,
+      "description": "Raised only for a breaking change, in a major release."
+    },
+    "command": {
+      "enum": [
+        "plan",
+        "diff",
+        "status",
+        "explain",
+        "promote"
+      ]
+    },
+    "success": {
+      "type": "boolean",
+      "description": "True exactly when exitCode is 0."
+    },
+    "exitCode": {
+      "type": "integer",
+      "description": "The process exit code."
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Why the command failed: the first error in diagnostics. Null when success is true."
+    },
+    "environment": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The environment the command ran against (the --to environment for promote). Null when it failed before resolving one."
+    },
+    "target": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/target"
+        }
+      ],
+      "description": "The environment's deployment target. Null when the command failed before resolving one."
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/diagnostic"
+      },
+      "description": "The info, warning and error messages the command reported, in order. Log lines aren't included."
+    },
+    "result": {
+      "description": "The command's own document, or null when it failed before producing one. Its shape depends on command."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "plan"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/$defs/plan"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "diff"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/$defs/diff"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "status"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/$defs/status"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "explain"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/$defs/explain"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "promote"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/$defs/promote"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "severity": {
+      "enum": [
+        "info",
+        "warning",
+        "error"
+      ]
+    },
+    "nullableString": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "names": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "target": {
+      "type": "object",
+      "required": [
+        "id",
+        "name"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The target ID as in the state file (Nomad, Kubernetes, …) or a plugin target's ID."
+        },
+        "name": {
+          "type": "string",
+          "description": "The target's display name."
+        }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "required": [
+        "severity",
+        "message"
+      ],
+      "properties": {
+        "severity": {
+          "$ref": "#/$defs/severity"
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "required": [
+        "create",
+        "update",
+        "delete",
+        "unchanged",
+        "unknown",
+        "skipped",
+        "upToDate",
+        "deletesOnApply",
+        "blocked",
+        "blockedReason",
+        "manifestFindings"
+      ],
+      "properties": {
+        "create": {
+          "$ref": "#/$defs/names",
+          "description": "Services apply would create."
+        },
+        "update": {
+          "$ref": "#/$defs/names",
+          "description": "Services apply would update."
+        },
+        "delete": {
+          "$ref": "#/$defs/names",
+          "description": "Services on the target that are no longer in the manifest."
+        },
+        "unchanged": {
+          "$ref": "#/$defs/names",
+          "description": "Services known to match."
+        },
+        "unknown": {
+          "type": "array",
+          "description": "Services on the target that couldn't be compared. Never counted as unchanged.",
+          "items": {
+            "type": "object",
+            "required": [
+              "service",
+              "reason"
+            ],
+            "properties": {
+              "service": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "skipped": {
+          "type": "array",
+          "description": "Manifest resources Deployify won't deploy.",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "type",
+              "reason"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "description": "The manifest resource type, e.g. azure.bicep.v0."
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "upToDate": {
+          "type": "boolean",
+          "description": "True only when create, update, delete and unknown are all empty."
+        },
+        "deletesOnApply": {
+          "type": "boolean",
+          "description": "True when apply removes the services under delete without --prune: the environment sets Prune, or the target is Compose."
+        },
+        "blocked": {
+          "type": "boolean",
+          "description": "True when apply would refuse because of the manifest findings (an error, or a warning with --strict). The exit code is then 1."
+        },
+        "blockedReason": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "manifestFindings": {
+          "type": "array",
+          "description": "What the manifest audit found about resources that won't be deployed and parameters without a value.",
+          "items": {
+            "type": "object",
+            "required": [
+              "resource",
+              "type",
+              "severity",
+              "message"
+            ],
+            "properties": {
+              "resource": {
+                "type": "string"
+              },
+              "type": {
+                "$ref": "#/$defs/nullableString"
+              },
+              "severity": {
+                "$ref": "#/$defs/severity"
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "diff": {
+      "type": "object",
+      "required": [
+        "identical",
+        "entries"
+      ],
+      "properties": {
+        "identical": {
+          "type": "boolean",
+          "description": "True when every entry is unchanged."
+        },
+        "entries": {
+          "type": "array",
+          "description": "One entry per service, ordered added, removed, changed, unchanged, unknown.",
+          "items": {
+            "type": "object",
+            "required": [
+              "service",
+              "kind",
+              "field",
+              "oldValue",
+              "newValue",
+              "reason"
+            ],
+            "properties": {
+              "service": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "added",
+                  "removed",
+                  "changed",
+                  "unchanged",
+                  "unknown"
+                ]
+              },
+              "field": {
+                "$ref": "#/$defs/nullableString",
+                "description": "What changed, when the target says (manifest, release, image, …)."
+              },
+              "oldValue": {
+                "$ref": "#/$defs/nullableString",
+                "description": "What the target has now, as the target reports it. For Kubernetes and Helm, null; the whole diff is in newValue. Secret values resolved during the run are masked as ****."
+              },
+              "newValue": {
+                "$ref": "#/$defs/nullableString",
+                "description": "What apply would set, as the target reports it. For Kubernetes and Helm, the rendered diff (kubectl diff, helm diff). Secret values resolved during the run are masked as ****."
+              },
+              "reason": {
+                "$ref": "#/$defs/nullableString",
+                "description": "Why the service couldn't be compared; set when kind is unknown."
+              }
+            }
+          }
+        }
+      }
+    },
+    "explain": {
+      "type": "object",
+      "required": [
+        "services"
+      ],
+      "properties": {
+        "services": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "image",
+              "imageTag",
+              "count",
+              "ports",
+              "dependsOn",
+              "details"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "image": {
+                "$ref": "#/$defs/nullableString"
+              },
+              "imageTag": {
+                "$ref": "#/$defs/nullableString"
+              },
+              "count": {
+                "type": "integer",
+                "description": "Instances (replicas) to run."
+              },
+              "ports": {
+                "$ref": "#/$defs/names"
+              },
+              "dependsOn": {
+                "$ref": "#/$defs/names"
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Target-specific facts (namespace, job name, CPU, …). The keys differ per target and aren't covered by the stability policy."
+              }
+            }
+          }
+        }
+      }
+    },
+    "rolloutOperation": {
+      "type": "string",
+      "description": "rollout, destroy or prune. Open-ended: a minor release can add operations."
+    },
+    "rolloutState": {
+      "type": "string",
+      "description": "running, succeeded, failed, rollingBack, rolledBack or rollbackFailed. Open-ended: a minor release can add states."
+    },
+    "rolloutSummary": {
+      "type": "object",
+      "required": [
+        "id",
+        "operation",
+        "target",
+        "startedAt",
+        "finishedAt",
+        "state",
+        "reason"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "operation": {
+          "$ref": "#/$defs/rolloutOperation"
+        },
+        "target": {
+          "type": "string"
+        },
+        "startedAt": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "finishedAt": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/timestamp"
+            }
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/rolloutState"
+        },
+        "reason": {
+          "$ref": "#/$defs/nullableString"
+        }
+      }
+    },
+    "status": {
+      "type": "object",
+      "required": [
+        "rollouts",
+        "rollout"
+      ],
+      "description": "Without --rollout, rollouts lists the most recent ones (newest first, up to --limit) and rollout is null. With --rollout, rollout is that one and rollouts is null.",
+      "properties": {
+        "rollouts": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/rolloutSummary"
+              }
+            }
+          ]
+        },
+        "rollout": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/rollout"
+            }
+          ]
+        }
+      }
+    },
+    "promote": {
+      "type": "object",
+      "required": [
+        "from",
+        "to",
+        "imageTag",
+        "dryRun",
+        "promoted",
+        "recorded",
+        "copyTool",
+        "images"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "imageTag": {
+          "type": "string"
+        },
+        "dryRun": {
+          "type": "boolean"
+        },
+        "promoted": {
+          "type": "boolean",
+          "description": "True when the digests are recorded in the target environment. Always false with --dry-run."
+        },
+        "recorded": {
+          "type": "integer",
+          "description": "How many digests this run newly recorded."
+        },
+        "copyTool": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "crane, skopeo or docker when images had to be copied to the target's registry; null when none had to be."
+        },
+        "images": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "service",
+              "repository",
+              "tag",
+              "digest",
+              "sourceRepository",
+              "sourceTag",
+              "needsCopy",
+              "alreadyPromoted",
+              "copied",
+              "problem"
+            ],
+            "properties": {
+              "service": {
+                "type": "string"
+              },
+              "repository": {
+                "type": "string",
+                "description": "Where the target environment pulls the image from."
+              },
+              "tag": {
+                "type": "string"
+              },
+              "digest": {
+                "$ref": "#/$defs/nullableString"
+              },
+              "sourceRepository": {
+                "type": "string"
+              },
+              "sourceTag": {
+                "type": "string"
+              },
+              "needsCopy": {
+                "type": "boolean",
+                "description": "True when the target uses another repository, so the image is copied there first."
+              },
+              "alreadyPromoted": {
+                "type": "boolean"
+              },
+              "copied": {
+                "type": "boolean",
+                "description": "True when this run copied the image."
+              },
+              "problem": {
+                "$ref": "#/$defs/nullableString",
+                "description": "Why the image can't be promoted. Any problem means nothing is promoted."
+              }
+            }
+          }
+        }
+      }
+    },
+    "rollout": {
+      "type": "object",
+      "required": [
+        "id",
+        "operation",
+        "target",
+        "startedAt",
+        "finishedAt",
+        "state",
+        "reason",
+        "waves",
+        "services",
+        "events",
+        "journal"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "operation": {
+          "$ref": "#/$defs/rolloutOperation"
+        },
+        "target": {
+          "type": "string"
+        },
+        "startedAt": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "finishedAt": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/timestamp"
+            }
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/rolloutState"
+        },
+        "reason": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "waves": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/names"
+          },
+          "description": "The services in each wave, in deploy order."
+        },
+        "services": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "state",
+              "before",
+              "revision",
+              "restoredRevision",
+              "detail"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string",
+                "description": "pending, deploying, verifying, healthy, failed, revertedByPlatform, rolledBack, rollbackFailed, deleted or deleteFailed. Open-ended: a minor release can add states."
+              },
+              "before": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "existed",
+                      "revision"
+                    ],
+                    "properties": {
+                      "existed": {
+                        "type": "boolean"
+                      },
+                      "revision": {
+                        "$ref": "#/$defs/nullableString"
+                      }
+                    }
+                  }
+                ],
+                "description": "What ran before the rollout; null when it wasn't recorded."
+              },
+              "revision": {
+                "$ref": "#/$defs/nullableString"
+              },
+              "restoredRevision": {
+                "$ref": "#/$defs/nullableString"
+              },
+              "detail": {
+                "$ref": "#/$defs/nullableString"
+              }
+            }
+          }
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "at",
+              "service",
+              "message"
+            ],
+            "properties": {
+              "at": {
+                "$ref": "#/$defs/timestamp"
+              },
+              "service": {
+                "$ref": "#/$defs/nullableString"
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "journal": {
+          "type": "string",
+          "description": "Path of the rollout journal file."
+        }
+      }
+    }
+  }
+}

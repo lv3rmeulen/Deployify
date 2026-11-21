@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.CommandLine;
 using System.Linq;
+using Deployify.Commands.Json;
 using Deployify.Core.Rollouts;
 using Spectre.Console;
 
@@ -29,7 +31,9 @@ public static class StatusCommand
         cmd.Options.Add(rolloutId);
         cmd.Options.Add(limit);
 
-        cmd.SetAction(async (parseResult, ct) =>
+        cmd.Options.Add(GlobalOptions.Output);
+
+        cmd.SetAction((parseResult, ct) => JsonOutput.RunAsync(parseResult, "status", async json =>
         {
             ResolvedContext resolved;
             try
@@ -42,15 +46,22 @@ public static class StatusCommand
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {ex.Message}");
+                ConsoleDeploymentReporter.Instance.Error(ex.Message);
                 return 1;
             }
 
+            json?.Use(resolved);
             var rollouts = await RolloutJournal.ListAsync(resolved.Directory, resolved.EnvName, ct);
             var wanted = parseResult.GetValue(rolloutId);
 
             if (wanted is null)
             {
+                var shown = rollouts.Take(Math.Max(1, parseResult.GetValue(limit))).Select(r => r.Record).ToList();
+                if (json is not null)
+                {
+                    json.Result = new JsonStatus([.. shown.Select(ToJsonSummary)], null);
+                }
+
                 if (rollouts.Count == 0)
                 {
                     AnsiConsole.MarkupLineInterpolated($"No rollouts recorded for [cyan]{resolved.EnvName}[/].");
@@ -58,7 +69,7 @@ public static class StatusCommand
                 }
 
                 var list = new Table().AddColumns("Rollout", "Operation", "Started", "State", "Reason");
-                foreach (var (_, r) in rollouts.Take(Math.Max(1, parseResult.GetValue(limit))))
+                foreach (var r in shown)
                 {
                     list.AddRow(
                         Markup.Escape(r.Id),
@@ -75,11 +86,16 @@ public static class StatusCommand
             var match = rollouts.FirstOrDefault(r => r.Record.Id == wanted);
             if (match.Record is null)
             {
-                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] Rollout '{wanted}' not found for [cyan]{resolved.EnvName}[/].");
+                ConsoleDeploymentReporter.Instance.Error($"Rollout '{wanted}' not found for {resolved.EnvName}.");
                 return 1;
             }
 
             var record = match.Record;
+            if (json is not null)
+            {
+                json.Result = new JsonStatus(null, ToJson(record, match.Path));
+            }
+
             var operation = record.Operation.ToString().ToLowerInvariant();
             AnsiConsole.MarkupLineInterpolated($"[bold]{record.Id}[/] ({operation}) on {record.Target}, started {record.StartedAt.ToLocalTime():g}");
             AnsiConsole.MarkupLine($"State: {StateMarkup(record.State)}" +
@@ -105,10 +121,27 @@ public static class StatusCommand
 
             AnsiConsole.MarkupLineInterpolated($"[dim]Journal: {match.Path}[/]");
             return 0;
-        });
+        }));
 
         return cmd;
     }
+
+    internal static JsonRolloutSummary ToJsonSummary(RolloutRecord r) => new(
+        r.Id, JsonOutput.Name(r.Operation), r.Target, r.StartedAt, r.FinishedAt, JsonOutput.Name(r.State), r.Reason);
+
+    /// <summary>The rollout <c>status --rollout ID --output json</c> shows, with all of its events.</summary>
+    internal static JsonRollout ToJson(RolloutRecord r, string journalPath) => new(
+        r.Id, JsonOutput.Name(r.Operation), r.Target, r.StartedAt, r.FinishedAt, JsonOutput.Name(r.State), r.Reason,
+        [.. r.Waves.Select(w => (IReadOnlyList<string>)[.. w])],
+        [.. r.Services.Select(s => new JsonRolloutService(
+            s.Name,
+            JsonOutput.Name(s.State),
+            s.Snapshot is null ? null : new JsonServiceSnapshot(s.Snapshot.Existed, s.Snapshot.Revision),
+            s.Revision,
+            s.RestoredRevision,
+            s.Detail))],
+        [.. r.Events.Select(e => new JsonRolloutEvent(e.At, e.Service, e.Message))],
+        journalPath);
 
     private static string StateMarkup(RolloutState state) => state switch
     {

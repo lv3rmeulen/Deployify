@@ -68,6 +68,7 @@ export default defineConfig({
 					label: 'Reference',
 					items: [
 						'reference/state-file',
+						'reference/json-output',
 						'reference/stability',
 						'reference/upgrading-from-alphas',
 						'reference/known-limitations',

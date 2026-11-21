@@ -27,4 +27,5 @@ deployify promote [options]
 | `--image-tag`, `-i` | Tag to promote, for example the commit SHA. Defaults to the source environment's configured tag. |  |
 | `--copy-with` | Tool that copies images when the target uses another registry: crane \| skopeo \| docker. Defaults to the first one installed, in that order. |  |
 | `--dry-run` | Simulate the operation without making changes. | `false` |
+| `--output`, `-o` | Output format: text \| json. With json, stdout gets one JSON document (see the JSON output reference) and the human-readable output goes to stderr. | `Text` |
 

@@ -100,4 +100,32 @@ public static class SecretLeakScanner
 
         ThrowIfAny(leaks);
     }
+
+    /// <summary>
+    /// <paramref name="text"/> with every secret in <paramref name="secrets"/> replaced by
+    /// <see cref="SensitiveValue.Mask"/>, for text that is shown or handed on rather than
+    /// written as an artifact (a diff a target produced, say). Matches the value as it is and
+    /// base64-encoded, the form a Kubernetes Secret holds it in. Like <see cref="ScanText"/>,
+    /// values shorter than <see cref="MinimumLength"/> are left alone.
+    /// </summary>
+    public static string? Redact(string? text, IReadOnlyDictionary<string, SensitiveValue> secrets)
+    {
+        if (string.IsNullOrEmpty(text) || secrets.Count == 0)
+        {
+            return text;
+        }
+
+        // Longest first, so a secret that contains another is masked whole.
+        var forms = secrets.Values
+            .Where(s => s.Length >= MinimumLength)
+            .SelectMany(s => new[] { s.Reveal(), Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(s.Reveal())) })
+            .Distinct(StringComparer.Ordinal)
+            .OrderByDescending(f => f.Length);
+        foreach (var form in forms)
+        {
+            text = text.Replace(form, SensitiveValue.Mask, StringComparison.Ordinal);
+        }
+
+        return text;
+    }
 }

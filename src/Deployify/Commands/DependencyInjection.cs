@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Deployify.Commands.Json;
 using Deployify.Core.Deployments;
 using Deployify.Core.Models;
 using Deployify.Plugins;
@@ -14,11 +15,26 @@ internal static class DependencyInjection
 {
     /// <summary>Core services and every built-in target, logging to the console.</summary>
     /// <param name="allowUnverifiedPlugins">Start plugins the lock file has no hash for, with a warning (<c>--allow-unverified</c>).</param>
+    /// <remarks>
+    /// With <c>--output json</c> the logs go to stderr, where the rest of the human-readable output
+    /// goes, so stdout carries nothing but the JSON document.
+    /// </remarks>
     public static IServiceCollection AddDeployifyCore(this IServiceCollection services, bool allowUnverifiedPlugins = false)
-        => services
-            .AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Information))
+    {
+        var logToStderr = JsonOutput.Current is not null;
+        return services
+            .AddLogging(b => b
+                .AddConsole(o =>
+                {
+                    if (logToStderr)
+                    {
+                        o.LogToStandardErrorThreshold = LogLevel.Trace;
+                    }
+                })
+                .SetMinimumLevel(LogLevel.Information))
             .AddDeployify()
             .AddSingleton(new PluginHostOptions { AllowUnverified = allowUnverifiedPlugins });
+    }
 
     /// <summary>
     /// Resolves the project directory, active environment config, and target —

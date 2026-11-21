@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
 using Deployify.Core.Expressions;
@@ -149,10 +150,19 @@ public sealed class EnvironmentConfig
 
     /// <summary>
     /// Target-specific configuration bag.
-    /// Keyed by target name (e.g. "nomad", "kubernetes", "compose").
+    /// Keyed by target name (e.g. "nomad", "kubernetes", "compose"), ignoring case like every
+    /// other key in the state file, so "Nomad" finds the "nomad" section.
     /// Deserialized into the appropriate config type by the target itself.
     /// </summary>
-    public Dictionary<string, object?> TargetConfig { get; set; } = [];
+    public Dictionary<string, object?> TargetConfig
+    {
+        get => _targetConfig;
+        set => _targetConfig = value.Comparer == StringComparer.OrdinalIgnoreCase
+            ? value
+            : new Dictionary<string, object?>(value, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private Dictionary<string, object?> _targetConfig = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// A copy of this environment with one target-config entry replaced, for a target that hands

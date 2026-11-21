@@ -26,4 +26,5 @@ deployify status [options]
 | `--allow-unverified` | Start target plugins that deployify-plugins.lock.json has no hash for, with a warning each time (a plugin whose files don't match its locked hash is still refused). Run 'deployify plugin lock' instead to verify them. | `false` |
 | `--rollout` | Show the services and events of this rollout instead of the list. |  |
 | `--limit` | How many rollouts to list (default: 10). | `10` |
+| `--output`, `-o` | Output format: text \| json. With json, stdout gets one JSON document (see the JSON output reference) and the human-readable output goes to stderr. | `Text` |
 

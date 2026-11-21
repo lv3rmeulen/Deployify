@@ -49,6 +49,20 @@ Everything you write in `deployify-state.json` and commit:
 New keys can be added in a minor release, always optional, with a default that keeps the
 current behavior.
 
+### JSON output
+
+The documents `plan`, `diff`, `status`, `explain` and `promote` write with `--output json`,
+as described in [JSON output](/Deployify/reference/json-output/) and its published schema
+(`schemaVersion` 1):
+
+- Properties keep their names and types, and a property that is always present stays present.
+- The values of `command`, `severity`, diff `kind` and the envelope fields don't change.
+- Stdout holds only the document; human-readable output goes to stderr.
+
+A minor release can add properties, and new values for rollout `operation` and `state`, so
+consumers must ignore properties they don't know. Message texts and `explain`'s `details` keys
+aren't covered.
+
 ### What Deployify creates on a platform
 
 `plan` and prune decide what belongs to Deployify from the names it gives resources and the
@@ -138,7 +152,8 @@ the same rules as any other [deprecation](#deprecation).
 These can change in any minor release:
 
 - **Human-readable output**: wording, colors, layout, ordering, progress display, log
-  messages and error messages. Don't parse them; rely on exit codes and the files Deployify writes.
+  messages and error messages. Don't parse them; rely on exit codes, `--output json` and the
+  files Deployify writes.
 - **The rest of the .NET API** of `Deployify.Core`, `Deployify.Targets`, the
   `Deployify.Target.*` packages and `Deployify.Plugins`. They are published because the covered
   packages depend on them, not as a library for you to build on.

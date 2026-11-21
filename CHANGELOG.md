@@ -13,6 +13,14 @@ Each release can have these sections: **Added**, **Changed**, **Deprecated**, **
 
 ### Added
 
+- `--output json` (`-o json`) on `plan`, `diff`, `status`, `explain` and `promote`: stdout gets
+  one JSON document (schema version 1, published as `schemas/deployify-output-v1.json` and
+  described under [JSON output](https://lv3rmeulen.github.io/Deployify/reference/json-output/)),
+  and the human-readable output and logs go to stderr. The document is written on failure too,
+  with the error. The schema is covered by the stability policy.
+- `diff` prints what changed below its table: the old and new value, or for Kubernetes and
+  Helm the `kubectl diff` / `helm diff` output. Secret values resolved during the run are
+  masked as `****`, there and in `--output json`. `diff --summary` prints only the table.
 - Deployment targets: Nomad, Kubernetes, Helm, GitOps through Argo CD or Flux, OVHcloud Managed
   Kubernetes, Docker Compose, AWS ECS, Azure Container Apps, Nomad + Consul Connect, and IIS on
   Windows Server.
@@ -55,6 +63,11 @@ Each release can have these sections: **Added**, **Changed**, **Deprecated**, **
 
 ### Fixed
 
+- Keys in `deployify-state.json` are case-insensitive, as the stability policy says. A file
+  written in camelCase, like the examples in the docs, used to load as if it had no
+  environments, and `TargetConfig` sections were only found in lower case. A file that sets the
+  same key twice in different case is now refused with a message naming it, instead of one of
+  them winning.
 - Console output when Deployify runs without a terminal.
 - Escaping of parameter values and in console output.
 - `init`, including how it handles secrets.

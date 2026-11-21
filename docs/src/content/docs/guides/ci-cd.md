@@ -99,6 +99,21 @@ at a given width instead.
       --fail-on-changes
 ```
 
+### Reading the plan in a script
+
+`plan`, `diff`, `status`, `explain` and `promote` take `--output json`: stdout gets one JSON
+document and the usual output goes to stderr, so it still shows up in the job log.
+
+```yaml
+- name: Plan
+  id: plan
+  run: |
+    deployify plan --env prod --output json > plan.json
+    echo "changes=$(jq '.result.upToDate | not' plan.json)" >> "$GITHUB_OUTPUT"
+```
+
+See [JSON output](/Deployify/reference/json-output/) for the schema.
+
 ### GitHub Actions — build once, promote to production
 
 Staging builds and deploys the images; production deploys the same images by digest, without

@@ -111,6 +111,27 @@ public sealed class SecretLeakScannerTests : IDisposable
     }
 
     [Fact]
+    public void Redact_MasksEveryOccurrence_RawAndBase64()
+    {
+        var base64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("S3cret-pw"));
+
+        SecretLeakScanner.Redact($"a=S3cret-pw b={base64} c=S3cret-pw", Secrets(("pg-password", "S3cret-pw")))
+            .ShouldBe("a=**** b=**** c=****");
+    }
+
+    [Fact]
+    public void Redact_MasksTheLongerSecretWhole_WhenOneContainsAnother()
+        => SecretLeakScanner.Redact("token=abcd-efgh", Secrets(("short", "abcd"), ("long", "abcd-efgh")))
+            .ShouldBe("token=****");
+
+    [Fact]
+    public void Redact_LeavesShortValuesAndNullAlone()
+    {
+        SecretLeakScanner.Redact("pin=123", Secrets(("pin", "123"))).ShouldBe("pin=123");
+        SecretLeakScanner.Redact(null, Secrets(("pg-password", "S3cret-pw"))).ShouldBeNull();
+    }
+
+    [Fact]
     public void ScanText_IgnoresValuesTooShortToMatchReliably()
         => SecretLeakScanner.ScanText("f", "abc", Secrets(("tiny", "ab"))).ShouldBeEmpty();
 

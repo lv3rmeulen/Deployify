@@ -20,6 +20,7 @@
     <PackageReference Include="Spectre.Console.Testing" />
     <PackageReference Include="GitHubActionsTestLogger" />
     <PackageReference Include="System.CommandLine" />
+    <PackageReference Include="JsonSchema.Net" />
   </ItemGroup>
 
   <ItemGroup>
