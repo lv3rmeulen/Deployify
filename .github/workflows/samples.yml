@@ -161,6 +161,146 @@ jobs:
           include-hidden-files: true
           if-no-files-found: warn
 
+  # Every push and PR: build once, promote, deploy. hello-aspire is published to one path of the
+  # job's registry (staging), promoted to another path (prod) with crane, and prod deploys it with
+  # --require-digest. The copy must keep each digest, and prod must run exactly those digests.
+  promote-registry:
+    name: hello-aspire · promote with crane, deploy by digest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: samples/hello-aspire/HelloAspire.AppHost
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+    env:
+      DEPLOYIFY: dotnet ${{ github.workspace }}/src/Deployify/bin/Release/net10.0/deployify.dll
+      REGISTRY: localhost:5000
+      TAG: ${{ github.sha }}
+      CRANE_VERSION: v0.22.1
+      # The .NET SDK pushes to the job's registry over plain HTTP. crane and Docker allow localhost as is.
+      DOTNET_CONTAINER_INSECURE_REGISTRIES: localhost:5000
+      # The sample's secret parameter. A test value: the sample protects nothing.
+      Parameters__admin_key: ci-admin-key
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Build Deployify
+        working-directory: .
+        run: dotnet build src/Deployify/Deployify.csproj -c Release
+
+      - name: Install crane
+        working-directory: ${{ runner.temp }}
+        run: |
+          base="https://github.com/google/go-containerregistry/releases/download/$CRANE_VERSION"
+          archive=go-containerregistry_Linux_x86_64.tar.gz
+          curl -fsSLO "$base/$archive"
+          curl -fsSLO "$base/checksums.txt"
+          grep " $archive\$" checksums.txt | sha256sum -c -
+          tar -xzf "$archive" crane
+          sudo install crane /usr/local/bin/crane
+          crane version
+
+      # Same registry, two repository paths: localhost:5000/staging/api and localhost:5000/prod/api.
+      - name: staging and prod on two paths of the job's registry
+        run: |
+          jq --arg registry "$REGISTRY" '
+            .Environments.local as $local
+            | .ActiveEnvironment = "staging"
+            | .Environments = {
+                staging: ($local | .ContainerRegistry = ($registry + "/staging")),
+                prod: ($local
+                  | .ContainerRegistry = ($registry + "/prod")
+                  | .TargetConfig.compose.ProjectName = "hello-aspire-prod")
+              }' deployify-state.json > deployify-state.tmp
+          mv deployify-state.tmp deployify-state.json
+          cat deployify-state.json
+
+      - name: deployify publish (staging)
+        run: $DEPLOYIFY publish --env staging --image-tag "$TAG"
+
+      - name: deployify promote staging → prod
+        run: $DEPLOYIFY promote --from staging --to prod --image-tag "$TAG" --copy-with crane
+
+      - name: The copied images have the source digests
+        run: |
+          images=.deployify/state/prod/images.json
+          [ -f "$images" ] || { echo "::error::promote did not write $images"; exit 1; }
+          cat "$images"
+          for service in api web; do
+            source=$(crane digest "$REGISTRY/staging/$service:$TAG")
+            copied=$(crane digest "$REGISTRY/prod/$service:$TAG")
+            recorded=$(jq -r --arg key "$REGISTRY/prod/$service:$TAG" '.images[$key].digest // empty' "$images")
+            echo "$service: staging $source, prod $copied, recorded for prod $recorded"
+            [[ "$source" =~ ^sha256:[0-9a-f]{64}$ ]] \
+              || { echo "::error::$REGISTRY/staging/$service:$TAG has no digest"; exit 1; }
+            [ "$copied" = "$source" ] \
+              || { echo "::error::The copy of $service changed its digest: $source → $copied"; exit 1; }
+            [ "$recorded" = "$source" ] \
+              || { echo "::error::promote recorded '$recorded' for prod's $service, not $source"; exit 1; }
+          done
+
+      # Promoting again changes nothing: every image is already recorded for prod.
+      - name: Promoting again is a no-op
+        run: |
+          out=$($DEPLOYIFY promote --from staging --to prod --image-tag "$TAG" --copy-with crane)
+          echo "$out"
+          echo "$out" | grep -q '0 newly recorded' \
+            || { echo "::error::A second promote recorded images again"; exit 1; }
+
+      - name: deployify apply --require-digest (prod)
+        run: $DEPLOYIFY apply --env prod --image-tag "$TAG" --require-digest --auto-approve --health-timeout 180
+
+      - name: prod runs the promoted digests
+        run: |
+          for service in api web; do
+            digest=$(crane digest "$REGISTRY/staging/$service:$TAG")
+            image=$(docker ps --filter label=com.docker.compose.project=hello-aspire-prod \
+              --filter label=com.docker.compose.service=$service --format '{{.Image}}')
+            echo "$service runs $image"
+            [ "$image" = "$REGISTRY/prod/$service@$digest" ] \
+              || { echo "::error::prod's $service runs '$image', not $REGISTRY/prod/$service@$digest"; exit 1; }
+          done
+
+      - name: Smoke test
+        run: |
+          for i in $(seq 1 30); do
+            if body=$(curl -fsS http://localhost:8080/); then
+              echo "$body"
+              echo "$body" | grep -q '"logged"' && exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::The api did not answer on http://localhost:8080/"
+          docker compose ls
+          docker ps -a
+          exit 1
+
+      - name: Upload the promoted state and generated artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: promoted-hello-aspire
+          path: |
+            samples/hello-aspire/HelloAspire.AppHost/.deployify/state/*/images.json
+            samples/hello-aspire/HelloAspire.AppHost/deployify-output/
+          include-hidden-files: true
+          if-no-files-found: warn
+
+      - name: Destroy
+        if: always()
+        run: $DEPLOYIFY destroy --env prod --auto-approve --volumes
+
   # Nightly (or on demand): really deploy to Docker Compose on the runner, call it, tear it down.
   deploy-compose:
     name: hello-aspire · deploy to Docker Compose

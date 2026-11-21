@@ -58,4 +58,6 @@ doesn't. The AppHost sets `POSTGRES_DB` so the postgres image creates the databa
 
 CI builds this sample and runs `deployify generate` on every pull request. It also publishes the
 `api` and `web` images to a throwaway registry and checks that the generated artifacts pin them by
-digest. Nightly, it deploys the sample to Docker Compose (`.github/workflows/samples.yml`).
+digest. It then promotes them with `crane` to a second path on that registry and deploys that
+copy with `--require-digest`, checking the digests didn't change. Nightly, it deploys the sample
+to Docker Compose (`.github/workflows/samples.yml`).
