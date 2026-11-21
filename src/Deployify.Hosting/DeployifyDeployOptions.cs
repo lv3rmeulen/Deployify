@@ -55,6 +55,14 @@ public sealed class DeployifyDeployOptions
     public bool RequireDigest { get; set; }
 
     /// <summary>
+    /// Stop unless every built image is pinned by digest and has a cosign signature the
+    /// environment's <c>signing</c> settings trust (key <c>Deployify:RequireSignature</c>), like
+    /// <c>deployify ci --require-signature</c>. Images this deploy publishes are checked after
+    /// publishing; otherwise before planning. Needs cosign.
+    /// </summary>
+    public bool RequireSignature { get; set; }
+
+    /// <summary>
     /// Use a health-gated rollout with automatic rollback when the target supports one
     /// (key <c>Deployify:HealthGate</c>), like <c>deployify apply</c>.
     /// </summary>

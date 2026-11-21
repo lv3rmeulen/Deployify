@@ -7,6 +7,7 @@ using Deployify.Core.Interfaces;
 using Deployify.Core.Lifecycle;
 using Deployify.Core.Models;
 using Deployify.Core.Rollouts;
+using Deployify.Core.Services;
 
 namespace Deployify.Core.Deployments;
 
@@ -33,6 +34,17 @@ public sealed class DeploymentRunOptions
     /// a run that publishes pins what it pushes.
     /// </summary>
     public bool RequireDigest { get; init; }
+
+    /// <summary>
+    /// Stop unless every built image is pinned by digest and has a cosign signature the
+    /// environment's <see cref="EnvironmentConfig.Signing"/> settings trust, like
+    /// <c>deployify ci --require-signature</c>. A run that publishes checks the images it pushed,
+    /// after publishing and before deploying; one that doesn't checks before planning.
+    /// </summary>
+    public bool RequireSignature { get; init; }
+
+    /// <summary>Runs cosign for <see cref="RequireSignature"/>. Replaced in tests.</summary>
+    internal ImageSigner? Signer { get; init; }
 
     /// <summary>
     /// Asked once the plan is known, before anything changes. Returning false stops the run
@@ -105,6 +117,36 @@ public sealed class DeploymentRunner(DeploymentSession session)
             return Failed(summary);
         }
 
+        // ── Signature check ────────────────────────────────────────────────────
+        // Settings and cosign are checked up front; the signatures once the images are pinned.
+        SignaturePolicy? policy = null;
+        var signer = options.Signer ?? new ImageSigner();
+        if (options.RequireSignature)
+        {
+            try
+            {
+                policy = ImageSigner.ResolvePolicy(config.Signing, session.AppHostDirectory, session.EnvName);
+            }
+            catch (InvalidOperationException ex)
+            {
+                var summary = $"RequireSignature is set, but {ex.Message}";
+                Reporter.Error(summary);
+                return Failed(summary);
+            }
+
+            if (!await signer.IsAvailableAsync(ct))
+            {
+                var summary = "RequireSignature is set, but cosign isn't installed. Install cosign 3.0.3 or later.";
+                Reporter.Error(summary);
+                return Failed(summary);
+            }
+
+            if (!publishes && await VerifySignaturesAsync(manifest, signer, policy, ct) is { } failure)
+            {
+                return Failed(failure);
+            }
+        }
+
         // ── Plan ───────────────────────────────────────────────────────────────
         PlanResult plan;
         await using (var stage = await Reporter.BeginStageAsync($"Planning changes on {target.DisplayName}", ct))
@@ -166,6 +208,12 @@ public sealed class DeploymentRunner(DeploymentSession session)
             }
         }
 
+        // The images this run pushed are checked like promoted ones, before anything is recorded.
+        if (publishes && policy is not null && await VerifySignaturesAsync(manifest, signer, policy, ct) is { } unsigned)
+        {
+            return Failed(unsigned, plan);
+        }
+
         // ── Record + secrets ───────────────────────────────────────────────────
         try
         {
@@ -200,6 +248,52 @@ public sealed class DeploymentRunner(DeploymentSession session)
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Verifies the signature of every built image by digest. Returns null when they all verify,
+    /// else the reason the run stops (already reported).
+    /// </summary>
+    private async Task<string?> VerifySignaturesAsync(
+        AspireManifest manifest, ImageSigner signer, SignaturePolicy policy, CancellationToken ct)
+    {
+        var config = session.Config;
+        if (ImagePromotion.Unpinned(manifest, config) is { Count: > 0 } unpinned)
+        {
+            var summary = $"RequireSignature is set, but {unpinned.Count} image(s) have no published digest for tag {config.ImageTag}: " +
+                          $"{string.Join(", ", unpinned.Select(u => $"{u.Service} ({u.Reference})"))}. " +
+                          "Signatures are checked by digest: publish them to this environment, or promote them with 'deployify promote'.";
+            Reporter.Error(summary);
+            return summary;
+        }
+
+        var images = ImageSigner.BuiltImages(manifest, config);
+        if (images.Count == 0)
+        {
+            return null;
+        }
+
+        await using var stage = await Reporter.BeginStageAsync($"Verifying image signatures ({policy.Description})", ct);
+        var failed = new List<string>();
+        foreach (var (service, image) in images)
+        {
+            if (await signer.VerifyAsync(image, policy, ct) is { } problem)
+            {
+                Reporter.Error($"{service}: {image}: {problem}");
+                failed.Add(service);
+            }
+        }
+
+        if (failed.Count == 0)
+        {
+            await stage.CompleteAsync($"{images.Count} image signature(s) verified.", ct: ct);
+            return null;
+        }
+
+        var message = $"{failed.Count} of {images.Count} image(s) have no signature {session.EnvName} trusts " +
+                      $"({string.Join(", ", failed)}); nothing was deployed.";
+        await stage.CompleteAsync(message, DeploymentStageOutcome.Failed, ct);
+        return message;
     }
 
     /// <summary>

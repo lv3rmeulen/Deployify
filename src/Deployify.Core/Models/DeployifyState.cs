@@ -198,6 +198,12 @@ public sealed class EnvironmentConfig
     /// Off unless <see cref="SbomConfig.Enabled"/> is set.
     /// </summary>
     public SbomConfig Sbom { get; set; } = new();
+
+    /// <summary>
+    /// Signing the images publish pushes with cosign, and which signatures
+    /// <c>--require-signature</c> trusts. Off unless <see cref="SigningConfig.Enabled"/> is set.
+    /// </summary>
+    public SigningConfig Signing { get; set; } = new();
 }
 
 /// <summary>

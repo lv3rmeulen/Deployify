@@ -89,6 +89,14 @@ public static class PublishCommand
                     AnsiConsole.MarkupLineInterpolated($"[dim]SBOM: {format}, {attest}.[/]");
                 }
 
+                if (config.Signing.Enabled)
+                {
+                    var signing = string.IsNullOrEmpty(config.ContainerRegistry)
+                        ? "not signed, the images stay local"
+                        : $"cosign, by digest ({(string.IsNullOrWhiteSpace(config.Signing.Key) ? "keyless" : "key")})";
+                    AnsiConsole.MarkupLineInterpolated($"[dim]Signing: {signing}.[/]");
+                }
+
                 return 0;
             }
 

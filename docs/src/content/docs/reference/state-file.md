@@ -110,3 +110,13 @@ signed cosign attestation. It needs syft and cosign installed. See
 ```json
 "sbom": { "enabled": true, "format": "Spdx", "key": "awskms:///alias/deployify-signing" }
 ```
+
+## Signing
+
+`signing` turns on signing the images publish pushes with cosign, and says which signatures
+`--require-signature` on `apply`, `ci` and `promote` trusts. See
+[signing images](/Deployify/guides/publishing-images/#signing-images).
+
+```json
+"signing": { "enabled": true, "key": "awskms:///alias/deployify-signing" }
+```

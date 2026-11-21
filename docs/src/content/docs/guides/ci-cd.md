@@ -152,6 +152,39 @@ first; the job then needs to be signed in to both registries.
 
 See [promoting images](/Deployify/guides/publishing-images/#promoting-images-to-another-environment).
 
+### GitHub Actions — sign at publish, verify before deploying
+
+Staging signs the images keyless as the workflow; production deploys only images that workflow
+signed. Both environments trust the same signer:
+
+```json
+"signing": {
+  "enabled": true,
+  "identity": "https://github.com/my-org/my-app/.github/workflows/deploy.yml@refs/heads/main",
+  "issuer": "https://token.actions.githubusercontent.com"
+}
+```
+
+Production needs the same `identity` and `issuer`, without `enabled`.
+
+```yaml
+permissions:
+  contents: read
+  id-token: write   # keyless cosign signing
+
+steps:
+  - uses: sigstore/cosign-installer@v3
+  - name: Deploy to staging
+    run: deployify ci --env staging --image-tag "$GITHUB_SHA" --require-signature --auto-approve
+  - name: Promote to production
+    run: |
+      deployify promote --from staging --to prod --image-tag "$GITHUB_SHA" --require-signature
+      deployify ci --env prod --no-publish --image-tag "$GITHUB_SHA" --require-signature \
+        --skip-validate --auto-approve
+```
+
+See [signing images](/Deployify/guides/publishing-images/#signing-images).
+
 ### Separate steps
 
 ```bash

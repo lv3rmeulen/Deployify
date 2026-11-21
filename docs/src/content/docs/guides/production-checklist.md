@@ -10,6 +10,7 @@ through this list. Each item links to the page with the details.
 - [ ] Images are pushed to a container registry, with a unique tag per release.
 - [ ] Deployment state is in a remote backend that CI and people share.
 - [ ] Deploys of images built elsewhere run with `--require-digest`.
+- [ ] If you sign images, production deploys run with `--require-signature`.
 - [ ] Health gates are on, and every service has a health check worth gating on.
 - [ ] Plugin targets are installed at a fixed version and locked, and the lock file is committed.
 
@@ -83,6 +84,11 @@ deployify ci --env prod --no-publish --image-tag "$GITHUB_SHA" --require-digest 
 ```
 
 See [requiring digests](/Deployify/guides/publishing-images/#requiring-digests).
+
+When the images are signed at publish (`signing.enabled`), use `--require-signature`
+(`RequireSignature` for `aspire deploy`) instead: it
+also requires the digest, and stops unless each image has a signature production trusts. See
+[requiring signatures](/Deployify/guides/publishing-images/#requiring-signatures).
 
 ## Keep health gates on
 

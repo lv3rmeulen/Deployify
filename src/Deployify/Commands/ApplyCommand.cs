@@ -33,6 +33,7 @@ public static class ApplyCommand
         cmd.Options.Add(autoApprove);
         cmd.Options.Add(imageTagOpt);
         cmd.Options.Add(GlobalOptions.RequireDigest);
+        cmd.Options.Add(GlobalOptions.RequireSignature);
         RolloutCli.AddTo(cmd);
         StateCli.AddPruneOptions(cmd);
 
@@ -47,6 +48,7 @@ public static class ApplyCommand
             var approve = parseResult.GetValue(autoApprove);
             var tagOverride = parseResult.GetValue(imageTagOpt)?.Trim();
             var requireDigest = parseResult.GetValue(GlobalOptions.RequireDigest);
+            var requireSignature = parseResult.GetValue(GlobalOptions.RequireSignature);
 
             ResolvedContext resolved;
             try
@@ -74,6 +76,12 @@ public static class ApplyCommand
 
             var manifest = await resolved.LoadManifestAsync(ct);
             if (manifest is null || PlanOutput.UnpinnedBlocks(manifest, config, requireDigest))
+            {
+                return 1;
+            }
+
+            // Before planning, and in a dry-run too: it only reads the registry.
+            if (requireSignature && await SignatureCheck.BlocksAsync(manifest, config, envName, resolved.AppHostDirectory, ct))
             {
                 return 1;
             }

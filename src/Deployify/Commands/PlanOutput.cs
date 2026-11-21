@@ -76,7 +76,8 @@ internal static class PlanOutput
     /// True, after listing them, when --require-digest is set and a built image would be
     /// deployed by tag because no published digest is recorded for it.
     /// </summary>
-    public static bool UnpinnedBlocks(AspireManifest manifest, EnvironmentConfig config, bool requireDigest)
+    public static bool UnpinnedBlocks(AspireManifest manifest, EnvironmentConfig config, bool requireDigest,
+        string flag = "--require-digest")
     {
         if (!requireDigest)
         {
@@ -90,7 +91,7 @@ internal static class PlanOutput
         }
 
         AnsiConsole.MarkupLineInterpolated(
-            $"[red]✗[/] --require-digest is set, but {unpinned.Count} image(s) have no published digest for tag {config.ImageTag}:");
+            $"[red]✗[/] {flag} is set, but {unpinned.Count} image(s) have no published digest for tag {config.ImageTag}:");
         foreach (var (service, reference) in unpinned)
         {
             AnsiConsole.MarkupLineInterpolated($"  [red]•[/] {service}: {reference}");

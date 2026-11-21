@@ -7,7 +7,10 @@ using System.Threading.Tasks;
 using Deployify.Core.Deployments;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
+using Deployify.Core.Processes;
+using Deployify.Core.Services;
 using Deployify.Core.State;
+using Deployify.Tests.Shared;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
 using Shouldly;
@@ -102,6 +105,109 @@ public sealed class DeploymentRunnerTests : IAsyncDisposable
 
         result.Outcome.ShouldBe(DeploymentRunOutcome.Deployed);
         await _target.ReceivedWithAnyArgs(1).PublishAsync(default!, default!, default!, Ct);
+    }
+
+    // ── RequireSignature ──────────────────────────────────────────────────────
+
+    private const string ApiImage = "localhost:5000/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    private static EnvironmentConfig SignedConfig(bool withDigest = true, SigningConfig? signing = null)
+    {
+        var config = TaggedConfig(withDigest);
+        config.Signing = signing ?? new SigningConfig { PublicKey = "env:COSIGN_PUBLIC_KEY" };
+        return config;
+    }
+
+    /// <summary>cosign that verifies every image, or fails <c>verify</c> with <paramref name="error"/>.</summary>
+    private static FakeProcessRunner Cosign(string? error = null)
+    {
+        var runner = new FakeProcessRunner();
+        if (error is not null)
+        {
+            runner.When(["verify"], new ProcessResult(1, "", error));
+        }
+
+        return runner;
+    }
+
+    private static DeploymentRunOptions SignatureOptions(FakeProcessRunner cosign, bool publish) => new()
+    {
+        Publish = publish,
+        RequireSignature = true,
+        Signer = new ImageSigner(cosign)
+    };
+
+    [Fact]
+    public async Task RequireSignature_WithoutPublishing_VerifiesByDigest_ThenDeploys()
+    {
+        var cosign = Cosign();
+
+        var result = await Runner(SignedConfig()).RunAsync(_manifest, SignatureOptions(cosign, publish: false), Ct);
+
+        result.Outcome.ShouldBe(DeploymentRunOutcome.Deployed, result.Summary);
+        cosign.Single("verify").Args.ShouldBe(["verify", "--key", "env://COSIGN_PUBLIC_KEY", ApiImage]);
+    }
+
+    [Fact]
+    public async Task RequireSignature_WithoutPublishing_StopsBeforePlanning_WhenASignatureDoesntVerify()
+    {
+        var result = await Runner(SignedConfig()).RunAsync(
+            _manifest, SignatureOptions(Cosign("Error: no matching signatures"), publish: false), Ct);
+
+        result.Outcome.ShouldBe(DeploymentRunOutcome.Failed);
+        result.Summary.ShouldContain("1 of 1 image(s) have no signature dev trusts (api)");
+        await _target.DidNotReceiveWithAnyArgs().PlanAsync(default!, default!, default!, Ct);
+    }
+
+    [Fact]
+    public async Task RequireSignature_WithoutPublishing_StopsBeforePlanning_WhenAnImageHasNoDigest()
+    {
+        var cosign = Cosign();
+
+        var result = await Runner(SignedConfig(withDigest: false)).RunAsync(_manifest, SignatureOptions(cosign, publish: false), Ct);
+
+        result.Outcome.ShouldBe(DeploymentRunOutcome.Failed);
+        result.Summary.ShouldContain("RequireSignature is set, but 1 image(s) have no published digest");
+        cosign.Calls.ShouldNotContain(c => c.Args[0] == "verify");
+        await _target.DidNotReceiveWithAnyArgs().PlanAsync(default!, default!, default!, Ct);
+    }
+
+    [Fact]
+    public async Task RequireSignature_StopsBeforePlanning_WithoutSettingsToVerifyWith()
+    {
+        var result = await Runner(SignedConfig(signing: new SigningConfig { Enabled = true })).RunAsync(
+            _manifest, SignatureOptions(Cosign(), publish: true), Ct);
+
+        result.Outcome.ShouldBe(DeploymentRunOutcome.Failed);
+        result.Summary.ShouldContain("signing.identity");
+        await _target.DidNotReceiveWithAnyArgs().PlanAsync(default!, default!, default!, Ct);
+        await _target.DidNotReceiveWithAnyArgs().PublishAsync(default!, default!, default!, Ct);
+    }
+
+    [Fact]
+    public async Task RequireSignature_StopsBeforePlanning_WhenCosignIsMissing()
+    {
+        var cosign = Cosign();
+        cosign.Missing.Add("cosign");
+
+        var result = await Runner(SignedConfig()).RunAsync(_manifest, SignatureOptions(cosign, publish: true), Ct);
+
+        result.Outcome.ShouldBe(DeploymentRunOutcome.Failed);
+        result.Summary.ShouldContain("cosign isn't installed");
+        await _target.DidNotReceiveWithAnyArgs().PublishAsync(default!, default!, default!, Ct);
+    }
+
+    [Fact]
+    public async Task RequireSignature_WhenPublishing_VerifiesThePushedImages_BeforeDeploying()
+    {
+        var cosign = Cosign("Error: no signatures found");
+
+        var result = await Runner(SignedConfig()).RunAsync(_manifest, SignatureOptions(cosign, publish: true), Ct);
+
+        result.Outcome.ShouldBe(DeploymentRunOutcome.Failed);
+        await _target.ReceivedWithAnyArgs(1).PublishAsync(default!, default!, default!, Ct);
+        cosign.Single("verify").Args[^1].ShouldBe(ApiImage);
+        await _target.DidNotReceiveWithAnyArgs().ApplyAsync(default!, default!, default!, Ct);
     }
 
     [Fact]

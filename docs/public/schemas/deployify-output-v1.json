@@ -651,6 +651,14 @@
               "attestationsCopied": {
                 "type": ["integer", "null"],
                 "description": "How many cosign attestations this run copied to the target registry with the image: 0 when the target already had them all. Null when attestations aren't copied for this image."
+              },
+              "signaturesCopied": {
+                "type": ["integer", "null"],
+                "description": "How many cosign signatures this run copied to the target registry with the image: 0 when the target already had them all. Null when signatures aren't copied for this image."
+              },
+              "signatureVerified": {
+                "type": ["boolean", "null"],
+                "description": "With --require-signature: true when the image's signature verified where the target pulls it from, false when that wasn't checked (a dry-run, or the run stopped first). Null without --require-signature."
               }
             }
           }

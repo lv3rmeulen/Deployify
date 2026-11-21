@@ -121,6 +121,70 @@ cosign verify-attestation --type spdxjson --key cosign.pub registry.example.com/
 When `promote` copies an image to another registry, it copies the attestations too; see
 [attestations](#attestations).
 
+## Signing images
+
+With `signing.enabled`, `publish` (and the publish step of `ci` and `aspire deploy`) signs every
+image it pushes with [cosign](https://docs.sigstore.dev/cosign/) `sign`, by digest. The same
+settings say which signatures `--require-signature` trusts:
+
+```json
+"signing": {
+  "enabled": true,
+  "key": null,
+  "identityRegexp": "^https://github.com/my-org/my-app/",
+  "issuer": "https://token.actions.githubusercontent.com"
+}
+```
+
+| Setting | Default | |
+|---|---|---|
+| `enabled` | `false` | Sign the images publish pushes. |
+| `key` | none | cosign signing key, in any form [`sbom.key`](#signing) takes. Empty signs keyless. |
+| `publicKey` | none | Key to verify signatures with: a public key file, a KMS key or `env:NAME`. Defaults to `key` when that is a KMS key. |
+| `identity`, `identityRegexp` | none | Keyless: who must have signed, as the identity in the signing certificate. |
+| `issuer`, `issuerRegexp` | none | Keyless: the OIDC issuer that vouched for that identity. |
+
+After all images are pushed, Deployify runs `cosign sign --yes` on each one as
+`registry.example.com/myapp/api@sha256:…`, then attests the SBOMs. cosign 3 stores the signature
+as an OCI referrer next to the image. Keyless signing and keys work as they do for
+[SBOM attestations](#signing), and an SBOM without its own `sbom.key` is signed with
+`signing.key`.
+
+cosign must be installed: `publish` checks for it, and that a key file exists, before building
+anything. An image is only signed by digest. If its pushed digest couldn't be read, `publish`
+signs the others and then fails rather than sign whatever the tag points to. An image that stays
+in the local store (no `containerRegistry`) isn't signed, with a warning.
+
+### Requiring signatures
+
+`--require-signature` on `apply`, `ci` and `promote` (and `RequireSignature` for
+[`aspire deploy`](/Deployify/guides/aspire-deploy/)) stops unless every image the environment
+builds is pinned by digest and has a signature its `signing` settings trust. It implies
+`--require-digest`. `apply` checks before planning, in a `--dry-run` too; `ci` checks after its
+publish step and before applying. Each image is checked with `cosign verify`:
+
+- With `publicKey`, a signature made with that key (`cosign verify --key`).
+- With a KMS `key` and no `publicKey`, a signature made with that key.
+- Without a key, a keyless signature whose certificate names the `identity` (or matches
+  `identityRegexp`) and was issued by the `issuer` (or one matching `issuerRegexp`). Both are
+  required: either alone would accept a signature from anyone the other allows.
+
+A key file or `env:` key in `key` is private, so verifying needs its public half in `publicKey`.
+The verification settings work without `enabled`, so an environment that only deploys promoted
+images can require signatures it never makes:
+
+```json
+"signing": { "publicKey": "cosign.pub" }
+```
+
+Only the images Deployify builds are checked. Containers it deploys as they are, such as
+`redis`, keep their own signatures; check those with an admission policy in the cluster, such as
+the Sigstore policy-controller or Kyverno. To check an image by hand:
+
+```bash
+cosign verify --key cosign.pub registry.example.com/myapp/api@sha256:…
+```
+
 ## Promoting images to another environment
 
 Build once, deploy many times: `promote` makes another environment deploy the images an
@@ -196,6 +260,25 @@ twice. A second run also adds attestations to images that were promoted before t
 turned on. Afterward, `promote` checks that the target has every attestation the source has and
 fails, recording nothing, if one is missing. An image published without attestations gets a
 warning.
+
+### Signatures
+
+When the source environment signs its images (`signing.enabled`), or with `--require-signature`,
+`promote` copies the cosign signatures of every image it moves to another repository the same
+way: referrer bundles with `cosign download signature` and `cosign attach bundle`, the older
+`sha256-<digest>.sig` tag with the image copy tool. Signatures the target already has are
+skipped, and `promote` checks that every one arrived.
+
+With `--require-signature`, `promote` verifies every image in the source registry before it
+copies anything, and each copied image again in the target registry before it records anything,
+so the target is only told to deploy images it can verify where it pulls them from. The trusted
+signatures are the target environment's [`signing` settings](#requiring-signatures), or the
+source's when the target has none.
+
+```bash
+deployify promote --from staging --to prod --image-tag "$GITHUB_SHA" --require-signature
+deployify apply   --env prod --image-tag "$GITHUB_SHA" --require-signature
+```
 
 ### Requiring digests
 

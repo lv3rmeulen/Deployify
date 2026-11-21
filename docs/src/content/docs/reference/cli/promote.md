@@ -26,6 +26,7 @@ deployify promote [options]
 | `--to` | **Required.** Environment to promote them to (e.g. prod). |  |
 | `--image-tag`, `-i` | Tag to promote, for example the commit SHA. Defaults to the source environment's configured tag. |  |
 | `--copy-with` | Tool that copies images when the target uses another registry: crane \| skopeo \| docker. Defaults to the first one installed, in that order. |  |
+| `--require-signature` | Fail unless every image the environment builds is pinned by digest and has a cosign signature that the environment's signing settings trust (signing.publicKey, or signing.identity and signing.issuer). Needs cosign. | `false` |
 | `--dry-run` | Simulate the operation without making changes. | `false` |
 | `--output`, `-o` | Output format: text \| json. With json, stdout gets one JSON document (see the JSON output reference) and the human-readable output goes to stderr. | `Text` |
 

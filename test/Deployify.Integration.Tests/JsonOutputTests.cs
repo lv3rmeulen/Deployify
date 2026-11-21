@@ -515,6 +515,29 @@ public sealed class JsonOutputTests
     }
 
     [Fact]
+    public async Task Promote_RequireSignature_WithoutSigningSettings_RecordsNothing()
+    {
+        using var dir = new TempDir();
+        await WritePromotableStateAsync(dir.Path, ("api", ApiDigest), ("worker", WorkerDigest));
+
+        var run = await RunJsonAsync("promote", "--project-path", dir.Path, "--from", "staging", "--to", "prod", "--require-signature");
+
+        run.ExitCode.ShouldBe(1);
+        run.Json.GetProperty("error").GetString()!.ShouldContain("signing.identity");
+        run.Result.GetProperty("promoted").GetBoolean().ShouldBeFalse();
+        run.Result.GetProperty("recorded").GetInt32().ShouldBe(0);
+        run.Result.GetProperty("images").EnumerateArray()
+            .ShouldAllBe(i => i.GetProperty("signatureVerified").ValueKind == JsonValueKind.False);
+
+        // Nothing was recorded: promoting without the flag still has both to record.
+        var again = await RunJsonAsync("promote", "--project-path", dir.Path, "--from", "staging", "--to", "prod");
+        again.Result.GetProperty("recorded").GetInt32().ShouldBe(2);
+        again.Result.GetProperty("images").EnumerateArray()
+            .ShouldAllBe(i => i.GetProperty("signatureVerified").ValueKind == JsonValueKind.Null &&
+                              i.GetProperty("signaturesCopied").ValueKind == JsonValueKind.Null);
+    }
+
+    [Fact]
     public async Task Promote_SameEnvironmentTwice_FailsBeforeResolvingAnything()
     {
         var run = await RunJsonAsync("promote", "--from", "prod", "--to", "prod");

@@ -149,4 +149,99 @@ public sealed class AttestationCopierTests
     [Fact]
     public void AttestationTag_IsCosignsDigestTag()
         => AttestationCopier.AttestationTag(Digest).ShouldBe(AttTag);
+
+    // ── Signatures ────────────────────────────────────────────────────────────
+
+    private const string SigTag = "sha256-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.sig";
+
+    private const string SignatureBundle =
+        """{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json","verificationMaterial":{},"messageSignature":{"messageDigest":{"algorithm":"SHA2_256","digest":"ZGln"},"signature":"U0lH"}}""";
+
+    private const string LegacySignature =
+        """{"Base64Signature":"TEVHQUNZ","Payload":"cGF5bG9hZA==","Cert":null,"Chain":null,"Bundle":null}""";
+
+    /// <summary>Like <see cref="Registry"/>, for <c>cosign download signature</c>; a source without signatures errors as cosign does.</summary>
+    private static (FakeProcessRunner Runner, List<string> Target) SignatureRegistry(string[] source, string[] target)
+    {
+        var inTarget = target.ToList();
+        var runner = new FakeProcessRunner()
+            .When(s => s.FileName == "cosign" && s.Args.Take(2).SequenceEqual(["download", "signature"]), s =>
+            {
+                var found = s.Args[2] == SourceRef ? source : [.. inTarget];
+                return found.Length == 0
+                    ? new ProcessResult(1, "", $"Error: no signatures found\nmain.go:74: error during command execution: no signatures found")
+                    : new ProcessResult(0, string.Join("\n", found) + "\n", "");
+            })
+            .When(s => s.FileName == "cosign" && s.Args.Take(2).SequenceEqual(["attach", "bundle"]), s =>
+            {
+                inTarget.Add(File.ReadAllText(s.Args[3]));
+                return s_ok;
+            })
+            .When(s => s.FileName == "crane" && s.Args[0] == "copy", _ =>
+            {
+                inTarget.AddRange(source.Where(a => a.Contains("Base64Signature", StringComparison.Ordinal)));
+                return s_ok;
+            });
+        return (runner, inTarget);
+    }
+
+    private static Task<AttestationCopyResult> CopySignaturesAsync(FakeProcessRunner runner)
+        => new AttestationCopier(runner).CopyAsync(new ImageCopier(runner), ImageCopyTool.Crane, Source, Digest, Target,
+            TestContext.Current.CancellationToken, SigstoreKind.Signature);
+
+    [Fact]
+    public async Task Signatures_CopiesBundles_ToTheSameDigest()
+    {
+        var (runner, target) = SignatureRegistry([SignatureBundle], []);
+
+        var result = await CopySignaturesAsync(runner);
+
+        result.ShouldBe(new AttestationCopyResult(1, 1));
+        runner.Calls.First().Args.ShouldBe(["download", "signature", SourceRef]);
+        runner.Calls.Single(c => c.Args.Contains("attach")).Args[^1].ShouldBe(TargetRef);
+        target.ShouldBe([SignatureBundle]);
+    }
+
+    [Fact]
+    public async Task Signatures_CopiesTheSigTag_ForTheOlderFormat()
+    {
+        var (runner, _) = SignatureRegistry([LegacySignature], []);
+
+        var result = await CopySignaturesAsync(runner);
+
+        result.ShouldBe(new AttestationCopyResult(1, 1));
+        runner.Single("copy").Args.ShouldBe(["copy", $"{Source}:{SigTag}", $"{Target}:{SigTag}"]);
+        runner.Calls.ShouldNotContain(c => c.Args.Contains("attach"));
+    }
+
+    [Fact]
+    public async Task Signatures_CopiesNothing_ThatTheTargetAlreadyHas()
+    {
+        var (runner, _) = SignatureRegistry([SignatureBundle], [SignatureBundle]);
+
+        (await CopySignaturesAsync(runner)).ShouldBe(new AttestationCopyResult(1, 0));
+        runner.Calls.ShouldNotContain(c => c.Args.Contains("attach") || c.FileName == "crane");
+    }
+
+    [Fact]
+    public async Task Signatures_NoneFound_IsNothingToCopy()
+    {
+        var (runner, _) = SignatureRegistry([], []);
+
+        (await CopySignaturesAsync(runner)).ShouldBe(new AttestationCopyResult(0, 0));
+    }
+
+    [Fact]
+    public void Parse_ReadsSignatureBundlesAndOlderSignatures()
+    {
+        var parsed = AttestationCopier.Parse($"{SignatureBundle}\n{LegacySignature}\n");
+
+        parsed.Select(a => a.IsBundle).ShouldBe([true, false]);
+        parsed[0].Key.ShouldBe("ZGln|U0lH");
+        parsed[1].Key.ShouldBe("cGF5bG9hZA==|TEVHQUNZ");
+    }
+
+    [Fact]
+    public void SignatureTag_IsCosignsDigestTag()
+        => AttestationCopier.SignatureTag(Digest).ShouldBe(SigTag);
 }

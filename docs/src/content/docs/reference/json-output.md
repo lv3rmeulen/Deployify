@@ -260,7 +260,9 @@ unknown `--rollout` ID fails with exit code `1` and `result: null`.
       "alreadyPromoted": false,
       "copied": true,
       "problem": null,
-      "attestationsCopied": 1
+      "attestationsCopied": 1,
+      "signaturesCopied": 1,
+      "signatureVerified": true
     }
   ]
 }
@@ -275,6 +277,8 @@ unknown `--rollout` ID fails with exit code `1` and `result: null`.
 | `images[].needsCopy` | `true` when the target uses another repository, so the image is copied there first. |
 | `images[].copied` | `true` when this run copied the image. An image that was already in the target registry isn't copied again. |
 | `images[].attestationsCopied` | How many cosign attestations this run copied to the target registry with the image; `0` when it already had them all. `null` when attestations aren't copied: the image stays in the same repository, the source environment doesn't attest SBOMs, or with `--dry-run`. |
+| `images[].signaturesCopied` | How many cosign signatures this run copied to the target registry with the image; `0` when it already had them all. `null` when signatures aren't copied: the image stays in the same repository, the source environment doesn't sign images and `--require-signature` isn't set, or with `--dry-run`. |
+| `images[].signatureVerified` | With `--require-signature`: `true` when the image's signature verified where the target pulls it from (checked again after copying), `false` when that wasn't checked yet, such as with `--dry-run` for an image that is copied. `null` without `--require-signature`. |
 | `images[].problem` | Why the image can't be promoted, such as a missing digest. Any problem means nothing is promoted and the exit code is `1`; the `images` list still shows which ones. |
 
 ## Using it

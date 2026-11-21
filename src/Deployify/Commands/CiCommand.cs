@@ -23,6 +23,8 @@ namespace Deployify.Commands;
 ///   4. publish — build and push project images (skipped with --skip-apply or --no-publish)
 ///   5. apply — deploy to the target (skippable with --skip-apply)
 ///
+/// With --require-signature, the signatures of the built images are verified between publish and apply.
+///
 /// When ci publishes and the configured image tag is "latest" (or empty), it tags the images
 /// with the commit SHA instead, so each build deploys a new image and a rollback can return to
 /// the previous one. --image-tag sets the tag; --allow-mutable-tag keeps "latest".
@@ -84,6 +86,7 @@ public static class CiCommand
         cmd.Options.Add(autoApprove);
         cmd.Options.Add(GlobalOptions.Strict);
         cmd.Options.Add(GlobalOptions.RequireDigest);
+        cmd.Options.Add(GlobalOptions.RequireSignature);
         RolloutCli.AddTo(cmd);
         StateCli.AddPruneOptions(cmd);
 
@@ -101,6 +104,7 @@ public static class CiCommand
             var doAllowMutableTag = parseResult.GetValue(allowMutableTag);
             var strict = parseResult.GetValue(GlobalOptions.Strict);
             var requireDigest = parseResult.GetValue(GlobalOptions.RequireDigest);
+            var requireSignature = parseResult.GetValue(GlobalOptions.RequireSignature);
 
             ResolvedContext resolved;
             try
@@ -140,7 +144,9 @@ public static class CiCommand
             }
 
             // A run that publishes pins what it pushes; one that doesn't must find the digests.
-            if (!doSkipApply && publishReason is not null && PlanOutput.UnpinnedBlocks(manifest, config, requireDigest))
+            if (!doSkipApply && publishReason is not null && (
+                    PlanOutput.UnpinnedBlocks(manifest, config, requireDigest) ||
+                    PlanOutput.UnpinnedBlocks(manifest, config, requireSignature, SignatureCheck.Flag)))
             {
                 return 1;
             }
@@ -230,6 +236,12 @@ public static class CiCommand
                 return 0;
             }
             else if (!await PublishStepAsync(publishReason, resolved, manifest, ct))
+            {
+                return 1;
+            }
+            // After publishing, so images this run pushed (and signed) are checked like promoted ones.
+            else if (requireSignature &&
+                     await SignatureCheck.BlocksAsync(manifest, config, envName, resolved.AppHostDirectory, ct))
             {
                 return 1;
             }

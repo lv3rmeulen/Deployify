@@ -18,7 +18,10 @@ namespace Deployify.Commands;
 /// environment published in the target environment's deployment state, so the target's next
 /// apply deploys exactly those images without building them again. When the target uses another
 /// registry, the images are copied there by digest first, with their cosign attestations when the
-/// source environment attests SBOMs. Nothing is deployed.
+/// source environment attests SBOMs and their signatures when it signs them. With
+/// <c>--require-signature</c>, every image must carry a signature the target trusts, checked in the
+/// source registry before anything is copied and in the target registry before anything is
+/// recorded. Nothing is deployed.
 /// </summary>
 public static class PromoteCommand
 {
@@ -59,6 +62,7 @@ public static class PromoteCommand
         cmd.Options.Add(toOpt);
         cmd.Options.Add(imageTagOpt);
         cmd.Options.Add(copyWithOpt);
+        cmd.Options.Add(GlobalOptions.RequireSignature);
         cmd.Options.Add(GlobalOptions.DryRun);
         cmd.Options.Add(GlobalOptions.Output);
 
@@ -69,6 +73,7 @@ public static class PromoteCommand
             var to = parseResult.GetValue(toOpt)!;
             var tagOverride = parseResult.GetValue(imageTagOpt)?.Trim();
             var dryRun = parseResult.GetValue(GlobalOptions.DryRun);
+            var requireSignature = parseResult.GetValue(GlobalOptions.RequireSignature);
             ImageCopyTool? copyWith = ImageCopier.TryParse(parseResult.GetValue(copyWithOpt), out var parsedTool)
                 ? parsedTool
                 : null;
@@ -128,12 +133,17 @@ public static class PromoteCommand
             var entries = ImagePromotion.Plan(manifest, source, from, target);
             var copied = new HashSet<string>(StringComparer.Ordinal);
             var attestationsCopied = new Dictionary<string, int>(StringComparer.Ordinal);
+            var signaturesCopied = new Dictionary<string, int>(StringComparer.Ordinal);
+            var signatureVerified = requireSignature
+                ? entries.ToDictionary(e => e.Service, _ => false, StringComparer.Ordinal)
+                : null;
             string? copyToolName = null;
             void SetResult(bool promoted, int recorded)
             {
                 if (json is not null)
                 {
-                    json.Result = ToJson(from, to, tag, dryRun, promoted, recorded, copyToolName, entries, copied, attestationsCopied);
+                    json.Result = ToJson(from, to, tag, dryRun, promoted, recorded, copyToolName, entries, copied, attestationsCopied,
+                        signaturesCopied, signatureVerified);
                 }
             }
 
@@ -188,8 +198,68 @@ public static class PromoteCommand
                 return 1;
             }
 
+            // Signatures go with every image that moves to another repository when the source signs
+            // them, or when they're required, so the target can verify them where it pulls from.
+            var signer = new ImageSigner(logger: logger);
+            var signed = source.Signing.Enabled || requireSignature
+                ? entries.Where(e => e.NeedsCopy).ToList()
+                : [];
+            SignaturePolicy? policy = null;
+            var trustedBy = to;
+            if (requireSignature)
+            {
+                // The target decides which signatures it trusts; one without signing settings trusts the source's.
+                var trust = target.Signing;
+                if (!ImageSigner.HasVerificationSettings(trust))
+                {
+                    trust = source.Signing;
+                    trustedBy = from;
+                }
+
+                try
+                {
+                    policy = ImageSigner.ResolvePolicy(trust, resolved.AppHostDirectory, trustedBy);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    ConsoleDeploymentReporter.Instance.Error($"{SignatureCheck.Flag} is set, but {ex.Message}");
+                    return 1;
+                }
+            }
+
+            if ((signed.Count > 0 || policy is not null) && !await signer.IsAvailableAsync(ct))
+            {
+                ConsoleDeploymentReporter.Instance.Error(policy is not null
+                    ? $"{SignatureCheck.Flag} is set, but cosign isn't installed. Install cosign 3.0.3 or later."
+                    : $"{from} signs its images (signing.enabled), so their signatures are copied with the images, but cosign " +
+                      "isn't installed. Install cosign 3.0.3 or later.");
+                return 1;
+            }
+
+            // Before copying anything, and in a dry-run too: it only reads the source registry.
+            if (policy is not null)
+            {
+                AnsiConsole.WriteLine();
+                var failures = await SignatureCheck.VerifyAsync(signer,
+                    [.. entries.Select(e => (e.Service, $"{e.SourceRepository}@{e.Digest}"))], policy, ct);
+                if (failures > 0)
+                {
+                    ConsoleDeploymentReporter.Instance.Error(
+                        $"{failures} image(s) in {from} have no signature {trustedBy} trusts ({policy.Description}), so nothing was promoted.");
+                    return 1;
+                }
+
+                // An image that stays in its repository is verified where the target pulls it; a copied one again after the copy.
+                foreach (var e in entries)
+                {
+                    signatureVerified![e.Service] = !e.NeedsCopy;
+                }
+
+                SetResult(promoted: false, recorded: 0);
+            }
+
             ImageCopyTool tool = default;
-            if (copies.Count > 0 || attested.Count > 0)
+            if (copies.Count > 0 || attested.Count > 0 || signed.Count > 0)
             {
                 if (await ResolveCopyToolAsync(copier, copyWith, ct) is not { } found)
                 {
@@ -209,6 +279,12 @@ public static class PromoteCommand
                 {
                     AnsiConsole.MarkupLineInterpolated(
                         $"[dim]The attestations of {attested.Count} image(s) are copied to {to}'s registry with cosign.[/]");
+                }
+
+                if (signed.Count > 0)
+                {
+                    AnsiConsole.MarkupLineInterpolated(
+                        $"[dim]The signatures of {signed.Count} image(s) are copied to {to}'s registry with cosign.[/]");
                 }
             }
 
@@ -278,6 +354,57 @@ public static class PromoteCommand
                 }
             }
 
+            foreach (var e in signed)
+            {
+                try
+                {
+                    var result = await ConsoleStatus.RunAsync($"Copying {e.Service}'s signatures...",
+                        () => attestations.CopyAsync(copier, tool, e.SourceRepository, e.Digest!, e.TargetRepository, ct,
+                            SigstoreKind.Signature));
+                    signaturesCopied[e.Service] = result.Copied;
+                    SetResult(promoted: false, recorded: 0);
+                    if (result.Found == 0)
+                    {
+                        ConsoleDeploymentReporter.Instance.Warn(
+                            $"{e.Service}: {e.SourceRepository}@{e.Digest} has no signatures to copy; it was published without them.");
+                    }
+                    else if (result.Copied == 0)
+                    {
+                        AnsiConsole.MarkupLineInterpolated(
+                            $"  [dim]{e.Service}: {e.TargetRepository} already has its {result.Found} signature(s)[/]");
+                    }
+                    else
+                    {
+                        AnsiConsole.MarkupLineInterpolated(
+                            $"  [green]✓[/] {e.Service}: copied {result.Copied} signature(s) to {e.TargetRepository}");
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    ConsoleDeploymentReporter.Instance.Error($"{e.Service}: {ex.Message}");
+                    AnsiConsole.MarkupLine("Nothing was recorded. Fix the problem and promote again; images and signatures already copied are skipped.");
+                    return 1;
+                }
+            }
+
+            // The copies must verify where the target pulls them from before the target is told to deploy them.
+            if (policy is not null && signed.Count > 0)
+            {
+                var failures = await SignatureCheck.VerifyAsync(signer,
+                    [.. signed.Select(e => (e.Service, $"{e.TargetRepository}@{e.Digest}"))], policy, ct);
+                if (failures > 0)
+                {
+                    ConsoleDeploymentReporter.Instance.Error(
+                        $"{failures} image(s) don't verify in {to}'s registry after copying their signatures, so nothing was recorded.");
+                    return 1;
+                }
+
+                foreach (var e in signed)
+                {
+                    signatureVerified![e.Service] = true;
+                }
+            }
+
             var recorded = ImagePromotion.Record(entries, target, DateTimeOffset.UtcNow);
             if (recorded > 0)
             {
@@ -297,7 +424,7 @@ public static class PromoteCommand
             AnsiConsole.MarkupLineInterpolated(
                 $"\n[green]✓[/] Promoted {entries.Count} image(s) to [cyan]{to}[/] ({recorded} newly recorded).");
             AnsiConsole.MarkupLineInterpolated(
-                $"[dim]Deploy them with: deployify apply --env {to} --image-tag {tag} --require-digest[/]");
+                $"[dim]Deploy them with: deployify apply --env {to} --image-tag {tag} {(requireSignature ? "--require-signature" : "--require-digest")}[/]");
             return 0;
         }));
 
@@ -307,11 +434,14 @@ public static class PromoteCommand
     /// <summary>The <c>result</c> of <c>promote --output json</c>.</summary>
     internal static JsonPromotion ToJson(string from, string to, string tag, bool dryRun, bool promoted, int recorded,
         string? copyTool, IEnumerable<ImagePromotionEntry> entries, IReadOnlySet<string> copied,
-        IReadOnlyDictionary<string, int>? attestationsCopied = null) => new(
+        IReadOnlyDictionary<string, int>? attestationsCopied = null, IReadOnlyDictionary<string, int>? signaturesCopied = null,
+        IReadOnlyDictionary<string, bool>? signatureVerified = null) => new(
         from, to, tag, dryRun, promoted, recorded, copyTool,
         [.. entries.Select(e => new JsonPromotedImage(e.Service, e.TargetRepository, e.TargetTag, e.Digest,
             e.SourceRepository, e.SourceTag, e.NeedsCopy, e.AlreadyPromoted, copied.Contains(e.Service), e.Problem,
-            attestationsCopied is not null && attestationsCopied.TryGetValue(e.Service, out var n) ? n : null))]);
+            attestationsCopied is not null && attestationsCopied.TryGetValue(e.Service, out var n) ? n : null,
+            signaturesCopied is not null && signaturesCopied.TryGetValue(e.Service, out var s) ? s : null,
+            signatureVerified is not null && signatureVerified.TryGetValue(e.Service, out var v) ? v : null))]);
 
     /// <summary>The copy tool asked for (when installed), else the first one installed. Null after saying why.</summary>
     private static async System.Threading.Tasks.Task<ImageCopyTool?> ResolveCopyToolAsync(

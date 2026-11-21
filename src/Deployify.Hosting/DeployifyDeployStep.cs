@@ -77,6 +77,7 @@ internal static class DeployifyDeployStep
             HealthGate = options.HealthGate,
             Strict = options.Strict,
             RequireDigest = options.RequireDigest,
+            RequireSignature = options.RequireSignature,
             Rollout = new RolloutOptions
             {
                 AutoRollback = options.AutoRollback,
@@ -189,6 +190,7 @@ internal static class DeployifyDeployStep
                 : code.HealthTimeout,
             AllowMutableTag = Bool(section, "AllowMutableTag") ?? code.AllowMutableTag,
             RequireDigest = Bool(section, "RequireDigest") ?? code.RequireDigest,
+            RequireSignature = Bool(section, "RequireSignature") ?? code.RequireSignature,
             AutoApprove = Bool(section, "AutoApprove") ?? code.AutoApprove,
             Strict = Bool(section, "Strict") ?? code.Strict,
             AllowUnverifiedPlugins = Bool(section, "AllowUnverifiedPlugins") ?? code.AllowUnverifiedPlugins

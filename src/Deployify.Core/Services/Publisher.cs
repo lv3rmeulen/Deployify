@@ -17,7 +17,8 @@ namespace Deployify.Core.Services;
 /// Builds the images Deployify owns and pushes them to the configured registry: .NET projects
 /// with the SDK's container support, Dockerfile builds with docker or podman. The content digest
 /// of every pushed image is recorded in <see cref="EnvironmentConfig.PublishedImages"/>, so the
-/// artifacts generated afterwards can pin it. With <see cref="EnvironmentConfig.Sbom"/> enabled, every
+/// artifacts generated afterwards can pin it. With <see cref="EnvironmentConfig.Signing"/> enabled, every
+/// pushed image is signed with cosign, by digest. With <see cref="EnvironmentConfig.Sbom"/> enabled, every
 /// built image also gets an SBOM, attached to the pushed image as a signed attestation.
 /// </summary>
 public partial class Publisher(ILogger<Publisher> logger) : IPublisher
@@ -56,6 +57,8 @@ public partial class Publisher(ILogger<Publisher> logger) : IPublisher
         {
             await sbom.EnsureToolsAsync(config.Sbom, attest: !string.IsNullOrEmpty(config.ContainerRegistry), ct);
         }
+
+        var signer = await PrepareSigningAsync(config, appHostDirectory, ct);
 
         var runtime = await ResolveRuntimeAsync(config.ContainerRuntime, ct);
 
@@ -140,9 +143,74 @@ public partial class Publisher(ILogger<Publisher> logger) : IPublisher
             built.Add(await BuildDockerfileAsync(name, build, config, runtime, ct));
         }
 
+        if (signer is not null)
+        {
+            await SignAsync(signer, built, config, appHostDirectory, ct);
+        }
+
         if (sbom is not null)
         {
             await AttachSbomsAsync(sbom, built, config, runtime, appHostDirectory, ct);
+        }
+    }
+
+    /// <summary>
+    /// The signer when <c>signing.enabled</c> applies to this publish, after checking cosign is
+    /// installed and a key file exists, so publish stops before building rather than after pushing
+    /// unsigned images. Null when signing is off, or there's no registry to push signatures to.
+    /// </summary>
+    private async Task<ImageSigner?> PrepareSigningAsync(EnvironmentConfig config, string appHostDirectory, CancellationToken ct)
+    {
+        if (!config.Signing.Enabled)
+        {
+            return null;
+        }
+
+        if (string.IsNullOrEmpty(config.ContainerRegistry))
+        {
+            logger.LogWarning("signing.enabled is set, but there's no containerRegistry: images stay local and aren't signed.");
+            return null;
+        }
+
+        var signer = new ImageSigner(Runner, logger);
+        await signer.EnsureAvailableAsync("signing.enabled is set", ct);
+        if (SbomAttester.ResolveKey(config.Signing.Key, appHostDirectory) is { } key &&
+            !key.Contains("://", StringComparison.Ordinal) && !File.Exists(key))
+        {
+            throw new InvalidOperationException($"signing.key is {config.Signing.Key}, but there's no key file at {key}.");
+        }
+
+        return signer;
+    }
+
+    /// <summary>
+    /// Signs every pushed image by its digest. An image whose digest couldn't be read isn't signed
+    /// by tag, which could sign whatever the tag points at by then: publish fails instead, after
+    /// signing the others, since an unsigned image would fail <c>--require-signature</c> later anyway.
+    /// </summary>
+    private async Task SignAsync(ImageSigner signer, IReadOnlyList<BuiltImage> built, EnvironmentConfig config,
+        string appHostDirectory, CancellationToken ct)
+    {
+        var key = SbomAttester.ResolveKey(config.Signing.Key, appHostDirectory);
+        var unknown = new List<string>();
+        foreach (var image in built.Where(i => i.Pushed))
+        {
+            if (image.Digest is null)
+            {
+                unknown.Add(image.Name);
+                continue;
+            }
+
+            var reference = $"{image.Repository}@{image.Digest}";
+            await signer.SignAsync(image.Name, reference, key, ct);
+            logger.LogInformation("Signed '{Name}': {Reference}.", image.Name, reference);
+        }
+
+        if (unknown.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"Couldn't read the pushed digest of {string.Join(", ", unknown)}, so {(unknown.Count == 1 ? "it isn't" : "they aren't")} " +
+                "signed: signing by tag could sign whatever the tag points at by then. Publish again.");
         }
     }
 
@@ -157,7 +225,10 @@ public partial class Publisher(ILogger<Publisher> logger) : IPublisher
         var options = config.Sbom;
         var directory = Path.Combine(appHostDirectory, config.OutputPath, "sbom");
         var platform = DockerfileBuildCommands.Platform(config.ContainerOs, config.ContainerArch);
-        var key = SbomAttester.ResolveKey(options.Key, appHostDirectory);
+        // Without its own key, the SBOM is signed like the image.
+        var key = SbomAttester.ResolveKey(
+            string.IsNullOrWhiteSpace(options.Key) && config.Signing.Enabled ? config.Signing.Key : options.Key,
+            appHostDirectory);
         var localScheme = runtime == ContainerRuntime.Podman ? "podman" : "docker";
 
         foreach (var image in built)

@@ -71,6 +71,9 @@
         "Enabled": false,
         "Format": "Spdx",
         "Attest": true
+      },
+      "Signing": {
+        "Enabled": false
       }
     }
   }

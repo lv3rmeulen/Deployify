@@ -33,6 +33,7 @@ deployify ci [options]
 | `--auto-approve` | Deploy without asking for confirmation. Required when there is no interactive terminal. | `false` |
 | `--strict` | Fail when the manifest has resources Deployify won't deploy, even if nothing depends on them (list the ones you expect under ignoreResources). | `false` |
 | `--require-digest` | Fail instead of deploying a built image by tag when no published digest is recorded for it (for example after 'deployify promote'). | `false` |
+| `--require-signature` | Fail unless every image the environment builds is pinned by digest and has a cosign signature that the environment's signing settings trust (signing.publicKey, or signing.identity and signing.issuer). Needs cosign. | `false` |
 | `--no-health-gate` | Deploy without waiting for services to become healthy and without automatic rollback. | `false` |
 | `--no-rollback` | Wait for health, but leave a failed deployment in place instead of rolling it back. | `false` |
 | `--health-timeout` | Seconds each service may take to become healthy before the rollout fails (default: 600). | `600` |

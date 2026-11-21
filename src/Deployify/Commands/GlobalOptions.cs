@@ -56,6 +56,14 @@ public static class GlobalOptions
         DefaultValueFactory = _ => false
     };
 
+    public static readonly Option<bool> RequireSignature = new("--require-signature")
+    {
+        Description = "Fail unless every image the environment builds is pinned by digest and has a cosign signature " +
+                      "that the environment's signing settings trust (signing.publicKey, or signing.identity and signing.issuer). " +
+                      "Needs cosign.",
+        DefaultValueFactory = _ => false
+    };
+
     public static readonly Option<bool> AllowUnverified = new("--allow-unverified")
     {
         Description = "Start target plugins that deployify-plugins.lock.json has no hash for, with a warning each time " +

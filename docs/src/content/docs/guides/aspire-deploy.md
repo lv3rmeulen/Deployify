@@ -51,6 +51,7 @@ Set in code, or per run through configuration under `Deployify:` (environment va
 | `ImageTag` | `Deployify:ImageTag` | the environment's `ImageTag`; when that is `latest` (or empty) and the run publishes, the commit SHA, as with `deployify ci` |
 | `AllowMutableTag` | `Deployify:AllowMutableTag` | `false`; when `true`, a run that publishes may use `latest` when no commit SHA is available, or when `ImageTag` asks for it, instead of stopping |
 | `RequireDigest` | `Deployify:RequireDigest` | `false`; when `true` and the run doesn't publish, a built image with no published digest for its tag stops the run instead of being deployed by tag |
+| `RequireSignature` | `Deployify:RequireSignature` | `false`; when `true`, every built image must be pinned by digest and have a cosign signature the environment's [`signing` settings](/Deployify/guides/publishing-images/#requiring-signatures) trust, or the run stops before deploying. Needs cosign |
 | `HealthGate` | `Deployify:HealthGate` | `true` |
 | `AutoRollback` | `Deployify:AutoRollback` | `true` |
 | `HealthTimeout` | `Deployify:HealthTimeoutSeconds` | 10 minutes |
@@ -84,6 +85,11 @@ deployify publish --image-tag "$GITHUB_SHA"
 Deployify__Publish=false Deployify__ImageTag="$GITHUB_SHA" Deployify__RequireDigest=true \
   Deployify__AutoApprove=true aspire deploy --non-interactive
 ```
+
+With `RequireSignature`, each built image must also carry a signature the environment trusts, as
+with `deployify apply --require-signature`. A run that doesn't publish checks the signatures before
+planning; one that publishes (and signs, with `signing.enabled`) checks the images it pushed right
+after publishing, before anything is recorded or deployed. It implies `RequireDigest`.
 
 ## Notes
 

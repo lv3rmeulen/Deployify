@@ -28,7 +28,8 @@ public class DeployifyOptionsTests
             HealthTimeout = TimeSpan.FromMinutes(3),
             AutoApprove = true,
             AllowMutableTag = true,
-            RequireDigest = true
+            RequireDigest = true,
+            RequireSignature = true
         };
 
         var resolved = DeployifyDeployStep.Resolve(code, Section([]));
@@ -43,6 +44,7 @@ public class DeployifyOptionsTests
         resolved.AutoApprove.ShouldBeTrue();
         resolved.AllowMutableTag.ShouldBeTrue();
         resolved.RequireDigest.ShouldBeTrue();
+        resolved.RequireSignature.ShouldBeTrue();
     }
 
     [Fact]
@@ -57,7 +59,8 @@ public class DeployifyOptionsTests
             ["Deployify:HealthTimeoutSeconds"] = "90",
             ["Deployify:AutoApprove"] = "TRUE",
             ["Deployify:AllowMutableTag"] = "true",
-            ["Deployify:RequireDigest"] = "true"
+            ["Deployify:RequireDigest"] = "true",
+            ["Deployify:RequireSignature"] = "true"
         }));
 
         resolved.Environment.ShouldBe("staging");
@@ -68,6 +71,7 @@ public class DeployifyOptionsTests
         resolved.AutoApprove.ShouldBeTrue();
         resolved.AllowMutableTag.ShouldBeTrue();
         resolved.RequireDigest.ShouldBeTrue();
+        resolved.RequireSignature.ShouldBeTrue();
     }
 
     [Fact]
@@ -77,11 +81,13 @@ public class DeployifyOptionsTests
 
         resolved.AllowMutableTag.ShouldBeFalse();
         resolved.RequireDigest.ShouldBeFalse();
+        resolved.RequireSignature.ShouldBeFalse();
     }
 
     [Theory]
     [InlineData("Deployify:AutoApprove", "yes", "true or false")]
     [InlineData("Deployify:RequireDigest", "on", "true or false")]
+    [InlineData("Deployify:RequireSignature", "yes", "true or false")]
     [InlineData("Deployify:Target", "not a target!", "not a valid target ID")]
     [InlineData("Deployify:HealthTimeoutSeconds", "-5", "positive number")]
     public void Resolve_RejectsBadValues(string key, string value, string message)

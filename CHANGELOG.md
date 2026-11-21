@@ -13,6 +13,17 @@ Each release can have these sections: **Added**, **Changed**, **Deprecated**, **
 
 ### Added
 
+- Image signing: with `signing.enabled` in the environment, `publish`, `ci` and `aspire deploy`
+  sign every image they push with `cosign sign`, by digest, keyless through Sigstore or with
+  `signing.key`. SBOM attestations use `signing.key` unless `sbom.key` is set.
+  `--require-signature` on `apply`, `ci` and `promote`, and `RequireSignature` in `AddDeployify()`
+  (`Deployify:RequireSignature`) for `aspire deploy`, stop unless every built image is pinned
+  by digest and has a signature the environment trusts: one made with `signing.publicKey` (or a
+  KMS `signing.key`), or a keyless one from `signing.identity` and `signing.issuer` (or their
+  `Regexp` forms). `promote` copies signatures along with images it moves to another registry,
+  and with `--require-signature` verifies each image in the source registry before copying and
+  in the target registry before recording. `promote --output json` reports `signaturesCopied`
+  and `signatureVerified` per image.
 - SBOMs at publish: with `sbom.enabled` in the environment, `publish`, `ci` and `aspire deploy`
   generate an SBOM (SPDX or CycloneDX JSON) for every image they build with syft, scanned from
   the registry by the pushed digest, write it to `{outputPath}/sbom/`, and attach it to the image
