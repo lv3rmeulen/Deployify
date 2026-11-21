@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
+using Deployify.Core.ServiceLogs;
 using Deployify.Core.Models;
 using Deployify.Core.Processes;
 using Deployify.Core.ResourceSources;
@@ -20,7 +21,7 @@ namespace Deployify.Target.Kubernetes;
 public sealed class KubernetesDeploymentTarget(
     IPublisher publisher,
     ILogger<KubernetesDeploymentTarget> logger)
-    : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget, IResourceLifecycle, IResourceSourceProvider
+    : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget, IResourceLifecycle, IResourceSourceProvider, IServiceLogSource
 {
     private readonly KubernetesManifestGenerator _generator = new();
 
@@ -555,6 +556,26 @@ public sealed class KubernetesDeploymentTarget(
         var sourceLogger = loggers.CreateLogger<KubernetesResourceSource>();
         var cfg = GetConfig(config);
         return new KubernetesResourceSource(cfg, Kubectl(cfg, sourceLogger), options, sourceLogger);
+    }
+
+    // ── Logs ──────────────────────────────────────────────────────────────────
+
+    /// <summary><c>kubectl logs</c> of the service's pods, in its own namespace.</summary>
+    public async IAsyncEnumerable<ServiceLogLine> ReadLogsAsync(
+        EnvironmentConfig config, ServiceLogQuery query,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        if (!await KubectlAvailableAsync(ct))
+        {
+            throw new ServiceLogsException("Reading logs on Kubernetes needs kubectl on PATH.");
+        }
+
+        await foreach (var line in KubernetesLogs.ReadAsync(
+                           Kubectl(cfg), KubernetesManifestGenerator.NamespaceFor(cfg, query.Service), query, ct))
+        {
+            yield return line;
+        }
     }
 
     // ── Rollout (health-gated apply) ──────────────────────────────────────────

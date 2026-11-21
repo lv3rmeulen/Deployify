@@ -4,9 +4,11 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Interfaces;
+using Deployify.Core.ServiceLogs;
 using Deployify.Core.Models;
 using Deployify.Core.Processes;
 using Deployify.Core.SecretBackends;
@@ -22,7 +24,7 @@ namespace Deployify.Target.OvhCloud;
 /// fetched from the API, so neither the Control Panel nor a hand-copied kubeconfig is needed.
 /// Manifest settings come from targetConfig["kubernetes"], OVHcloud ones from targetConfig["ovhcloud"].
 /// </summary>
-public sealed class OvhCloudDeploymentTarget : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget, IResourceLifecycle
+public sealed class OvhCloudDeploymentTarget : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget, IResourceLifecycle, IServiceLogSource
 {
     private readonly ILogger _logger;
     private readonly HttpMessageHandler? _apiHandler;
@@ -165,6 +167,19 @@ public sealed class OvhCloudDeploymentTarget : IDeploymentTarget, ISecretStorePr
             ? ConnectAsync(config, CancellationToken.None).GetAwaiter().GetResult()
             : config;
         return Kubernetes.CreateSecretStore(effective, storeLogger);
+    }
+
+    // ── Logs ──────────────────────────────────────────────────────────────────
+
+    /// <summary>The Kubernetes target's logs, once the cluster's kubeconfig is fetched.</summary>
+    public async IAsyncEnumerable<ServiceLogLine> ReadLogsAsync(
+        EnvironmentConfig config, ServiceLogQuery query, [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        var connected = await ConnectAsync(config, ct);
+        await foreach (var line in Kubernetes.ReadLogsAsync(connected, query, ct))
+        {
+            yield return line;
+        }
     }
 
     // ── IDeploymentTarget ─────────────────────────────────────────────────────

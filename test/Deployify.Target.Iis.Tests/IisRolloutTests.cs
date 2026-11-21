@@ -142,7 +142,7 @@ public sealed class IisRolloutTests
 
     [Fact]
     public void Script_HasTheRolloutActions()
-        => IisRemote.Script.ShouldContain("[ValidateSet('Ping', 'List', 'Apply', 'Activate', 'Health', 'Delete')]");
+        => IisRemote.Script.ShouldContain("[ValidateSet('Ping', 'List', 'Apply', 'Activate', 'Health', 'Delete', 'Logs')]");
 }
 
 /// <summary>The real rollout engine driving the IIS target, with the server faked.</summary>

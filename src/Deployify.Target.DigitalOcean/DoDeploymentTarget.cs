@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Interfaces;
+using Deployify.Core.ServiceLogs;
 using Deployify.Core.Models;
 using Microsoft.Extensions.Logging;
 
@@ -22,7 +23,7 @@ namespace Deployify.Target.DigitalOcean;
 /// updates the app and waits for the deployment to go live.
 /// </summary>
 public sealed class DoDeploymentTarget(IPublisher publisher, ILogger<DoDeploymentTarget> logger)
-    : IDeploymentTarget, IResourceLifecycle
+    : IDeploymentTarget, IResourceLifecycle, IServiceLogSource
 {
     public const string Id = "digitalocean";
 
@@ -566,6 +567,25 @@ public sealed class DoDeploymentTarget(IPublisher publisher, ILogger<DoDeploymen
            "(create one at https://cloud.digitalocean.com/account/api/tokens).";
 
     internal static string AppTag(string appName) => $"deployify-app-{appName}";
+
+    // ── Logs ─────────────────────────────────────────────────────────────────
+
+    /// <summary>The run logs of the service's component in the environment's app.</summary>
+    public async IAsyncEnumerable<ServiceLogLine> ReadLogsAsync(
+        EnvironmentConfig config, ServiceLogQuery query,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    {
+        var cfg = DoTargetConfig.From(config);
+        var api = Api(cfg);
+        var app = await api.FindAppAsync(cfg.EffectiveAppName, ct)
+                  ?? throw new ServiceLogsException(
+                      $"There is no App Platform app '{cfg.EffectiveAppName}'. Is this environment deployed?");
+        await foreach (var line in DoLogs.ReadAsync(
+                           api, app.Name, ComponentNames(app.Spec).ToHashSet(StringComparer.Ordinal), app.Id, query, ct))
+        {
+            yield return line;
+        }
+    }
 
     private static IEnumerable<string> ComponentNames(JsonObject spec)
         => new[] { "services", "workers", "jobs", "static_sites", "functions", "databases" }

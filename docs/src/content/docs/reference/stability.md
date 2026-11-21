@@ -96,7 +96,7 @@ The files Deployify writes for itself, locally or in a remote backend: `deployif
 
 See [Format versions](/Deployify/concepts/state/#format-versions) for how this works.
 
-### Plugin protocol 1.0
+### Plugin protocol 1.x
 
 Everything described under [The protocol](/Deployify/extending/plugins/#the-protocol):
 
@@ -105,7 +105,7 @@ Everything described under [The protocol](/Deployify/extending/plugins/#the-prot
   `DEPLOYIFY_PLUGIN_PROTOCOL` variables.
 - Every method name, its request fields and its result fields, and the values of `kind` and
   `state`.
-- The capabilities (`rollout`, `lifecycle`) and what they enable.
+- The capabilities (`rollout`, `lifecycle`, and `logs` from protocol 1.1) and what they enable.
 - Error codes `4001`, `4002` and `5000`, `$/cancelRequest`, `host/resolveParameter` and `host/log`.
 - How plugins are found (`DEPLOYIFY_PLUGIN_PATH`, `.deployify/plugins/`, `~/.deployify/plugins/`,
   `PATH`) and named (`deployify-target-<id>`).

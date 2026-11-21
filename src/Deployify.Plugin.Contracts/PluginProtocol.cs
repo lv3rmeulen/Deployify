@@ -20,8 +20,9 @@ public static class PluginProtocol
     /// <summary>
     /// The protocol version this contract describes. Deployify talks to a plugin when the major
     /// versions match; a higher minor version only adds optional methods and fields.
+    /// 1.1 added the <c>logs/*</c> methods (capability <see cref="Capabilities.Logs"/>).
     /// </summary>
-    public static readonly Version Version = new(1, 0);
+    public static readonly Version Version = new(1, 1);
 
     /// <summary>The executable name prefix Deployify looks for: <c>deployify-target-&lt;id&gt;</c>.</summary>
     public const string ExecutablePrefix = "deployify-target-";
@@ -73,6 +74,17 @@ public static class PluginProtocol
         public const string LifecycleDestroyEnvironment = "lifecycle/destroyEnvironment";
         public const string LifecycleDescribeKept = "lifecycle/describeKept";
 
+        // IServiceLogSource (capability "logs", protocol 1.1). A log stream is opened, read a
+        // batch at a time until a batch says it is done, and closed when the reader stops early.
+        /// <summary>Request: <see cref="LogsOpenRequest"/>, result: <see cref="LogsOpenResult"/>.</summary>
+        public const string LogsOpen = "logs/open";
+
+        /// <summary>Request: <see cref="LogsNextRequest"/>, result: <see cref="LogsBatch"/>.</summary>
+        public const string LogsNext = "logs/next";
+
+        /// <summary>Request: <see cref="LogsCloseRequest"/>, result: null. Closing an unknown or ended stream is not an error.</summary>
+        public const string LogsClose = "logs/close";
+
         // Calls from the plugin to Deployify
         /// <summary>Request: <see cref="ParameterValueRequest"/>, result: <see cref="ParameterValueResult"/>.</summary>
         public const string ResolveParameter = "host/resolveParameter";
@@ -89,6 +101,9 @@ public static class PluginProtocol
 
         /// <summary>Implements the <c>lifecycle/*</c> methods: destroy, prune and adopt.</summary>
         public const string Lifecycle = "lifecycle";
+
+        /// <summary>Implements the <c>logs/*</c> methods: <c>deployify logs</c>. Protocol 1.1.</summary>
+        public const string Logs = "logs";
     }
 
     /// <summary>

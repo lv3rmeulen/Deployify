@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
+using Deployify.Core.ServiceLogs;
 using Deployify.Core.Models;
 using Deployify.Plugin.Testing;
 using Deployify.Target.Compose;
@@ -41,7 +42,8 @@ public sealed class ConformanceTests : IDisposable
         OutputDirectory = _output,
         Live = live,
         Destructive = live,
-        ObserveBudget = TimeSpan.FromSeconds(1)
+        ObserveBudget = TimeSpan.FromSeconds(1),
+        LogsBudget = TimeSpan.FromSeconds(2)
     };
 
     [Fact]
@@ -71,7 +73,8 @@ public sealed class ConformanceTests : IDisposable
             "plan and diff answer",
             "snapshots hold no secret values",
             "observe takes one look",
-            "deleting a missing service succeeds"
+            "deleting a missing service succeeds",
+            "logs without following end"
         ], ignoreOrder: true, report.ToString());
         Should.Throw<ConformanceException>(report.ThrowIfFailed).Message.ShouldContain("✗ observe takes one look");
     }
@@ -111,8 +114,15 @@ public sealed class ConformanceTests : IDisposable
     }
 }
 
-internal abstract class ConformanceTargetBase : IDeploymentTarget, IRolloutTarget, IResourceLifecycle
+internal abstract class ConformanceTargetBase : IDeploymentTarget, IRolloutTarget, IResourceLifecycle, IServiceLogSource
 {
+    public virtual async IAsyncEnumerable<ServiceLogLine> ReadLogsAsync(
+        EnvironmentConfig config, ServiceLogQuery query, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    {
+        await Task.Yield();
+        yield return new ServiceLogLine { Text = "started", Instance = "1" };
+    }
+
     public abstract DeploymentTargetType TargetType { get; }
 
     public string DisplayName => GetType().Name;
@@ -204,6 +214,17 @@ internal sealed class BadTarget : ConformanceTargetBase
     {
         await Task.Delay(TimeSpan.FromSeconds(2), ct);
         return HealthObservation.Healthy();
+    }
+
+    /// <summary>Follows whatever it is asked.</summary>
+    public override async IAsyncEnumerable<ServiceLogLine> ReadLogsAsync(
+        EnvironmentConfig config, ServiceLogQuery query, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    {
+        while (true)
+        {
+            await Task.Delay(50, ct);
+            yield return new ServiceLogLine { Text = "tick" };
+        }
     }
 
     public override Task DeleteServiceAsync(EnvironmentConfig config, string service, DeleteOptions options, CancellationToken ct = default)

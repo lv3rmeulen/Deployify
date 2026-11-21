@@ -229,6 +229,64 @@ public sealed class AcaCliClient(AcaTargetConfig config, ILogger logger, IProces
         return exit == 0;
     }
 
+    // ── Logs ──────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The replicas of a revision and their containers (<c>az containerapp replica list</c>).
+    /// Throws when Azure can't be asked.
+    /// </summary>
+    public async Task<IReadOnlyList<(string Name, IReadOnlyList<string> Containers)>> ListReplicasAsync(
+        string appName, string revision, CancellationToken ct = default)
+    {
+        var (exit, output) = await RunAsync(BuildArgs(
+            "containerapp", "replica", "list", "--name", appName, "--resource-group", config.ResourceGroup,
+            "--revision", revision, "--output", "json"), ct);
+        if (exit != 0)
+        {
+            throw new InvalidOperationException($"Failed to list the replicas of '{appName}': {output.Trim()}");
+        }
+
+        using var doc = JsonDocument.Parse(output);
+        return doc.RootElement.ValueKind != JsonValueKind.Array
+            ? []
+            :
+            [
+                .. doc.RootElement.EnumerateArray().Select(r => (
+                    Name: AcaJson.Str(r, "name") ?? "",
+                    Containers: (IReadOnlyList<string>)
+                    [
+                        .. r.TryGetProperty("properties", out var p) && p.TryGetProperty("containers", out var cs) && cs.ValueKind == JsonValueKind.Array
+                            ? cs.EnumerateArray().Select(c => AcaJson.Str(c, "name")).OfType<string>()
+                            : []
+                    ]))
+                    .Where(r => r.Name.Length > 0)
+            ];
+    }
+
+    /// <summary>
+    /// <c>az containerapp logs show --format json</c> of one container in one replica: the last
+    /// <paramref name="tail"/> lines (0-300), then with <paramref name="follow"/> new lines until
+    /// cancelled. Each line is a JSON object with the time and the text.
+    /// </summary>
+    public IAsyncEnumerable<ProcessOutputLine> StreamLogsAsync(
+        string appName, string revision, string replica, string container, int tail, bool follow, CancellationToken ct = default)
+    {
+        var args = new List<string>
+        {
+            "containerapp", "logs", "show", "--name", appName, "--resource-group", config.ResourceGroup,
+            "--revision", revision, "--replica", replica, "--container", container,
+            "--type", "console", "--format", "json",
+            "--tail", tail.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        };
+        if (follow)
+        {
+            args.AddRange(["--follow", "true"]);
+        }
+
+        // Logs can hold anything an app prints: never copy them into Deployify's own log.
+        return _runner.StreamAsync(new ProcessSpec("az", BuildArgs([.. args])) { Sensitive = true }, ct);
+    }
+
     // ── Rollout ───────────────────────────────────────────────────────────────
 
     /// <summary>

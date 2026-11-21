@@ -99,6 +99,15 @@ public sealed class IisTargetConfig
     public bool AlwaysRunning { get; set; } = true;
 
     /// <summary>
+    /// Have the ASP.NET Core Module write each app's console output to files in
+    /// <c>{sitesRoot}\{site}\logs</c> (its stdout log), so <c>deployify logs</c> can show more
+    /// than the module's own entries in the Application event log. Off by default, as Microsoft
+    /// advises: the module never rotates these files. Deployify keeps the newest 20 per site
+    /// each time it deploys.
+    /// </summary>
+    public bool CaptureStdout { get; set; }
+
+    /// <summary>
     /// Where to reach resources IIS can't host (Redis, databases and other containers), keyed by
     /// resource name. References to them resolve to this host instead of the resource name.
     /// </summary>

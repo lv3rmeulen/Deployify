@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
+using Deployify.Core.ServiceLogs;
 using Deployify.Core.Models;
 using Deployify.Target.Nomad;
 using Deployify.Target.Nomad.Api;
@@ -32,7 +33,7 @@ namespace Deployify.Target.NomadConsul;
 public sealed class NomadConsulDeploymentTarget(
     IPublisher publisher,
     ILogger<NomadConsulDeploymentTarget> logger,
-    ILoggerFactory loggerFactory) : IDeploymentTarget, IRolloutTarget, IResourceLifecycle
+    ILoggerFactory loggerFactory) : IDeploymentTarget, IRolloutTarget, IResourceLifecycle, IServiceLogSource
 {
     private readonly NomadRollout _rollout = new(logger);
 
@@ -46,6 +47,20 @@ public sealed class NomadConsulDeploymentTarget(
 
     public DeploymentTargetType TargetType => DeploymentTargetType.NomadConsul;
     public string DisplayName => "HashiCorp Nomad + Consul Connect";
+
+    // ── Logs ─────────────────────────────────────────────────────────────────
+
+    /// <summary>The job's main task in each running allocation, as on the Nomad target.</summary>
+    public async IAsyncEnumerable<ServiceLogLine> ReadLogsAsync(
+        EnvironmentConfig config, ServiceLogQuery query,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    {
+        using var client = BuildNomadClient(GetConfig(config));
+        await foreach (var line in NomadLogs.ReadAsync(client, query.Service, query, ct))
+        {
+            yield return line;
+        }
+    }
 
     // ── Ping ─────────────────────────────────────────────────────────────────
 

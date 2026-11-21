@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
+using Deployify.Core.ServiceLogs;
 using Deployify.Core.Models;
 using Deployify.Plugin.Contracts;
 using Deployify.Plugin.Sdk;
@@ -43,6 +44,9 @@ public sealed class ConformanceOptions
 
     /// <summary>How long one <c>ObserveAsync</c> may take; it must take one look, not wait.</summary>
     public TimeSpan ObserveBudget { get; init; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>How long reading a service's last lines (without following) may take.</summary>
+    public TimeSpan LogsBudget { get; init; } = TimeSpan.FromSeconds(60);
 }
 
 public enum CheckOutcome
@@ -238,7 +242,7 @@ public static class PluginConformance
 
         if (!options.Live)
         {
-            checks.Add(new("live checks", CheckOutcome.Skipped, "set Live to run ping, plan, diff, rollout and lifecycle checks"));
+            checks.Add(new("live checks", CheckOutcome.Skipped, "set Live to run ping, plan, diff, rollout, lifecycle and logs checks"));
             return new ConformanceReport(checks);
         }
 
@@ -316,6 +320,41 @@ public static class PluginConformance
             }
         }
 
+        var logs = asTarget.GetCapability<IServiceLogSource>();
+        if (logs is null || service is null)
+        {
+            checks.Add(new("logs", CheckOutcome.Skipped, logs is null ? "the target has no logs capability" : "no service to check"));
+        }
+        else
+        {
+            checks.Add(await RunCheckAsync("logs without following end", async () =>
+            {
+                using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                budget.CancelAfter(options.LogsBudget);
+                var count = 0;
+                try
+                {
+                    await foreach (var _ in logs.ReadLogsAsync(config, new ServiceLogQuery { Service = service, Tail = 5 }, budget.Token))
+                    {
+                        count++;
+                    }
+                }
+                catch (ServiceLogsException ex)
+                {
+                    // Not deployed in this environment: a clear message is the right answer.
+                    return Pass($"'{service}': {ex.Message}");
+                }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    return Fail($"still reading after {options.LogsBudget.TotalSeconds:0}s; without Follow the lines must end");
+                }
+
+                return count <= 5 * 50
+                    ? Pass($"{count} line(s)")
+                    : Fail($"{count} lines for a tail of 5; Tail is per instance");
+            }));
+        }
+
         return new ConformanceReport(checks);
     }
 
@@ -348,7 +387,9 @@ public static class PluginConformance
                 problems.Add($"'{t.Id}' has no display name");
             }
 
-            var unknown = t.Capabilities.Except([PluginProtocol.Capabilities.Rollout, PluginProtocol.Capabilities.Lifecycle], StringComparer.OrdinalIgnoreCase).ToList();
+            var unknown = t.Capabilities.Except(
+                [PluginProtocol.Capabilities.Rollout, PluginProtocol.Capabilities.Lifecycle, PluginProtocol.Capabilities.Logs],
+                StringComparer.OrdinalIgnoreCase).ToList();
             if (unknown.Count > 0)
             {
                 problems.Add($"'{t.Id}' declares unknown capabilities: {string.Join(", ", unknown)}");

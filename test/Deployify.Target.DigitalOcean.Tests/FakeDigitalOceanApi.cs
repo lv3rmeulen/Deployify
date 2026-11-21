@@ -34,6 +34,26 @@ internal sealed class FakeDigitalOceanApi : IDigitalOceanApi
 
     public Task<string?> PingAsync(CancellationToken ct) => Task.FromResult(PingError);
 
+    /// <summary>What the logs endpoint answers, and the lines behind each URL.</summary>
+    public DoLogUrls LogUrls { get; set; } = new(null, []);
+    public Dictionary<string, string[]> LogContent { get; } = [];
+
+    public Task<DoLogUrls> GetRunLogUrlsAsync(string appId, string component, bool follow, int? tailLines, CancellationToken ct)
+    {
+        Calls.Add($"logs {appId}/{component} follow={follow} tail={tailLines?.ToString() ?? "all"}");
+        return Task.FromResult(LogUrls);
+    }
+
+    public async IAsyncEnumerable<string> ReadLogLinesAsync(string url, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        Calls.Add($"read {url}");
+        foreach (var line in LogContent.GetValueOrDefault(url, []))
+        {
+            await Task.Yield();
+            yield return line;
+        }
+    }
+
     public Task<DoApp?> FindAppAsync(string name, CancellationToken ct)
         => Task.FromResult(Apps.Values.FirstOrDefault(a => a.Name == name));
 

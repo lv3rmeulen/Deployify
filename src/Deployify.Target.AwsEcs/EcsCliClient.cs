@@ -370,6 +370,124 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger, IProces
         return await CreateServiceAsync(serviceName, taskDefinitionArn, desiredCount, ct);
     }
 
+    // ── Logs ──────────────────────────────────────────────────────────────────
+
+    /// <summary>The CloudWatch log group the task definitions send container output to.</summary>
+    public string LogGroup => config.LogGroupName ?? $"/deployify/{config.ClusterName}";
+
+    /// <summary>IDs of the service's running tasks (<c>ecs list-tasks</c>). Throws when ECS can't be asked.</summary>
+    public async Task<IReadOnlyList<string>> ListServiceTaskIdsAsync(string serviceName, CancellationToken ct = default)
+    {
+        var (exit, output) = await RunAsync(BuildArgs(
+            "ecs", "list-tasks", "--cluster", config.ClusterName, "--service-name", serviceName,
+            "--desired-status", "RUNNING", "--output", "json"), ct);
+        if (exit != 0)
+        {
+            if (output.Contains("ServiceNotFoundException", StringComparison.Ordinal))
+            {
+                throw new Core.ServiceLogs.ServiceLogsException(
+                    $"ECS cluster '{config.ClusterName}' has no service '{serviceName}'. Is it deployed to this environment?");
+            }
+
+            throw new InvalidOperationException($"ecs list-tasks failed: {output.Trim()}");
+        }
+
+        using var doc = JsonDocument.Parse(output);
+        return
+        [
+            .. doc.RootElement.TryGetProperty("taskArns", out var arns) && arns.ValueKind == JsonValueKind.Array
+                ? arns.EnumerateArray().Select(a => a.GetString() ?? "").Where(a => a.Length > 0).Select(a => a[(a.LastIndexOf('/') + 1)..])
+                : []
+        ];
+    }
+
+    /// <summary>The log stream under <paramref name="prefix"/> with the latest event, or null.</summary>
+    public async Task<string?> GetLatestLogStreamAsync(string prefix, CancellationToken ct = default)
+    {
+        var (exit, output) = await RunAsync(BuildArgs(
+            "logs", "describe-log-streams", "--log-group-name", LogGroup, "--log-stream-name-prefix", prefix,
+            "--output", "json"), ct);
+        if (exit != 0)
+        {
+            if (output.Contains("ResourceNotFoundException", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            throw new InvalidOperationException($"logs describe-log-streams failed: {output.Trim()}");
+        }
+
+        using var doc = JsonDocument.Parse(output);
+        return doc.RootElement.TryGetProperty("logStreams", out var streams) && streams.ValueKind == JsonValueKind.Array
+            ? streams.EnumerateArray()
+                .OrderByDescending(s => s.TryGetProperty("lastEventTimestamp", out var t) && t.ValueKind == JsonValueKind.Number ? t.GetInt64() : 0)
+                .Select(s => s.TryGetProperty("logStreamName", out var n) ? n.GetString() : null)
+                .FirstOrDefault(n => n is not null)
+            : null;
+    }
+
+    /// <summary>
+    /// The last <paramref name="limit"/> events of one log stream (<c>logs get-log-events</c>),
+    /// oldest first, optionally only those since <paramref name="since"/>. A stream that doesn't
+    /// exist (yet) has none.
+    /// </summary>
+    public async Task<IReadOnlyList<(DateTimeOffset Time, string Message)>> GetLogEventsAsync(
+        string stream, int limit, DateTimeOffset? since, CancellationToken ct = default)
+    {
+        var args = new List<string>
+        {
+            "logs", "get-log-events", "--log-group-name", LogGroup, "--log-stream-name", stream,
+            "--limit", limit.ToString(System.Globalization.CultureInfo.InvariantCulture), "--no-start-from-head", "--output", "json"
+        };
+        if (since is { } s)
+        {
+            args.AddRange(["--start-time", s.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture)]);
+        }
+
+        // The events are the app's output: keep them out of Deployify's log.
+        var (exit, output) = await RunAsync(BuildArgs([.. args]), ct, sensitive: true);
+        if (exit != 0)
+        {
+            if (output.Contains("ResourceNotFoundException", StringComparison.Ordinal))
+            {
+                return [];
+            }
+
+            throw new InvalidOperationException($"logs get-log-events failed: {output.Trim()}");
+        }
+
+        return ParseLogEvents(output);
+    }
+
+    internal static IReadOnlyList<(DateTimeOffset Time, string Message)> ParseLogEvents(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        if (!doc.RootElement.TryGetProperty("events", out var events) || events.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        return
+        [
+            .. events.EnumerateArray().Select(e => (
+                DateTimeOffset.FromUnixTimeMilliseconds(e.TryGetProperty("timestamp", out var t) && t.ValueKind == JsonValueKind.Number ? t.GetInt64() : 0),
+                (e.TryGetProperty("message", out var m) ? m.GetString() ?? "" : "").TrimEnd('\n', '\r')))
+        ];
+    }
+
+    /// <summary>
+    /// <c>aws logs tail --follow</c> of every stream under <paramref name="prefix"/> from
+    /// <paramref name="since"/>, so tasks that start later are followed too. Each line reads
+    /// "TIME STREAM MESSAGE".
+    /// </summary>
+    public IAsyncEnumerable<ProcessOutputLine> FollowLogsAsync(string prefix, DateTimeOffset since, CancellationToken ct = default)
+        => _runner.StreamAsync(new ProcessSpec("aws", BuildArgs(
+            "logs", "tail", LogGroup, "--log-stream-name-prefix", prefix, "--follow", "--format", "detailed",
+            "--since", since.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", System.Globalization.CultureInfo.InvariantCulture)))
+        {
+            Sensitive = true
+        }, ct);
+
     // ── Validate ─────────────────────────────────────────────────────────────
 
     public async Task<IReadOnlyList<string>> ValidateTaskDefinitionAsync(

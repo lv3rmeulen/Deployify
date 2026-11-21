@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
+using Deployify.Core.ServiceLogs;
 using Deployify.Core.Models;
 using Deployify.Core.Processes;
 using Microsoft.Extensions.Logging;
@@ -33,7 +34,7 @@ namespace Deployify.Target.Compose;
 /// </summary>
 public sealed class ComposeDeploymentTarget(
     IPublisher publisher,
-    ILogger<ComposeDeploymentTarget> logger) : IDeploymentTarget, IRolloutTarget, IResourceLifecycle
+    ILogger<ComposeDeploymentTarget> logger) : IDeploymentTarget, IRolloutTarget, IResourceLifecycle, IServiceLogSource
 {
     private readonly ComposeFileGenerator _generator = new();
 
@@ -43,6 +44,13 @@ public sealed class ComposeDeploymentTarget(
     private Task<bool> CliAvailableAsync(CancellationToken ct) => ComposeRunner.IsAvailableAsync(Processes, ct);
 
     private ComposeRunner Runner(ComposeTargetConfig cfg) => new(cfg, logger, Processes);
+
+    /// <summary><c>docker logs</c> of the service's containers in the Compose project.</summary>
+    public IAsyncEnumerable<ServiceLogLine> ReadLogsAsync(EnvironmentConfig config, ServiceLogQuery query, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        return ComposeLogs.ReadAsync(Runner(cfg), cfg.ProjectName, query, ct);
+    }
 
     public DeploymentTargetType TargetType => DeploymentTargetType.Compose;
     public string DisplayName => "Docker Compose";

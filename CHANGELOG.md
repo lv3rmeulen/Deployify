@@ -13,6 +13,25 @@ Each release can have these sections: **Added**, **Changed**, **Deprecated**, **
 
 ### Added
 
+- `deployify logs <service>`: one command to read a deployed service's console output on every
+  target. It finds the service's instances in the environment and reads them where the platform
+  keeps them: `kubectl logs` of the service's pods (Kubernetes, Helm, Argo CD, Flux, OVHcloud),
+  `docker logs` of its containers (Compose), Nomad's client filesystem API (Nomad, Nomad + Consul),
+  CloudWatch Logs (ECS), the console log stream of each replica (Container Apps), App Platform's
+  run logs (DigitalOcean plugin), and the ASP.NET Core Module's stdout files and event log
+  entries (IIS). `--follow`, `--tail` (per instance, or `all`), `--since` (`10m`, `2h`, a time),
+  `--timestamps`, `--no-prefix` and `--output json` (JSON Lines). stdout carries only the log lines;
+  messages go to stderr. A service that isn't deployed is an error; one with no output isn't.
+  See the [logs guide](https://lv3rmeulen.github.io/Deployify/guides/logs/) for what each target
+  can and can't do (Nomad keeps no times, so no `--since`; Container Apps keeps 300 lines per replica).
+- `IServiceLogSource` in `Deployify.Core`: the optional capability behind `deployify logs`.
+- Plugin protocol 1.1: the `logs` capability with `logs/open`, `logs/next` and `logs/close`, so a
+  plugin target can serve `deployify logs`. `Deployify.Plugin.Sdk` declares and serves it for a
+  target that implements `IServiceLogSource`, and `Deployify.Plugin.Testing` checks that a read
+  without following ends. Plugins that speak 1.0 keep working; they just don't offer logs.
+- IIS: `iis.captureStdout` (off by default) has the ASP.NET Core Module write each app's console
+  output to `{sitesRoot}\{site}\logs`, where `deployify logs` reads it, keeping the newest 20
+  files per site on each deploy. Turning it on deploys each site again; leaving it off changes nothing.
 - AWS Secrets Manager secret backend for the ECS target: `"secrets": { "backend": "SecretsManager" }`.
   Each service's secret env vars are one JSON secret, `<secretsPrefix>/<service>` (default
   `deployify/<cluster>/<service>`), and the task definition reads each key by ARN. `apply` writes a

@@ -57,6 +57,7 @@
           "CertificateStore": "My",
           "AppPoolIdentity": "ApplicationPoolIdentity",
           "AlwaysRunning": true,
+          "CaptureStdout": false,
           "ExternalHosts": {}
         }
       },

@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Interfaces;
+using Deployify.Core.ServiceLogs;
 using Deployify.Core.Models;
 using Deployify.Core.Processes;
 using Deployify.Core.SecretBackends;
@@ -23,7 +24,7 @@ namespace Deployify.Target.GitOps;
 /// registers each folder with the controller; the controller applies them to the cluster.
 /// Everything except the controller's own objects and status is shared by Argo CD and Flux.
 /// </summary>
-public abstract class GitOpsDeploymentTarget : IDeploymentTarget, ISecretStoreProvider, IResourceLifecycle
+public abstract class GitOpsDeploymentTarget : IDeploymentTarget, ISecretStoreProvider, IResourceLifecycle, IServiceLogSource
 {
     private readonly IPublisher _publisher;
     private readonly KubernetesManifestGenerator _generator = new();
@@ -54,6 +55,13 @@ public abstract class GitOpsDeploymentTarget : IDeploymentTarget, ISecretStorePr
             Processes = processes
         };
     }
+
+    /// <summary>
+    /// The controller applies the Kubernetes target's manifests, so the pods are found the same
+    /// way: kubectl, with the environment's kubeconfig and context.
+    /// </summary>
+    public IAsyncEnumerable<ServiceLogLine> ReadLogsAsync(EnvironmentConfig config, ServiceLogQuery query, CancellationToken ct = default)
+        => Kubernetes.ReadLogsAsync(config, query, ct);
 
     public abstract DeploymentTargetType TargetType { get; }
 

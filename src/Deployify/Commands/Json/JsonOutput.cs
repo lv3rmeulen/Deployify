@@ -123,7 +123,7 @@ internal static class JsonOutput
     /// A console on stderr. Never interactive: nothing may wait for input when a program reads
     /// the output, and spinners become plain lines.
     /// </summary>
-    private static IAnsiConsole CreateErrorConsole(TextWriter error)
+    internal static IAnsiConsole CreateErrorConsole(TextWriter error)
     {
         var console = AnsiConsole.Create(new AnsiConsoleSettings
         {

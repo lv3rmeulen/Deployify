@@ -116,6 +116,11 @@ public static class DeployifyPlugin
             {
                 // Deployify went away or asked us to stop; that's how a session normally ends.
             }
+            finally
+            {
+                // Following log streams don't end on their own.
+                await server.CloseLogStreamsAsync();
+            }
         }
 
         return 0;

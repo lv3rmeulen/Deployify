@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Interfaces;
+using Deployify.Core.ServiceLogs;
 using Deployify.Core.Models;
 using Deployify.Plugin.Contracts;
 using Methods = Deployify.Plugin.Contracts.PluginProtocol.Methods;
@@ -16,7 +18,7 @@ namespace Deployify.Plugins;
 /// how commands ask for them (<c>target.GetCapability&lt;IRolloutTarget&gt;()</c>).
 /// </summary>
 public sealed class RemoteDeploymentTarget
-    : IDeploymentTarget, IRolloutTarget, IResourceLifecycle,
+    : IDeploymentTarget, IRolloutTarget, IResourceLifecycle, IServiceLogSource,
       ICapabilityProvider, IStartableTarget, IAsyncDisposable
 {
     private readonly PluginHost _host;
@@ -59,6 +61,7 @@ public sealed class RemoteDeploymentTarget
         var info = _info!;
         var name = capability == typeof(IRolloutTarget) ? PluginProtocol.Capabilities.Rollout
             : capability == typeof(IResourceLifecycle) ? PluginProtocol.Capabilities.Lifecycle
+            : capability == typeof(IServiceLogSource) ? PluginProtocol.Capabilities.Logs
             : null;
         return name is not null && info.Capabilities.Contains(name, StringComparer.OrdinalIgnoreCase) ? this : null;
     }
@@ -175,6 +178,84 @@ public sealed class RemoteDeploymentTarget
     public async Task<IReadOnlyList<string>> DescribeKeptAsync(
         EnvironmentConfig config, DeleteOptions options, CancellationToken ct = default)
         => (await DeleteCallAsync<LinesResult>(Methods.LifecycleDescribeKept, config, null, options, ct)).Lines;
+
+    // ── IServiceLogSource ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Opens a log stream in the plugin and reads it a batch at a time; each <c>logs/next</c>
+    /// waits up to a second for lines, so following doesn't busy-poll. A reader that stops early
+    /// (Ctrl+C) closes the stream.
+    /// </summary>
+    public async IAsyncEnumerable<ServiceLogLine> ReadLogsAsync(
+        EnvironmentConfig config, ServiceLogQuery query, [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        var connection = await ConnectAsync(ct);
+        Prepare(null, config);
+        var open = await LogsCallAsync<LogsOpenResult>(connection, Methods.LogsOpen, new LogsOpenRequest
+        {
+            TargetId = TargetType.Value,
+            Environment = WireMapping.ToWire(config),
+            Service = query.Service,
+            Tail = query.Tail,
+            Since = query.Since,
+            Follow = query.Follow
+        }, ct);
+
+        var done = false;
+        try
+        {
+            while (!done)
+            {
+                var batch = await LogsCallAsync<LogsBatch>(
+                    connection, Methods.LogsNext, new LogsNextRequest { StreamId = open.StreamId }, ct);
+                done = batch.Done;
+                foreach (var line in batch.Lines)
+                {
+                    yield return new ServiceLogLine
+                    {
+                        Text = line.Text,
+                        Instance = line.Instance,
+                        Timestamp = line.Timestamp,
+                        IsError = line.IsError
+                    };
+                }
+            }
+        }
+        finally
+        {
+            if (!done)
+            {
+                // Best effort: the plugin may already be gone, and the session closes every stream anyway.
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                try
+                {
+                    await connection.InvokeAsync<object?>(Methods.LogsClose, new LogsCloseRequest { StreamId = open.StreamId }, timeout.Token);
+                }
+                catch (Exception ex) when (ex is PluginException or OperationCanceledException)
+                {
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// A logs call; what the target itself failed with (an unknown service, an option its
+    /// platform can't honor) becomes a <see cref="ServiceLogsException"/>, as with a built-in target.
+    /// </summary>
+    private static async Task<T> LogsCallAsync<T>(PluginConnection connection, string method, object request, CancellationToken ct)
+    {
+        try
+        {
+            return await connection.InvokeAsync<T>(method, request, ct);
+        }
+        catch (PluginException ex) when (ex.InnerException is StreamJsonRpc.RemoteInvocationException
+                                         {
+                                             ErrorCode: PluginProtocol.ErrorCodes.TargetFailed
+                                         } remote)
+        {
+            throw new ServiceLogsException(remote.Message, ex);
+        }
+    }
 
     // ── Plumbing ─────────────────────────────────────────────────────────────
 

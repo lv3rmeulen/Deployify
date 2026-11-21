@@ -17,11 +17,12 @@ internal static class DependencyInjection
     /// <param name="allowUnverifiedPlugins">Start plugins the lock file has no hash for, with a warning (<c>--allow-unverified</c>).</param>
     /// <remarks>
     /// With <c>--output json</c> the logs go to stderr, where the rest of the human-readable output
-    /// goes, so stdout carries nothing but the JSON document.
+    /// goes, so stdout carries nothing but the JSON document. The same for a command that keeps
+    /// stdout for its own output (<see cref="ConsoleRouting.StdoutReserved"/>, <c>deployify logs</c>).
     /// </remarks>
     public static IServiceCollection AddDeployifyCore(this IServiceCollection services, bool allowUnverifiedPlugins = false)
     {
-        var logToStderr = JsonOutput.Current is not null;
+        var logToStderr = JsonOutput.Current is not null || ConsoleRouting.StdoutReserved;
         return services
             .AddLogging(b => b
                 .AddConsole(o =>

@@ -107,6 +107,7 @@ public sealed class IisSiteGenerator
                 CertificateThumbprint = string.IsNullOrWhiteSpace(iis.CertificateThumbprint) ? null : iis.CertificateThumbprint.Replace(" ", ""),
                 CertificateStore = iis.CertificateStore,
                 KeepReleases = Math.Max(2, iis.KeepReleases), // the current one and at least one to roll back to
+                CaptureStdout = iis.CaptureStdout,
                 DependsOn = resource.References?.Select(r => r.Name)
                     .Where(d => manifest.Resources.TryGetValue(d, out var dep) && dep.IsDeployable)
                     .ToList() ?? []

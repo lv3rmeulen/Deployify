@@ -188,7 +188,8 @@ environment against it before calling the plugin, so a wrong type is reported up
 Every plugin target supports `generate`, `validate`, `plan`, `apply`, `publish`, `diff`,
 `explain` and `graph`. Health-gated rollouts and `rollback` need the plugin to declare the
 `rollout` capability. `destroy`, `apply --prune` and `state adopt` need the `lifecycle`
-capability. `deployify plugin list --check` shows which ones a plugin declares.
+capability. [`deployify logs`](/Deployify/guides/logs/) needs the `logs` capability (protocol
+1.1). `deployify plugin list --check` shows which ones a plugin declares.
 
 ## Writing a plugin in .NET
 
@@ -197,6 +198,7 @@ Reference `Deployify.Plugin.Sdk` and implement the same interfaces the built-in 
 - `IDeploymentTarget`: required
 - `IRolloutTarget`: optional, adds health-gated rollouts with automatic rollback
 - `IResourceLifecycle`: optional, adds destroy and prune
+- `IServiceLogSource`: optional, adds `deployify logs`
 
 ```csharp
 // Program.cs of a project with <AssemblyName>deployify-target-example</AssemblyName>
@@ -268,7 +270,7 @@ public async Task Plugin_KeepsDeployifyContracts()
             Manifest = TestManifests.ApiWithDatabase(),
             Config = new EnvironmentConfig { TargetConfig = { ["example"] = ... } },
             OutputDirectory = Directory.CreateTempSubdirectory().FullName,
-            Live = false,          // true: also ping, plan, diff, capture, observe, list managed
+            Live = false,          // true: also ping, plan, diff, capture, observe, list managed, logs
             Destructive = false    // true (with Live): also delete a missing service twice
         });
 
@@ -346,7 +348,7 @@ in [`Deployify.Plugin.Contracts`](https://github.com/lv3rmeulen/Deployify/blob/m
 
 A session:
 
-1. Deployify starts the plugin with `DEPLOYIFY_PLUGIN=1` and `DEPLOYIFY_PLUGIN_PROTOCOL=1.0` set.
+1. Deployify starts the plugin with `DEPLOYIFY_PLUGIN=1` and `DEPLOYIFY_PLUGIN_PROTOCOL=1.1` set.
 2. It sends `initialize` `{ protocolVersion, hostVersion }`. The plugin answers
    `{ protocolVersion, plugin: { name, version }, targets: [{ id, displayName, capabilities, configKey?, configSchema? }] }`.
    The major protocol versions must match; a higher minor version only adds optional things.
@@ -377,6 +379,19 @@ A session:
 | `lifecycle/deleteService` | `service`, `keepSecrets`, `removeVolumes` | `null` |
 | `lifecycle/destroyEnvironment` | `keepSecrets`, `removeVolumes` | `{ lines: [] }` |
 | `lifecycle/describeKept` | `keepSecrets`, `removeVolumes` | `{ lines: [] }` |
+| `logs/open` | `service`, `tail?`, `since?`, `follow` | `{ streamId }` |
+| `logs/next` | `streamId`, `waitMilliseconds` (default 1000), `maxLines` (default 500); no `targetId` or `environment` | `{ lines: [{ text, instance?, timestamp?, isError }], done }` |
+| `logs/close` | `streamId`; no `targetId` or `environment` | `null` |
+
+The `logs/*` methods (capability `logs`, protocol 1.1) read a service's output as a stream.
+`logs/open` starts it and carries no manifest; `tail` is per instance (`0` for none, left out
+for everything the platform keeps), and `since` is an ISO 8601 time. Deployify then calls
+`logs/next` until a batch says `done`. A plugin answers `logs/next` as soon as it has a line,
+or after `waitMilliseconds` with no lines, so following doesn't busy-poll. A stream ends with
+`done` (it wasn't following, or the platform closed it), or with an error response, after which
+the stream is gone. When the user stops early (Ctrl+C), Deployify sends `logs/close`; a plugin
+also closes every open stream when the session ends. The .NET SDK does all of this for a target
+that implements `IServiceLogSource`.
 
 `kind` is one of `added`, `removed`, `changed`, `unchanged`, `unknown`. `state` is one of
 `progressing`, `healthy`, `failed`, `revertedByPlatform`.

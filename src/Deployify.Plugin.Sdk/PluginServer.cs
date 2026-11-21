@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
+using Deployify.Core.ServiceLogs;
 using Deployify.Core.Models;
 using Deployify.Plugin.Contracts;
 using Deployify.Plugins;
@@ -171,6 +172,78 @@ internal sealed class PluginServer(
     public Task<LinesResult> DescribeKeptAsync(DeleteRequest request, CancellationToken ct)
         => RunAsync<IResourceLifecycle, LinesResult>(request, async (lifecycle, _, config) =>
             new LinesResult([.. await lifecycle.DescribeKeptAsync(config, WireMapping.DeleteOptionsFromWire(request), ct)]));
+
+    // ── IServiceLogSource ────────────────────────────────────────────────────
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, LogStream> _logStreams = new(StringComparer.Ordinal);
+
+    [JsonRpcMethod(Methods.LogsOpen, UseSingleObjectParameterDeserialization = true)]
+    public Task<LogsOpenResult> LogsOpenAsync(LogsOpenRequest request, CancellationToken ct)
+        => RunAsync<IServiceLogSource, LogsOpenResult>(request, (logs, _, config) =>
+        {
+            var query = new ServiceLogQuery
+            {
+                Service = request.Service,
+                Tail = request.Tail,
+                Since = request.Since,
+                Follow = request.Follow
+            };
+            var stream = new LogStream(logs.ReadLogsAsync(config, query, CancellationToken.None), logger);
+            _logStreams[stream.Id] = stream;
+            return Task.FromResult(new LogsOpenResult(stream.Id));
+        });
+
+    [JsonRpcMethod(Methods.LogsNext, UseSingleObjectParameterDeserialization = true)]
+    public async Task<LogsBatch> LogsNextAsync(LogsNextRequest request, CancellationToken ct)
+    {
+        await Task.Yield();
+        if (!_logStreams.TryGetValue(request.StreamId, out var stream))
+        {
+            throw Invalid($"There is no open log stream '{request.StreamId}'.");
+        }
+
+        try
+        {
+            var batch = await stream.NextAsync(
+                Math.Clamp(request.MaxLines, 1, 10_000), TimeSpan.FromMilliseconds(Math.Clamp(request.WaitMilliseconds, 0, 30_000)), ct);
+            if (batch.Done)
+            {
+                await CloseLogStreamAsync(stream.Id);
+            }
+
+            return batch;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await CloseLogStreamAsync(stream.Id);
+            logger.LogDebug(ex, "Log stream {Stream} failed.", stream.Id);
+            throw new LocalRpcException(ex.Message) { ErrorCode = PluginProtocol.ErrorCodes.TargetFailed };
+        }
+    }
+
+    [JsonRpcMethod(Methods.LogsClose, UseSingleObjectParameterDeserialization = true)]
+    public async Task<object?> LogsCloseAsync(LogsCloseRequest request)
+    {
+        await CloseLogStreamAsync(request.StreamId);
+        return null;
+    }
+
+    /// <summary>Stops every open log stream; at the end of the session.</summary>
+    public async Task CloseLogStreamsAsync()
+    {
+        foreach (var id in _logStreams.Keys)
+        {
+            await CloseLogStreamAsync(id);
+        }
+    }
+
+    private async Task CloseLogStreamAsync(string id)
+    {
+        if (_logStreams.TryRemove(id, out var stream))
+        {
+            await stream.DisposeAsync();
+        }
+    }
 
     // ── Plumbing ─────────────────────────────────────────────────────────────
 

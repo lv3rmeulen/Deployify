@@ -58,6 +58,7 @@ deployify ci --skip-validate
 | [Your first deployment](https://lv3rmeulen.github.io/Deployify/getting-started/first-deployment/) | Deploy the `hello-aspire` sample to Docker Compose in five minutes |
 | [Deployment targets](https://lv3rmeulen.github.io/Deployify/targets/compose/) | Compose, Kubernetes, Helm, Argo CD / Flux, OVHcloud, Nomad, Nomad + Consul, AWS ECS, Azure Container Apps, IIS, and DigitalOcean App Platform as a plugin |
 | [Health-gated rollouts](https://lv3rmeulen.github.io/Deployify/guides/rollouts/) | Wave-by-wave deploys with automatic rollback |
+| [Reading logs](https://lv3rmeulen.github.io/Deployify/guides/logs/) | `deployify logs <service>`: one command for a service's output on every target |
 | [Parameters and secrets](https://lv3rmeulen.github.io/Deployify/guides/parameters-and-secrets/) | Aspire parameters, secret backends (Vault, Key Vault, SSM, Secrets Manager) |
 | [Running from `aspire deploy`](https://lv3rmeulen.github.io/Deployify/guides/aspire-deploy/) | `builder.AddDeployify()` in your AppHost |
 | [CI/CD](https://lv3rmeulen.github.io/Deployify/guides/ci-cd/) | `deployify ci`, plan gates, GitHub Actions |

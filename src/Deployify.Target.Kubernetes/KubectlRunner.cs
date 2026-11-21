@@ -393,6 +393,36 @@ public sealed class KubectlRunner(KubernetesTargetConfig config, ILogger logger,
         return _runner.StreamAsync(new ProcessSpec("kubectl", args) { Sensitive = true }, ct);
     }
 
+    /// <summary>
+    /// <c>kubectl logs</c> of every pod of a service (<c>-l app={service}</c>), all containers,
+    /// each line prefixed with its pod and container and with its timestamp; the last
+    /// <paramref name="tail"/> lines per container (all when null), only lines since
+    /// <paramref name="since"/>, and with <paramref name="follow"/> new lines until cancelled.
+    /// The pods' stdout and stderr both arrive on kubectl's stdout; its stderr is kubectl's own.
+    /// </summary>
+    public IAsyncEnumerable<ProcessOutputLine> StreamServiceLogsAsync(
+        string namespaceName, string service, int? tail, DateTimeOffset? since, bool follow, CancellationToken ct = default)
+    {
+        var args = new List<string>(_contextArgs)
+        {
+            "logs", "-n", namespaceName, "-l", $"app={service}", "--all-containers", "--prefix", "--timestamps",
+            "--ignore-errors", "--max-log-requests=50",
+            $"--tail={(tail ?? -1).ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+        };
+        if (since is { } s)
+        {
+            args.Add($"--since-time={s.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture)}");
+        }
+
+        if (follow)
+        {
+            args.Add("--follow");
+        }
+
+        // Logs can hold anything an app prints: never copy them into Deployify's own log.
+        return _runner.StreamAsync(new ProcessSpec("kubectl", args) { Sensitive = true }, ct);
+    }
+
     /// <summary>Sets an annotation on an object, or removes it when <paramref name="value"/> is null.</summary>
     public async Task AnnotateAsync(string kind, string name, string namespaceName, string key, string? value, CancellationToken ct = default)
     {

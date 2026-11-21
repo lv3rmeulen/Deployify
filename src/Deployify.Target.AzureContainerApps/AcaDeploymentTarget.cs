@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
+using Deployify.Core.ServiceLogs;
 using Deployify.Core.Models;
 using Deployify.Core.SecretBackends;
 using Deployify.Core.SecretBackends.KeyVault;
@@ -29,7 +30,7 @@ namespace Deployify.Target.AzureContainerApps;
 /// </summary>
 public sealed class AcaDeploymentTarget(
     IPublisher publisher,
-    ILogger<AcaDeploymentTarget> logger) : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget, IResourceLifecycle
+    ILogger<AcaDeploymentTarget> logger) : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget, IResourceLifecycle, IServiceLogSource
 {
     private readonly AcaManifestGenerator _generator = new();
 
@@ -264,6 +265,22 @@ public sealed class AcaDeploymentTarget(
     internal Deployify.Core.Processes.IProcessRunner? Runner { get; init; }
 
     private AcaCliClient Client(AcaTargetConfig cfg) => new(cfg, logger, Runner);
+
+    /// <summary>The console log stream of each replica of the app's latest ready revision.</summary>
+    public async IAsyncEnumerable<ServiceLogLine> ReadLogsAsync(
+        EnvironmentConfig config, ServiceLogQuery query,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    {
+        if (!await AcaCliClient.IsAvailableAsync(Runner ?? Deployify.Core.Processes.ProcessRunner.Default, ct))
+        {
+            throw new ServiceLogsException("Reading logs on Azure Container Apps needs the Azure CLI (az) on PATH.");
+        }
+
+        await foreach (var line in AcaLogs.ReadAsync(Client(GetConfig(config)), query, ct))
+        {
+            yield return line;
+        }
+    }
 
     /// <summary>Creates Key Vault clients (by subscription); replaceable in tests.</summary>
     internal Func<string, IKeyVaultClient> KeyVaultClientFactory { get; init; } =

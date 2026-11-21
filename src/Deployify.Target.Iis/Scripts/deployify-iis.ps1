@@ -11,7 +11,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('Ping', 'List', 'Apply', 'Activate', 'Health', 'Delete')]
+    [ValidateSet('Ping', 'List', 'Apply', 'Activate', 'Health', 'Delete', 'Logs')]
     [string]$Action
 )
 
@@ -124,6 +124,12 @@ $server = {
 
         $sm.CommitChanges()
 
+        # With iis.captureStdout, the ASP.NET Core Module writes the app's console output to
+        # {site}\logs\stdout_*.log, where 'deployify logs' reads it.
+        if ($site.captureStdout) {
+            Enable-StdoutLog $site $releasePath
+        }
+
         $sm = Get-ServerManager
         try {
             $pool = $sm.ApplicationPools[$site.siteName]
@@ -133,6 +139,86 @@ $server = {
         } catch {
             throw "IIS saved '$($site.siteName)' but could not start it: $($_.Exception.Message)"
         }
+    }
+
+    function Get-LogDir([string]$siteName) {
+        return Join-Path (Join-Path $root $siteName) 'logs'
+    }
+
+    # Points the module's stdout log at the site's logs folder, in the release's web.config (which
+    # would override applicationHost.config), lets the pool's identity write there, and keeps the
+    # newest files only: the module starts a new file per process and never rotates them.
+    function Enable-StdoutLog($site, [string]$releasePath) {
+        $logDir = Get-LogDir $site.siteName
+        if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Force -Path $logDir | Out-Null }
+
+        $account = switch ([string]$site.appPoolIdentity) {
+            'NetworkService' { 'NT AUTHORITY\NETWORK SERVICE' }
+            'LocalService' { 'NT AUTHORITY\LOCAL SERVICE' }
+            'LocalSystem' { $null }
+            default { "IIS AppPool\$($site.siteName)" }
+        }
+        if ($null -ne $account) {
+            $acl = Get-Acl -Path $logDir
+            $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+                $account, 'Modify', 'ContainerInherit, ObjectInherit', 'None', 'Allow')
+            $acl.AddAccessRule($rule)
+            Set-Acl -Path $logDir -AclObject $acl
+        }
+
+        $webConfig = Join-Path $releasePath 'web.config'
+        if (Test-Path $webConfig) {
+            [xml]$xml = Get-Content -Raw -Path $webConfig
+            foreach ($node in @($xml.SelectNodes('//aspNetCore'))) {
+                $node.SetAttribute('stdoutLogEnabled', 'true')
+                $node.SetAttribute('stdoutLogFile', (Join-Path $logDir 'stdout'))
+            }
+            $xml.Save($webConfig)
+        } else {
+            $section = $sm.GetApplicationHostConfiguration().GetSection('system.webServer/aspNetCore', $site.siteName)
+            $section.SetAttributeValue('stdoutLogEnabled', $true)
+            $section.SetAttributeValue('stdoutLogFile', (Join-Path $logDir 'stdout'))
+            $sm.CommitChanges()
+        }
+
+        Get-ChildItem -Path $logDir -Filter 'stdout*.log' |
+            Sort-Object LastWriteTimeUtc -Descending |
+            Select-Object -Skip 20 |
+            ForEach-Object { try { Remove-Item -Path $_.FullName -Force } catch { } }
+    }
+
+    # Complete lines of a log file from byte $offset; the last line too when $partial. Opened
+    # shared, since the worker process keeps writing to it.
+    function Read-LogFile([string]$path, [long]$offset, [long]$maxBytes, [bool]$partial) {
+        $stream = [System.IO.File]::Open($path, 'Open', 'Read', 'ReadWrite, Delete')
+        try {
+            $length = $stream.Length
+            if ($offset -gt $length) { $offset = 0 }
+            $skipFirst = $false
+            if ($length - $offset -gt $maxBytes) { $offset = $length - $maxBytes; $skipFirst = $true }
+            [void]$stream.Seek($offset, 'Begin')
+            $count = [int]($length - $offset)
+            $bytes = New-Object byte[] $count
+            $read = 0
+            while ($read -lt $count) {
+                $n = $stream.Read($bytes, $read, $count - $read)
+                if ($n -le 0) { break }
+                $read += $n
+            }
+        } finally {
+            $stream.Dispose()
+        }
+
+        $end = $read
+        if (-not $partial) {
+            $end = [Array]::LastIndexOf($bytes, [byte]10, [Math]::Max(0, $read - 1)) + 1
+            if ($read -eq 0) { $end = 0 }
+        }
+        $text = [System.Text.Encoding]::UTF8.GetString($bytes, 0, $end)
+        $lines = @($text -split "`r?`n")
+        if ($lines.Count -gt 0 -and $lines[-1] -eq '') { $lines = @($lines | Select-Object -SkipLast 1) }
+        if ($skipFirst -and $lines.Count -gt 0) { $lines = @($lines | Select-Object -Skip 1) }
+        return [pscustomobject]@{ lines = $lines; next = $offset + $end }
     }
 
     function Write-Marker([string]$serviceDir, $site) {
@@ -362,6 +448,94 @@ $server = {
             }
             if ($response.code -lt 500) { return Out-Health 'healthy' "HTTP $($response.code) from $url" }
             return Out-Health 'progressing' "HTTP $($response.code) from $url"
+        }
+
+        'Logs' {
+            # The app's console output (with iis.captureStdout) and the ASP.NET Core Module's
+            # entries in the Application event log for this site. Without a cursor: the last
+            # $request.tail lines; with one: what was written since that cursor.
+            $siteName = $request.siteName
+            $serviceDir = Join-Path $root $siteName
+            $marker = Read-Marker $serviceDir
+            if ($null -eq $marker -or $marker.managedBy -ne 'deployify') {
+                throw "'$siteName' is not deployed by Deployify on $env:COMPUTERNAME."
+            }
+
+            $since = $null
+            if ($request.since) { $since = [DateTime]::Parse([string]$request.since, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AdjustToUniversal) }
+            $tail = 10000
+            if ($null -ne $request.tail) { $tail = [Math]::Min(10000, [int]$request.tail) }
+            $cursor = $request.cursor
+            $out = New-Object System.Collections.Generic.List[object]
+
+            # stdout files: stdout_{yyyyMMddHHmmss}_{pid}.log, one per process start.
+            $logDir = Get-LogDir $siteName
+            $files = @()
+            if (Test-Path $logDir) { $files = @(Get-ChildItem -Path $logDir -Filter 'stdout*.log' | Sort-Object LastWriteTimeUtc, Name) }
+            $instanceOf = { param($name) if ($name -match '_(\d+)\.log$') { "pid-$($Matches[1])" } else { $name } }
+            $nextFile = $null
+            $nextOffset = 0
+            if ($null -eq $cursor) {
+                $picked = @($files | Where-Object { $null -eq $since -or $_.LastWriteTimeUtc -ge $since })
+                $collected = New-Object System.Collections.Generic.List[object]
+                for ($i = $picked.Count - 1; $i -ge 0 -and $collected.Count -lt $tail; $i--) {
+                    $read = Read-LogFile $picked[$i].FullName 0 (4MB) (-not $request.follow)
+                    $instance = & $instanceOf $picked[$i].Name
+                    $fileLines = @($read.lines | ForEach-Object { [pscustomobject]@{ text = [string]$_; instance = $instance; error = $false } })
+                    $take = [Math]::Min($fileLines.Count, $tail - $collected.Count)
+                    $collected.InsertRange(0, [object[]]@($fileLines | Select-Object -Last $take))
+                    if ($i -eq $picked.Count - 1) { $nextFile = $picked[$i].Name; $nextOffset = $read.next }
+                }
+                if ($null -eq $nextFile -and $files.Count -gt 0) { $nextFile = $files[-1].Name; $nextOffset = $files[-1].Length }
+                foreach ($l in $collected) { $out.Add($l) }
+            } else {
+                $after = $false
+                if (-not $cursor.file) { $after = $true }
+                foreach ($f in $files) {
+                    $offset = $null
+                    if ($f.Name -eq $cursor.file) { $offset = [long]$cursor.offset; $after = $true }
+                    elseif ($after) { $offset = 0 }
+                    if ($null -eq $offset) { continue }
+                    $read = Read-LogFile $f.FullName $offset (4MB) $false
+                    $instance = & $instanceOf $f.Name
+                    foreach ($l in $read.lines) { $out.Add([pscustomobject]@{ text = [string]$l; instance = $instance; error = $false }) }
+                    $nextFile = $f.Name
+                    $nextOffset = $read.next
+                }
+                if ($null -eq $nextFile) { $nextFile = $cursor.file; $nextOffset = [long]$cursor.offset }
+            }
+
+            # The module's own events for this site: start-up failures, crashes, and why.
+            $lastRecord = 0
+            if ($null -ne $cursor -and $null -ne $cursor.record) { $lastRecord = [long]$cursor.record }
+            $filter = @{ LogName = 'Application'; ProviderName = 'IIS AspNetCore Module V2' }
+            if ($null -ne $since) { $filter.StartTime = $since.ToLocalTime() }
+            $events = @()
+            try { $events = @(Get-WinEvent -FilterHashtable $filter -MaxEvents 1000 -ErrorAction Stop) } catch { }
+            $events = @($events |
+                Where-Object { $_.RecordId -gt $lastRecord -and $null -ne $_.Message -and $_.Message.IndexOf($serviceDir, [StringComparison]::OrdinalIgnoreCase) -ge 0 } |
+                Sort-Object RecordId)
+            if ($null -eq $cursor) { $events = @($events | Select-Object -Last $tail) }
+            $nextRecord = $lastRecord
+            foreach ($e in $events) {
+                $time = $e.TimeCreated.ToUniversalTime().ToString('o')
+                foreach ($line in @($e.Message -split "`r?`n" | Where-Object { $_ -ne '' })) {
+                    $out.Add([pscustomobject]@{ text = [string]$line; instance = 'event-log'; time = $time; error = ($e.Level -le 3) })
+                }
+                $nextRecord = $e.RecordId
+            }
+            if ($null -eq $cursor -and $events.Count -eq 0) {
+                try {
+                    $latest = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'IIS AspNetCore Module V2' } -MaxEvents 1 -ErrorAction Stop)
+                    if ($latest.Count -gt 0) { $nextRecord = $latest[0].RecordId }
+                } catch { }
+            }
+
+            return Out-Result ([pscustomobject]@{
+                captured = (Test-Path $logDir)
+                lines    = $out.ToArray()
+                cursor   = [pscustomobject]@{ file = $nextFile; offset = $nextOffset; record = $nextRecord }
+            })
         }
 
         'Delete' {

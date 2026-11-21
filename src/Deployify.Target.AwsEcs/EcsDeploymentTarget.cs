@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
+using Deployify.Core.ServiceLogs;
 using Deployify.Core.Models;
 using Deployify.Core.Processes;
 using Deployify.Core.SecretBackends;
@@ -32,12 +33,28 @@ namespace Deployify.Target.AwsEcs;
 /// </summary>
 public sealed class EcsDeploymentTarget(
     IPublisher publisher,
-    ILogger<EcsDeploymentTarget> logger) : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget, IResourceLifecycle
+    ILogger<EcsDeploymentTarget> logger) : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget, IResourceLifecycle, IServiceLogSource
 {
     private readonly EcsTaskDefinitionGenerator _generator = new();
 
     /// <summary>Process runner for the aws CLI; tests swap in a fake.</summary>
     internal IProcessRunner? Runner { get; init; }
+
+    /// <summary>The service's CloudWatch Logs streams, through the aws CLI.</summary>
+    public async IAsyncEnumerable<ServiceLogLine> ReadLogsAsync(
+        EnvironmentConfig config, ServiceLogQuery query,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    {
+        if (!await EcsCliClient.IsAvailableAsync(Runner ?? ProcessRunner.Default, ct))
+        {
+            throw new ServiceLogsException("Reading logs on ECS needs the AWS CLI (aws) on PATH.");
+        }
+
+        await foreach (var line in EcsLogs.ReadAsync(ClientFor(GetConfig(config)), query, () => DateTimeOffset.UtcNow, ct))
+        {
+            yield return line;
+        }
+    }
 
     private EcsCliClient ClientFor(EcsTargetConfig cfg, IEnumerable<EcsService>? services = null)
     {

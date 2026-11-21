@@ -341,6 +341,53 @@ public sealed class NomadClient : IDisposable
         }
     }
 
+    /// <summary>The job's allocations, any status (GET /v1/job/:id/allocations), as JSON.</summary>
+    public async Task<string> GetJobAllocationsJsonAsync(string jobId, CancellationToken ct = default)
+    {
+        var resp = await _http.GetAsync($"v1/job/{Uri.EscapeDataString(jobId)}/allocations?{Ns}", ct);
+        await EnsureSuccessAsync(resp, $"list allocations of job {jobId}", ct);
+        return await resp.Content.ReadAsStringAsync(ct);
+    }
+
+    /// <summary>
+    /// Lines of a task's stdout or stderr (GET /v1/client/fs/logs/:alloc_id, plain text), starting
+    /// <paramref name="bytesFromEnd"/> bytes before the end (the first, partial line dropped), at
+    /// the end when 0, or at the start of the oldest log file Nomad keeps when null; with
+    /// <paramref name="follow"/> keeps streaming until cancelled.
+    /// </summary>
+    public async IAsyncEnumerable<string> StreamTaskLogLinesAsync(
+        string allocId, string task, bool stderr, bool follow, long? bytesFromEnd,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    {
+        var origin = bytesFromEnd is { } n
+            ? $"&origin=end&offset={n.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+            : "&origin=start&offset=0";
+        var url = $"v1/client/fs/logs/{Uri.EscapeDataString(allocId)}?{Ns}&task={Uri.EscapeDataString(task)}" +
+                  $"&type={(stderr ? "stderr" : "stdout")}&follow={(follow ? "true" : "false")}{origin}&plain=true";
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        using var resp = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            // The task never wrote to this stream, or its allocation's files are gone.
+            yield break;
+        }
+
+        await EnsureSuccessAsync(resp, $"read logs of allocation {allocId}", ct);
+        await using var body = await resp.Content.ReadAsStreamAsync(ct);
+        using var reader = new StreamReader(body, Encoding.UTF8);
+        var skipPartial = bytesFromEnd > 0;
+        while (await reader.ReadLineAsync(ct) is { } line)
+        {
+            if (skipPartial)
+            {
+                skipPartial = false;
+                continue;
+            }
+
+            yield return line;
+        }
+    }
+
     /// <summary>Restarts every task of an allocation in place (POST /v1/client/allocation/:id/restart).</summary>
     public async Task RestartAllocationAsync(string allocId, CancellationToken ct = default)
     {

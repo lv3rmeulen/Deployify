@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
+using Deployify.Core.ServiceLogs;
 using Deployify.Core.Models;
 using Deployify.Core.ResourceSources;
 using Deployify.Target.Nomad.Api;
@@ -22,7 +23,7 @@ public sealed class NomadDeploymentTarget(
     JobGenerator jobGenerator,
     IPublisher publisher,
     ILogger<NomadDeploymentTarget> logger,
-    ILoggerFactory loggerFactory) : IDeploymentTarget, IRolloutTarget, IResourceLifecycle, IResourceSourceProvider
+    ILoggerFactory loggerFactory) : IDeploymentTarget, IRolloutTarget, IResourceLifecycle, IResourceSourceProvider, IServiceLogSource
 {
     private readonly NomadRollout _rollout = new(logger);
 
@@ -254,6 +255,18 @@ public sealed class NomadDeploymentTarget(
         => Task.FromResult(GetConfig(config).AutoRevert);
 
     // ── Lifecycle (destroy / prune) ───────────────────────────────────────────
+
+    /// <summary>The job's main task in each running allocation, read through the client filesystem API.</summary>
+    public async IAsyncEnumerable<ServiceLogLine> ReadLogsAsync(
+        EnvironmentConfig config, ServiceLogQuery query,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    {
+        using var client = BuildClient(GetConfig(config));
+        await foreach (var line in NomadLogs.ReadAsync(client, query.Service, query, ct))
+        {
+            yield return line;
+        }
+    }
 
     public async Task<IReadOnlyList<ManagedService>> ListManagedAsync(EnvironmentConfig config, CancellationToken ct = default)
     {

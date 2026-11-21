@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Interfaces;
+using Deployify.Core.ServiceLogs;
 using Deployify.Core.Models;
 using Deployify.Core.Processes;
 using Deployify.Core.SecretBackends;
@@ -22,7 +23,7 @@ namespace Deployify.Target.Helm;
 /// <c>{namespacePrefix}-{service}</c>. Cluster and manifest settings come from
 /// targetConfig["kubernetes"]; secrets are synced exactly as the Kubernetes target does.
 /// </summary>
-public sealed class HelmDeploymentTarget : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget, IResourceLifecycle
+public sealed class HelmDeploymentTarget : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget, IResourceLifecycle, IServiceLogSource
 {
     private readonly IPublisher _publisher;
     private readonly ILogger _logger;
@@ -57,6 +58,10 @@ public sealed class HelmDeploymentTarget : IDeploymentTarget, ISecretStoreProvid
 
     public DeploymentTargetType TargetType => DeploymentTargetType.Helm;
     public string DisplayName => "Helm (Kubernetes)";
+
+    /// <summary>The release's pods are the Kubernetes target's: same labels, same namespace.</summary>
+    public IAsyncEnumerable<ServiceLogLine> ReadLogsAsync(EnvironmentConfig config, ServiceLogQuery query, CancellationToken ct = default)
+        => Kubernetes.ReadLogsAsync(config, query, ct);
 
     // ── Configuration and tools ──────────────────────────────────────────────
 

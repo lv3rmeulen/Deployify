@@ -21,6 +21,13 @@ The schema is [JSON Schema 2020-12](https://json-schema.org/), published at
 [`/Deployify/schemas/deployify-output-v1.json`](/Deployify/schemas/deployify-output-v1.json)
 and kept in the repository at `docs/public/schemas/deployify-output-v1.json`.
 
+:::note
+[`deployify logs`](/Deployify/guides/logs/) also takes `--output json`, but writes a stream rather
+than one document: a JSON object per log line ([JSON Lines](https://jsonlines.org/)) with
+`service`, `instance`, `timestamp`, `stream` and `text`, and no envelope. It isn't covered by the
+schema below.
+:::
+
 ## Compatibility
 
 Every document has `"schemaVersion": 1`. Within version 1, which lasts at least as long as

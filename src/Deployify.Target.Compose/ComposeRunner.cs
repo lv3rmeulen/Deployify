@@ -207,6 +207,63 @@ public sealed class ComposeRunner(ComposeTargetConfig config, ILogger logger, IP
     }
 
     /// <summary>
+    /// The project's containers for one service, running or not: ID, name and state
+    /// (<c>docker ps -a</c>). Throws when the Docker daemon can't be asked.
+    /// </summary>
+    public async Task<IReadOnlyList<(string Id, string Name, string State)>> ListServiceContainersAsync(
+        string service, CancellationToken ct = default)
+    {
+        var ps = await RunDockerAsync(
+        [
+            "ps", "-a",
+            "--filter", $"label=com.docker.compose.project={config.ProjectName}",
+            "--filter", $"label=com.docker.compose.service={service}",
+            "--format", "{{.ID}}\t{{.Names}}\t{{.State}}"
+        ], ct);
+        if (!ps.Ok)
+        {
+            throw new InvalidOperationException($"docker could not list the containers of '{service}': {ps.Stderr.Trim()}");
+        }
+
+        return
+        [
+            .. ps.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(l => l.Split('\t'))
+                .Where(p => p.Length >= 3)
+                .Select(p => (p[0], p[1], p[2]))
+        ];
+    }
+
+    /// <summary>
+    /// <c>docker logs --timestamps</c> of one container: the container's stdout on stdout, its
+    /// stderr on stderr. The last <paramref name="tail"/> lines (all when null), only lines since
+    /// <paramref name="since"/>, and with <paramref name="follow"/> new lines until cancelled.
+    /// </summary>
+    public IAsyncEnumerable<ProcessOutputLine> StreamContainerLogsAsync(
+        string containerId, int? tail, DateTimeOffset? since, bool follow, CancellationToken ct = default)
+    {
+        var args = new List<string>
+        {
+            "logs", "--timestamps",
+            "--tail", tail is { } n ? n.ToString(System.Globalization.CultureInfo.InvariantCulture) : "all"
+        };
+        if (since is { } s)
+        {
+            args.AddRange(["--since", s.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'", System.Globalization.CultureInfo.InvariantCulture)]);
+        }
+
+        if (follow)
+        {
+            args.Add("--follow");
+        }
+
+        args.Add(containerId);
+
+        // Logs can hold anything an app prints: never copy them into Deployify's own log.
+        return _runner.StreamAsync(new ProcessSpec("docker", args) { Sensitive = true }, ct);
+    }
+
+    /// <summary>
     /// Brings up one service from the given compose files without touching its dependencies
     /// (<c>up -d --no-deps service</c>).
     /// </summary>

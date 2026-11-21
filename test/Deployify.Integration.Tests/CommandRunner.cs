@@ -42,6 +42,7 @@ internal static class CommandRunner
         CiCommand.Build(),
         WatchCommand.Build(),
         StatusCommand.Build(),
+        LogsCommand.Build(),
         RollbackCommand.Build(),
         DestroyCommand.Build(),
         StateCommand.Build(),

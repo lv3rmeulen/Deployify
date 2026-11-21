@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
+using Deployify.Core.ServiceLogs;
 using Deployify.Core.Models;
 using Deployify.Core.Processes;
 using Microsoft.Extensions.Logging;
@@ -38,7 +39,7 @@ namespace Deployify.Target.Iis;
 /// Each release's settings are kept on the server too (settings/{release}.json, Administrators
 /// only), so a rollback switches back to an earlier release with the settings it ran with.
 /// </summary>
-public sealed class IisDeploymentTarget(ILogger<IisDeploymentTarget> logger) : IDeploymentTarget, IRolloutTarget, IResourceLifecycle
+public sealed class IisDeploymentTarget(ILogger<IisDeploymentTarget> logger) : IDeploymentTarget, IRolloutTarget, IResourceLifecycle, IServiceLogSource
 {
     private readonly IisSiteGenerator _generator = new();
 
@@ -49,6 +50,30 @@ public sealed class IisDeploymentTarget(ILogger<IisDeploymentTarget> logger) : I
     public string DisplayName => "IIS (Windows Server)";
 
     private IisRemote Remote(IisTargetConfig iis) => new(iis, logger, Processes);
+
+    /// <summary>How often following asks the server for new lines; replaceable in tests.</summary>
+    internal TimeSpan LogPollInterval { get; init; } = TimeSpan.FromSeconds(3);
+
+    // ── Logs ─────────────────────────────────────────────────────────────────
+
+    /// <summary>The site's stdout log files (with iis.captureStdout) and the ASP.NET Core Module's event log entries.</summary>
+    public async IAsyncEnumerable<ServiceLogLine> ReadLogsAsync(
+        EnvironmentConfig config, ServiceLogQuery query,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    {
+        var iis = GetConfig(config);
+        var remote = Remote(iis);
+        if (await remote.UnavailableReasonAsync(ct) is { } reason)
+        {
+            throw new ServiceLogsException(reason);
+        }
+
+        var siteName = await SiteNameAsync(config, iis, query.Service, ct);
+        await foreach (var line in IisLogs.ReadAsync(remote, siteName, query, LogPollInterval, logger, ct))
+        {
+            yield return line;
+        }
+    }
 
     // ── Ping ─────────────────────────────────────────────────────────────────
 
@@ -441,6 +466,13 @@ public sealed class IisDeploymentTarget(ILogger<IisDeploymentTarget> logger) : I
             site.CertificateStore,
             Package = packageHash
         });
+
+        // Only when on, so turning the option on redeploys but existing releases keep their fingerprint.
+        if (site.CaptureStdout)
+        {
+            settings += "\ncaptureStdout";
+        }
+
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(settings)));
     }
 

@@ -48,6 +48,8 @@ images, and the ASP.NET Core Module hosts them. No container runtime is involved
 - `healthPath`: what the health check requests on each site (default `/`).
 - `basePort`: first port given to bindings without one in the manifest (default 8080).
 - `powerShell`: the local PowerShell to run. Default `pwsh`, then Windows PowerShell on Windows.
+- `captureStdout`: have the ASP.NET Core Module write each app's console output to files on the
+  server, so [`deployify logs`](#logs) can show it (default off).
 
 Init flags: `--iis-host`, `--iis-transport`, `--iis-user` and `--iis-sites-root`.
 
@@ -129,6 +131,26 @@ also keeps each release's values in its `settings` folder, which is locked to Ad
 SYSTEM like `applicationHost.config`.
 
 Don't also set the same variable in your project's `web.config`: IIS rejects the duplicate entry.
+
+## Logs
+
+[`deployify logs <service>`](/Deployify/guides/logs/) shows two things from the server:
+
+- **The app's console output**, with `captureStdout` on. The ASP.NET Core Module then writes it to
+  `{sitesRoot}\{site}\logs\stdout_<time>_<pid>.log`, a file per process start, which
+  `deployify logs` reads (shown as `[pid-1234]`). Deployify points the release's `web.config` at
+  that folder and lets the application pool's identity write to it. The module never rotates
+  these files, which is why Microsoft advises against leaving the option on for long and why it's
+  off by default: Deployify keeps the newest 20 files per site each time it deploys, but a process
+  that runs for weeks writes one ever-growing file. These lines carry no timestamps, so `--since`
+  only picks files written to since then.
+- **The ASP.NET Core Module's entries in the Application event log** for the site (shown as
+  `[event-log]`): why an app failed to start or crashed. These are shown with or without
+  `captureStdout`.
+
+Turning `captureStdout` on or off counts as a change, so the next `apply` deploys each site again.
+Following (`--follow`) asks the server for new lines every few seconds, over a new remoting
+session each time.
 
 ## What IIS can't host
 

@@ -40,6 +40,10 @@ public sealed class IisSite
     public string? CertificateThumbprint { get; set; }
     public string CertificateStore { get; set; } = "My";
     public int KeepReleases { get; set; } = 3;
+
+    /// <summary>Write the app's console output to the site's logs folder (<see cref="IisTargetConfig.CaptureStdout"/>).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool CaptureStdout { get; set; }
 }
 
 public sealed class IisBinding

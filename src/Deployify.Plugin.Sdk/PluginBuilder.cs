@@ -45,7 +45,8 @@ public sealed class PluginBuilder
     /// <summary>
     /// Serves <typeparamref name="TTarget"/> as target <paramref name="id"/>. Its capabilities come
     /// from the interfaces it implements: <see cref="IRolloutTarget"/> adds health-gated rollouts,
-    /// <see cref="IResourceLifecycle"/> adds destroy and prune.
+    /// <see cref="IResourceLifecycle"/> adds destroy and prune, <see cref="Core.ServiceLogs.IServiceLogSource"/>
+    /// adds <c>deployify logs</c>.
     /// </summary>
     public PluginBuilder AddTarget<TTarget>(string id, string displayName, Action<TargetOptions>? configure = null)
         where TTarget : class, IDeploymentTarget
@@ -94,6 +95,11 @@ public sealed class PluginBuilder
                 if (typeof(IResourceLifecycle).IsAssignableFrom(Type))
                 {
                     list.Add(PluginProtocol.Capabilities.Lifecycle);
+                }
+
+                if (typeof(Core.ServiceLogs.IServiceLogSource).IsAssignableFrom(Type))
+                {
+                    list.Add(PluginProtocol.Capabilities.Logs);
                 }
 
                 return list;

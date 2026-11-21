@@ -78,7 +78,24 @@ public interface IDigitalOceanApi
 
     /// <summary>Adds the app to the cluster's trusted sources, keeping the rules already there.</summary>
     Task AllowAppAsync(string clusterId, string appId, CancellationToken ct);
+
+    /// <summary>
+    /// Where a component's run logs can be read (GET /v2/apps/{id}/components/{name}/logs?type=RUN):
+    /// the live URL and archived ones. The URLs carry their own access token.
+    /// </summary>
+    Task<DoLogUrls> GetRunLogUrlsAsync(string appId, string component, bool follow, int? tailLines, CancellationToken ct)
+        => throw new NotSupportedException("This DigitalOcean API client can't read logs.");
+
+    /// <summary>
+    /// The lines behind a log URL: an https URL is read to its end (or, for a live URL that
+    /// follows, until cancelled); a wss URL streams until cancelled.
+    /// </summary>
+    IAsyncEnumerable<string> ReadLogLinesAsync(string url, CancellationToken ct)
+        => throw new NotSupportedException("This DigitalOcean API client can't read logs.");
 }
+
+/// <summary>Where App Platform serves a component's logs.</summary>
+public sealed record DoLogUrls(string? LiveUrl, IReadOnlyList<string> HistoricUrls);
 
 /// <summary><see cref="IDigitalOceanApi"/> over HTTPS, authenticated with a personal access token.</summary>
 public sealed class DigitalOceanApi : IDigitalOceanApi, IDisposable
@@ -98,7 +115,11 @@ public sealed class DigitalOceanApi : IDigitalOceanApi, IDisposable
         _http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("deployify-target-digitalocean", "1.0"));
     }
 
-    public void Dispose() => _http.Dispose();
+    public void Dispose()
+    {
+        _http.Dispose();
+        _logs.Dispose();
+    }
 
     public async Task<string?> PingAsync(CancellationToken ct)
     {
@@ -283,6 +304,106 @@ public sealed class DigitalOceanApi : IDigitalOceanApi, IDisposable
             ["rules"] = new JsonArray([.. rules.Select(r => (JsonNode)new JsonObject { ["type"] = r.Type, ["value"] = r.Value })])
         };
         await SendAsync(HttpMethod.Put, $"v2/databases/{clusterId}/firewall", body, ct);
+    }
+
+    // ── Logs ─────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// For the log URLs, which App Platform signs itself: never send them the API token, which
+    /// belongs to api.digitalocean.com only.
+    /// </summary>
+    private readonly HttpClient _logs = new() { Timeout = System.Threading.Timeout.InfiniteTimeSpan };
+
+    public async Task<DoLogUrls> GetRunLogUrlsAsync(string appId, string component, bool follow, int? tailLines, CancellationToken ct)
+    {
+        var query = $"type=RUN&follow={(follow ? "true" : "false")}&pod_connection_timeout=30s" +
+                    (tailLines is { } n ? $"&tail_lines={n.ToString(System.Globalization.CultureInfo.InvariantCulture)}" : "");
+        var result = await SendAsync(HttpMethod.Get,
+            $"v2/apps/{Uri.EscapeDataString(appId)}/components/{Uri.EscapeDataString(component)}/logs?{query}", null, ct);
+        return new DoLogUrls(
+            result?["live_url"]?.GetValue<string>() is { Length: > 0 } live ? live : null,
+            [.. (result?["historic_urls"]?.AsArray() ?? []).Select(u => u?.GetValue<string>()).OfType<string>()]);
+    }
+
+    public async IAsyncEnumerable<string> ReadLogLinesAsync(string url, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        var uri = new Uri(url);
+        if (uri.Scheme is "wss" or "ws")
+        {
+            await foreach (var line in ReadWebSocketAsync(uri, ct))
+            {
+                yield return line;
+            }
+
+            yield break;
+        }
+
+        using var response = await _logs.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new DoApiException(response.StatusCode, null,
+                $"DigitalOcean's log service answered {(int)response.StatusCode} {response.ReasonPhrase}.");
+        }
+
+        await using var body = await response.Content.ReadAsStreamAsync(ct);
+        using var reader = new System.IO.StreamReader(body, Encoding.UTF8);
+        while (await reader.ReadLineAsync(ct) is { } line)
+        {
+            yield return line;
+        }
+    }
+
+    /// <summary>A live log over a WebSocket: each message is <c>{"data": "..."}</c> (or plain text) holding one or more lines.</summary>
+    private static async IAsyncEnumerable<string> ReadWebSocketAsync(Uri uri, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        using var socket = new System.Net.WebSockets.ClientWebSocket();
+        var token = System.Web.HttpUtility.ParseQueryString(uri.Query)["token"];
+        if (!string.IsNullOrEmpty(token))
+        {
+            socket.Options.SetRequestHeader("Authorization", $"Bearer {token}");
+        }
+
+        await socket.ConnectAsync(uri, ct);
+        var buffer = new byte[64 * 1024];
+        var message = new System.IO.MemoryStream();
+        while (socket.State == System.Net.WebSockets.WebSocketState.Open)
+        {
+            var received = await socket.ReceiveAsync(buffer, ct);
+            if (received.MessageType == System.Net.WebSockets.WebSocketMessageType.Close)
+            {
+                yield break;
+            }
+
+            message.Write(buffer, 0, received.Count);
+            if (!received.EndOfMessage)
+            {
+                continue;
+            }
+
+            var text = Encoding.UTF8.GetString(message.GetBuffer(), 0, (int)message.Length);
+            message.SetLength(0);
+            foreach (var line in LogMessageLines(text))
+            {
+                yield return line;
+            }
+        }
+    }
+
+    internal static IEnumerable<string> LogMessageLines(string message)
+    {
+        var text = message;
+        if (message.TrimStart().StartsWith('{'))
+        {
+            try
+            {
+                text = JsonNode.Parse(message)?["data"]?.GetValue<string>() ?? message;
+            }
+            catch (JsonException)
+            {
+            }
+        }
+
+        return text.TrimEnd('\n', '\r').Split('\n').Select(l => l.TrimEnd('\r'));
     }
 
     // ── Plumbing ─────────────────────────────────────────────────────────────

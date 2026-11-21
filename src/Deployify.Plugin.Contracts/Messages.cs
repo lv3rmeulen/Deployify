@@ -112,6 +112,45 @@ public sealed record DeleteRequest : TargetRequest
     public bool RemoveVolumes { get; init; }
 }
 
+/// <summary>
+/// <c>logs/open</c>: start reading one service's console output. Only <see cref="TargetRequest.Environment"/>
+/// is sent with it; there is no manifest.
+/// </summary>
+public sealed record LogsOpenRequest : TargetRequest
+{
+    public required string Service { get; init; }
+
+    /// <summary>The most recent existing lines to start with, per instance; 0 for none; null for all the platform keeps.</summary>
+    public int? Tail { get; init; }
+
+    /// <summary>Only lines written at or after this time.</summary>
+    public System.DateTimeOffset? Since { get; init; }
+
+    /// <summary>Keep the stream open for new lines until it is closed.</summary>
+    public bool Follow { get; init; }
+}
+
+/// <summary><c>logs/next</c>: the next lines of a stream.</summary>
+public sealed record LogsNextRequest
+{
+    public required string StreamId { get; init; }
+
+    /// <summary>
+    /// How long to wait for a line before answering with none, so following doesn't busy-poll.
+    /// The plugin answers as soon as it has a line. Default 1000.
+    /// </summary>
+    public int WaitMilliseconds { get; init; } = 1000;
+
+    /// <summary>The most lines to return in one batch. Default 500.</summary>
+    public int MaxLines { get; init; } = 500;
+}
+
+/// <summary><c>logs/close</c>: stop reading and let the plugin release what the stream holds.</summary>
+public sealed record LogsCloseRequest
+{
+    public required string StreamId { get; init; }
+}
+
 // ── Results ──────────────────────────────────────────────────────────────────
 
 public sealed record PingResult(bool Ok, string? Error = null);
@@ -208,6 +247,23 @@ public sealed record ReasonResult(string? Reason);
 public sealed record ManagedServiceInfo(string Name, string? TargetId = null, string? Environment = null);
 
 public sealed record LinesResult(IReadOnlyList<string> Lines);
+
+/// <summary>An open log stream, named by the plugin.</summary>
+public sealed record LogsOpenResult(string StreamId);
+
+/// <summary>
+/// Lines of a log stream, oldest first. <see cref="Done"/> is true on the last batch: the stream
+/// has ended (it wasn't following, or the platform closed it) and is closed by the plugin. A
+/// stream that fails answers <c>logs/next</c> with an error instead, and is closed too.
+/// </summary>
+public sealed record LogsBatch(IReadOnlyList<LogLineInfo> Lines, bool Done);
+
+/// <summary>One line of a service's output.</summary>
+/// <param name="Text">The line, without its line ending.</param>
+/// <param name="Instance">The pod, container, task or replica that wrote it, when known.</param>
+/// <param name="Timestamp">When the platform recorded it, when it does.</param>
+/// <param name="IsError">It went to stderr.</param>
+public sealed record LogLineInfo(string Text, string? Instance = null, System.DateTimeOffset? Timestamp = null, bool IsError = false);
 
 // ── Calls from the plugin ────────────────────────────────────────────────────
 
