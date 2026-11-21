@@ -13,6 +13,13 @@ Each release can have these sections: **Added**, **Changed**, **Deprecated**, **
 
 ### Added
 
+- SBOMs at publish: with `sbom.enabled` in the environment, `publish`, `ci` and `aspire deploy`
+  generate an SBOM (SPDX or CycloneDX JSON) for every image they build with syft, scanned from
+  the registry by the pushed digest, write it to `{outputPath}/sbom/`, and attach it to the image
+  as a signed attestation with `cosign attest`, keyless through Sigstore or with `sbom.key`.
+  `promote` copies those attestations along with images it moves to another registry: both
+  OCI-referrer bundles (cosign 3) and `.att` tags, skipping ones the target has, then checks
+  they all arrived. `promote --output json` reports `attestationsCopied` per image.
 - `--output json` (`-o json`) on `plan`, `diff`, `status`, `explain` and `promote`: stdout gets
   one JSON document (schema version 1, published as `schemas/deployify-output-v1.json` and
   described under [JSON output](https://lv3rmeulen.github.io/Deployify/reference/json-output/)),

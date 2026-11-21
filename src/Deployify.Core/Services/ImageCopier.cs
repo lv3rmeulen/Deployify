@@ -61,9 +61,31 @@ public sealed class ImageCopier(IProcessRunner? runner = null, ILogger? logger =
         };
 
     /// <summary>True when <paramref name="repository"/> has a manifest with <paramref name="digest"/>.</summary>
-    public async Task<bool> ExistsAsync(ImageCopyTool tool, string repository, string digest, CancellationToken ct = default)
+    public Task<bool> ExistsAsync(ImageCopyTool tool, string repository, string digest, CancellationToken ct = default)
+        => ManifestExistsAsync(tool, $"{repository}@{digest}", ct);
+
+    /// <summary>
+    /// Copies <paramref name="sourceRepository"/>:<paramref name="tag"/> to the same tag in
+    /// <paramref name="targetRepository"/>, as is (used for cosign's <c>.att</c> tags). Throws when
+    /// the source has no such tag or the copy fails.
+    /// </summary>
+    public async Task CopyTagAsync(
+        ImageCopyTool tool, string sourceRepository, string tag, string targetRepository, CancellationToken ct = default)
     {
-        var reference = $"{repository}@{digest}";
+        var source = $"{sourceRepository}:{tag}";
+        var target = $"{targetRepository}:{tag}";
+        if (!await ManifestExistsAsync(tool, source, ct))
+        {
+            throw new InvalidOperationException($"{source} doesn't exist or can't be read.");
+        }
+
+        var spec = CopySpec(tool, source, target);
+        _logger.LogDebug("Copying {Source} to {Target}.", source, target);
+        (await _runner.RunAsync(spec with { Log = _logger }, ct)).EnsureSuccess($"{spec.FileName} copying {source} to {target}");
+    }
+
+    private async Task<bool> ManifestExistsAsync(ImageCopyTool tool, string reference, CancellationToken ct)
+    {
         var spec = tool switch
         {
             ImageCopyTool.Crane => new ProcessSpec("crane", ["manifest", reference]),
@@ -87,13 +109,7 @@ public sealed class ImageCopier(IProcessRunner? runner = null, ILogger? logger =
     {
         var source = $"{sourceRepository}@{digest}";
         var target = $"{targetRepository}:{targetTag}";
-        var spec = tool switch
-        {
-            ImageCopyTool.Crane => new ProcessSpec("crane", ["copy", source, target]),
-            ImageCopyTool.Skopeo => new ProcessSpec("skopeo",
-                ["copy", "--all", "--preserve-digests", $"docker://{source}", $"docker://{target}"]),
-            _ => new ProcessSpec("docker", ["buildx", "imagetools", "create", "--tag", target, source])
-        };
+        var spec = CopySpec(tool, source, target);
 
         _logger.LogDebug("Copying {Source} to {Target}.", source, target);
         (await _runner.RunAsync(spec with { Log = _logger }, ct)).EnsureSuccess($"{spec.FileName} copying {source} to {target}");
@@ -105,6 +121,14 @@ public sealed class ImageCopier(IProcessRunner? runner = null, ILogger? logger =
                 $"{spec.FileName} changed the image. Install crane or skopeo, which keep the digest, and promote again.");
         }
     }
+
+    private static ProcessSpec CopySpec(ImageCopyTool tool, string source, string target) => tool switch
+    {
+        ImageCopyTool.Crane => new ProcessSpec("crane", ["copy", source, target]),
+        ImageCopyTool.Skopeo => new ProcessSpec("skopeo",
+            ["copy", "--all", "--preserve-digests", $"docker://{source}", $"docker://{target}"]),
+        _ => new ProcessSpec("docker", ["buildx", "imagetools", "create", "--tag", target, source])
+    };
 
     /// <summary>Parses a tool name as used on the command line: crane, skopeo or docker.</summary>
     public static bool TryParse(string? value, out ImageCopyTool tool)

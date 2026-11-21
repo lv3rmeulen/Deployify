@@ -80,6 +80,15 @@ public static class PublishCommand
                     }
                 }
 
+                if (config.Sbom.Enabled)
+                {
+                    var format = config.Sbom.Format == SbomFormat.CycloneDx ? "CycloneDX" : "SPDX";
+                    var attest = !config.Sbom.Attest || string.IsNullOrEmpty(config.ContainerRegistry)
+                        ? "not attested"
+                        : $"attested with cosign ({(string.IsNullOrWhiteSpace(config.Sbom.Key) ? "keyless" : "key")})";
+                    AnsiConsole.MarkupLineInterpolated($"[dim]SBOM: {format}, {attest}.[/]");
+                }
+
                 return 0;
             }
 

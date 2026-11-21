@@ -83,7 +83,12 @@
         }
       },
       "Protected": false,
-      "Prune": false
+      "Prune": false,
+      "Sbom": {
+        "Enabled": false,
+        "Format": "Spdx",
+        "Attest": true
+      }
     }
   }
 }

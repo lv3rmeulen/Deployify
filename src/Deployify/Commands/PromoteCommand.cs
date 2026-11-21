@@ -17,7 +17,8 @@ namespace Deployify.Commands;
 /// <c>deployify promote --from staging --to prod</c>: records the image digests the source
 /// environment published in the target environment's deployment state, so the target's next
 /// apply deploys exactly those images without building them again. When the target uses another
-/// registry, the images are copied there by digest first. Nothing is deployed.
+/// registry, the images are copied there by digest first, with their cosign attestations when the
+/// source environment attests SBOMs. Nothing is deployed.
 /// </summary>
 public static class PromoteCommand
 {
@@ -126,12 +127,13 @@ public static class PromoteCommand
 
             var entries = ImagePromotion.Plan(manifest, source, from, target);
             var copied = new HashSet<string>(StringComparer.Ordinal);
+            var attestationsCopied = new Dictionary<string, int>(StringComparer.Ordinal);
             string? copyToolName = null;
             void SetResult(bool promoted, int recorded)
             {
                 if (json is not null)
                 {
-                    json.Result = ToJson(from, to, tag, dryRun, promoted, recorded, copyToolName, entries, copied);
+                    json.Result = ToJson(from, to, tag, dryRun, promoted, recorded, copyToolName, entries, copied, attestationsCopied);
                 }
             }
 
@@ -169,9 +171,25 @@ public static class PromoteCommand
             }
 
             var copies = entries.Where(e => e is { NeedsCopy: true, AlreadyPromoted: false }).ToList();
-            var copier = new ImageCopier(logger: resolved.Services.GetService<ILoggerFactory>()?.CreateLogger("Deployify.Promote"));
+            var logger = resolved.Services.GetService<ILoggerFactory>()?.CreateLogger("Deployify.Promote");
+            var copier = new ImageCopier(logger: logger);
+
+            // When the source attests SBOMs, the attestations go with every image that moves to another
+            // repository, including ones promoted before: a second run fills in what a first one missed.
+            var attestations = new AttestationCopier(logger: logger);
+            var attested = source.Sbom is { Enabled: true, Attest: true }
+                ? entries.Where(e => e.NeedsCopy).ToList()
+                : [];
+            if (attested.Count > 0 && !await attestations.IsAvailableAsync(ct))
+            {
+                ConsoleDeploymentReporter.Instance.Error(
+                    $"{from} attests SBOMs (sbom.attest), so their attestations are copied with the images, but cosign " +
+                    "isn't installed. Install cosign 3.0.3 or later.");
+                return 1;
+            }
+
             ImageCopyTool tool = default;
-            if (copies.Count > 0)
+            if (copies.Count > 0 || attested.Count > 0)
             {
                 if (await ResolveCopyToolAsync(copier, copyWith, ct) is not { } found)
                 {
@@ -181,8 +199,17 @@ public static class PromoteCommand
                 tool = found;
                 copyToolName = tool.ToString().ToLowerInvariant();
                 SetResult(promoted: false, recorded: 0);
-                AnsiConsole.MarkupLineInterpolated(
-                    $"\n[dim]{copies.Count} image(s) are copied to {to}'s registry with {tool.ToString().ToLowerInvariant()}.[/]");
+                if (copies.Count > 0)
+                {
+                    AnsiConsole.MarkupLineInterpolated(
+                        $"\n[dim]{copies.Count} image(s) are copied to {to}'s registry with {tool.ToString().ToLowerInvariant()}.[/]");
+                }
+
+                if (attested.Count > 0)
+                {
+                    AnsiConsole.MarkupLineInterpolated(
+                        $"[dim]The attestations of {attested.Count} image(s) are copied to {to}'s registry with cosign.[/]");
+                }
             }
 
             if (dryRun)
@@ -217,6 +244,40 @@ public static class PromoteCommand
                 }
             }
 
+            // Attestations after the images (cosign attaches them to the copied digest), and still before
+            // recording: a target deploying images without their attestations would fail an admission policy.
+            foreach (var e in attested)
+            {
+                try
+                {
+                    var result = await ConsoleStatus.RunAsync($"Copying {e.Service}'s attestations...",
+                        () => attestations.CopyAsync(copier, tool, e.SourceRepository, e.Digest!, e.TargetRepository, ct));
+                    attestationsCopied[e.Service] = result.Copied;
+                    SetResult(promoted: false, recorded: 0);
+                    if (result.Found == 0)
+                    {
+                        ConsoleDeploymentReporter.Instance.Warn(
+                            $"{e.Service}: {e.SourceRepository}@{e.Digest} has no attestations to copy; it was published without them.");
+                    }
+                    else if (result.Copied == 0)
+                    {
+                        AnsiConsole.MarkupLineInterpolated(
+                            $"  [dim]{e.Service}: {e.TargetRepository} already has its {result.Found} attestation(s)[/]");
+                    }
+                    else
+                    {
+                        AnsiConsole.MarkupLineInterpolated(
+                            $"  [green]✓[/] {e.Service}: copied {result.Copied} attestation(s) to {e.TargetRepository}");
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    ConsoleDeploymentReporter.Instance.Error($"{e.Service}: {ex.Message}");
+                    AnsiConsole.MarkupLine("Nothing was recorded. Fix the problem and promote again; images and attestations already copied are skipped.");
+                    return 1;
+                }
+            }
+
             var recorded = ImagePromotion.Record(entries, target, DateTimeOffset.UtcNow);
             if (recorded > 0)
             {
@@ -245,10 +306,12 @@ public static class PromoteCommand
 
     /// <summary>The <c>result</c> of <c>promote --output json</c>.</summary>
     internal static JsonPromotion ToJson(string from, string to, string tag, bool dryRun, bool promoted, int recorded,
-        string? copyTool, IEnumerable<ImagePromotionEntry> entries, IReadOnlySet<string> copied) => new(
+        string? copyTool, IEnumerable<ImagePromotionEntry> entries, IReadOnlySet<string> copied,
+        IReadOnlyDictionary<string, int>? attestationsCopied = null) => new(
         from, to, tag, dryRun, promoted, recorded, copyTool,
         [.. entries.Select(e => new JsonPromotedImage(e.Service, e.TargetRepository, e.TargetTag, e.Digest,
-            e.SourceRepository, e.SourceTag, e.NeedsCopy, e.AlreadyPromoted, copied.Contains(e.Service), e.Problem))]);
+            e.SourceRepository, e.SourceTag, e.NeedsCopy, e.AlreadyPromoted, copied.Contains(e.Service), e.Problem,
+            attestationsCopied is not null && attestationsCopied.TryGetValue(e.Service, out var n) ? n : null))]);
 
     /// <summary>The copy tool asked for (when installed), else the first one installed. Null after saying why.</summary>
     private static async System.Threading.Tasks.Task<ImageCopyTool?> ResolveCopyToolAsync(

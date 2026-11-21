@@ -192,6 +192,12 @@ public sealed class EnvironmentConfig
     /// Only services Deployify deployed and still marks as its own are ever removed.
     /// </summary>
     public bool Prune { get; set; }
+
+    /// <summary>
+    /// SBOMs for the images publish builds, attached to the pushed images as attestations.
+    /// Off unless <see cref="SbomConfig.Enabled"/> is set.
+    /// </summary>
+    public SbomConfig Sbom { get; set; } = new();
 }
 
 /// <summary>

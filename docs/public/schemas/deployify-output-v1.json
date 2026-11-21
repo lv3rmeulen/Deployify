@@ -647,6 +647,10 @@
               "problem": {
                 "$ref": "#/$defs/nullableString",
                 "description": "Why the image can't be promoted. Any problem means nothing is promoted."
+              },
+              "attestationsCopied": {
+                "type": ["integer", "null"],
+                "description": "How many cosign attestations this run copied to the target registry with the image: 0 when the target already had them all. Null when attestations aren't copied for this image."
               }
             }
           }

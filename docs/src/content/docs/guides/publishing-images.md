@@ -1,6 +1,6 @@
 ---
 title: "Publishing images"
-description: "How Deployify builds and pushes project and Dockerfile images, and pins them by digest."
+description: "How Deployify builds and pushes project and Dockerfile images, pins them by digest, and attests their SBOMs."
 ---
 
 ## `publish`
@@ -48,6 +48,78 @@ inventory), locally or in the [remote state backend](/Deployify/concepts/state/#
 `apply`, a rollback or a drift check in another CI job finds them. A digest is used only for the
 exact repository and tag it was published as: change the tag and the artifacts reference the new
 tag until it is published. Images in the local store (no registry) are referenced by tag.
+
+## SBOMs and attestations
+
+With `sbom.enabled`, `publish` (and the publish step of `ci` and `aspire deploy`) generates a
+software bill of materials for every image it built and attaches it to the pushed image as a
+signed attestation:
+
+```json
+"sbom": {
+  "enabled": true,
+  "format": "Spdx",
+  "attest": true,
+  "key": null
+}
+```
+
+For each project and Dockerfile build, after all images are pushed, Deployify:
+
+1. Runs [syft](https://github.com/anchore/syft) on the pushed image, read from the registry by
+   digest (`registry:registry.example.com/myapp/api@sha256:…`), so the SBOM describes exactly
+   the image that was pushed. It is written to `{outputPath}/sbom/api.spdx.json`.
+2. Runs [cosign](https://docs.sigstore.dev/cosign/) `attest` to attach the SBOM to that digest
+   as an in-toto attestation (`--type spdxjson`, or `cyclonedx`), stored in the same repository
+   next to the image.
+
+| Setting | Default | |
+|---|---|---|
+| `enabled` | `false` | Generate SBOMs at publish. |
+| `format` | `Spdx` | `Spdx` (SPDX JSON) or `CycloneDx` (CycloneDX JSON). |
+| `attest` | `true` | Attach the SBOM to the pushed image. `false` only writes the file. |
+| `key` | none | cosign signing key. Empty signs keyless. |
+
+syft and cosign must be installed; `publish` checks for them before building anything and stops
+if one is missing (cosign only when attesting to a registry). Both sign in to the registry with
+the credentials `docker login` stored, including credential helpers. An image that stays in the
+local store (no `containerRegistry`) is scanned from Docker or Podman and gets only the SBOM
+file. If the pushed digest couldn't be read, the SBOM is written but not attested, with a
+warning, rather than attached to whatever the tag points to. A failing `cosign attest` fails
+the publish; the images are already pushed by then, so a second run rebuilds and attests again.
+
+### Signing
+
+Without a `key`, cosign signs keyless with Sigstore: it gets a short-lived certificate for an
+OIDC identity and records the signature in the public [Rekor](https://docs.sigstore.dev/logging/overview/)
+transparency log. On a CI runner that identity is the job's (on GitHub Actions, give the job
+`id-token: write`); on a workstation cosign opens a browser to sign in. The Rekor entry is
+public and names the image digest, so use a key for images whose names must stay private.
+
+`key` takes anything `cosign attest --key` does:
+
+- a key file, such as `cosign.key`, relative to the AppHost directory;
+- a KMS key: `awskms://…`, `azurekms://…`, `gcpkms://…` or `hashivault://…`;
+- `env:COSIGN_PRIVATE_KEY`, a PEM key in an environment variable (passed to cosign as
+  `env://COSIGN_PRIVATE_KEY`).
+
+cosign reads an encrypted key's password from `COSIGN_PASSWORD`.
+
+### Verifying
+
+```bash
+# Keyless, signed by a GitHub Actions workflow
+cosign verify-attestation --type spdxjson \
+  --certificate-identity-regexp '^https://github.com/my-org/my-app/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  registry.example.com/myapp/api@sha256:…
+
+# Signed with a key
+cosign verify-attestation --type spdxjson --key cosign.pub registry.example.com/myapp/api@sha256:…
+```
+
+When `promote` copies an image to another registry, it copies the attestations too; see
+[attestations](#attestations).
 
 ## Promoting images to another environment
 
@@ -102,6 +174,28 @@ docker login registry.staging.example.com
 docker login registry.prod.example.com
 deployify promote --from staging --to prod --image-tag "$GITHUB_SHA"
 ```
+
+### Attestations
+
+When the source environment attests SBOMs (`sbom.enabled` and `sbom.attest`), `promote` also
+copies the cosign attestations of every image it moves to another repository, so the SBOM can
+still be verified in the target registry. The signatures stay valid because they cover the image
+digest, which the copy keeps. This needs [cosign](https://docs.sigstore.dev/cosign/) 3.0.3 or
+later, which `promote` checks for before copying anything.
+
+cosign stores attestations in one of two ways, and `promote` handles both:
+
+- **As OCI referrers** (Sigstore bundles, cosign 3's default). `cosign copy` doesn't copy these,
+  so `promote` reads them with `cosign download attestation` and attaches them to the target
+  digest with `cosign attach bundle`. The target registry must support OCI referrers.
+- **Under a `sha256-<digest>.att` tag** (older cosign, or `--new-bundle-format=false`). That tag
+  is copied with the same tool as the image.
+
+Attestations the target already has are skipped, so running `promote` again copies nothing
+twice. A second run also adds attestations to images that were promoted before this was
+turned on. Afterward, `promote` checks that the target has every attestation the source has and
+fails, recording nothing, if one is missing. An image published without attestations gets a
+warning.
 
 ### Requiring digests
 

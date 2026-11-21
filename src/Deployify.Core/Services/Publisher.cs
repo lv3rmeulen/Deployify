@@ -17,7 +17,8 @@ namespace Deployify.Core.Services;
 /// Builds the images Deployify owns and pushes them to the configured registry: .NET projects
 /// with the SDK's container support, Dockerfile builds with docker or podman. The content digest
 /// of every pushed image is recorded in <see cref="EnvironmentConfig.PublishedImages"/>, so the
-/// artifacts generated afterwards can pin it.
+/// artifacts generated afterwards can pin it. With <see cref="EnvironmentConfig.Sbom"/> enabled, every
+/// built image also gets an SBOM, attached to the pushed image as a signed attestation.
 /// </summary>
 public partial class Publisher(ILogger<Publisher> logger) : IPublisher
 {
@@ -25,6 +26,9 @@ public partial class Publisher(ILogger<Publisher> logger) : IPublisher
     internal IProcessRunner Runner { get; init; } = ProcessRunner.Default;
 
     internal TimeProvider Time { get; init; } = TimeProvider.System;
+
+    /// <summary>An image publish built: pushed to a registry, or kept in the local store.</summary>
+    private sealed record BuiltImage(string Name, string Repository, string Tag, bool Pushed, string? Digest);
 
     public async Task PublishAsync(AspireManifest manifest, EnvironmentConfig config,
         string appHostDirectory, CancellationToken ct = default)
@@ -45,6 +49,12 @@ public partial class Publisher(ILogger<Publisher> logger) : IPublisher
         foreach (var (name, build) in builds)
         {
             DockerfileBuildCommands.EnsureBuildable(name, build);
+        }
+
+        var sbom = config.Sbom.Enabled ? new SbomAttester(Runner, logger) : null;
+        if (sbom is not null)
+        {
+            await sbom.EnsureToolsAsync(config.Sbom, attest: !string.IsNullOrEmpty(config.ContainerRegistry), ct);
         }
 
         var runtime = await ResolveRuntimeAsync(config.ContainerRuntime, ct);
@@ -68,6 +78,7 @@ public partial class Publisher(ILogger<Publisher> logger) : IPublisher
         // Pass the daemon socket explicitly so Microsoft.NET.Build.Containers finds it
         // without probing, which avoids the opaque "pipe has been ended" error.
         var socketArg = GetContainerDaemonSocketArg(runtime);
+        var built = new List<BuiltImage>();
 
         foreach (var (name, resource) in manifest.Resources)
         {
@@ -119,15 +130,65 @@ public partial class Publisher(ILogger<Publisher> logger) : IPublisher
                 .EnsureSuccess("dotnet publish");
 
             // A digest means something only for an image in a registry: a local image is referenced by tag.
-            if (registryArg.Length > 0)
-            {
-                RecordDigest(config, name, tag, ReadSdkDigest(result.Stdout));
-            }
+            var pushed = registryArg.Length > 0;
+            var digest = pushed ? RecordDigest(config, name, tag, ReadSdkDigest(result.Stdout)) : null;
+            built.Add(new BuiltImage(name, ServiceImage.Repository(name, config), tag, pushed, digest));
         }
 
         foreach (var (name, build) in builds)
         {
-            await BuildDockerfileAsync(name, build, config, runtime, ct);
+            built.Add(await BuildDockerfileAsync(name, build, config, runtime, ct));
+        }
+
+        if (sbom is not null)
+        {
+            await AttachSbomsAsync(sbom, built, config, runtime, appHostDirectory, ct);
+        }
+    }
+
+    /// <summary>
+    /// Generates an SBOM for each built image into <c>{outputPath}/sbom/</c> and, for an image in a
+    /// registry, attests it to the pushed digest. A pushed image is scanned from the registry by
+    /// digest, so the SBOM describes exactly what was pushed; a local image from the local store.
+    /// </summary>
+    private async Task AttachSbomsAsync(SbomAttester sbom, IReadOnlyList<BuiltImage> built, EnvironmentConfig config,
+        ContainerRuntime runtime, string appHostDirectory, CancellationToken ct)
+    {
+        var options = config.Sbom;
+        var directory = Path.Combine(appHostDirectory, config.OutputPath, "sbom");
+        var platform = DockerfileBuildCommands.Platform(config.ContainerOs, config.ContainerArch);
+        var key = SbomAttester.ResolveKey(options.Key, appHostDirectory);
+        var localScheme = runtime == ContainerRuntime.Podman ? "podman" : "docker";
+
+        foreach (var image in built)
+        {
+            var source = image switch
+            {
+                { Pushed: true, Digest: not null } => $"registry:{image.Repository}@{image.Digest}",
+                { Pushed: true } => $"registry:{ImageReference.Format(image.Repository, image.Tag)}",
+                _ => $"{localScheme}:{ImageReference.Format(image.Repository, image.Tag)}"
+            };
+            var file = await sbom.GenerateAsync(image.Name, source, platform, options.Format, directory, ct);
+
+            if (!options.Attest)
+            {
+                logger.LogInformation("SBOM for '{Name}': {File}", image.Name, file);
+            }
+            else if (!image.Pushed)
+            {
+                logger.LogInformation("SBOM for '{Name}': {File}. It is a local image, so there is nothing to attest it to.",
+                    image.Name, file);
+            }
+            else if (image.Digest is null)
+            {
+                // Attesting by tag could attach the SBOM to whatever the tag points at by then.
+                logger.LogWarning("SBOM for '{Name}': {File}. Not attested: its digest is unknown.", image.Name, file);
+            }
+            else
+            {
+                await sbom.AttestAsync(image.Name, $"{image.Repository}@{image.Digest}", options.Format, file, key, ct);
+                logger.LogInformation("SBOM for '{Name}' attested to {Repository}@{Digest}.", image.Name, image.Repository, image.Digest);
+            }
         }
     }
 
@@ -142,26 +203,29 @@ public partial class Publisher(ILogger<Publisher> logger) : IPublisher
     internal static string? ReadPushDigest(string output)
         => PushDigestPattern().Matches(output) is { Count: > 0 } all ? all[^1].Groups[1].Value : null;
 
-    private void RecordDigest(EnvironmentConfig config, string name, string tag, string? digest)
+    /// <summary>Records the digest and returns it, or warns and returns null when it couldn't be read.</summary>
+    private string? RecordDigest(EnvironmentConfig config, string name, string tag, string? digest)
     {
         var repository = ServiceImage.Repository(name, config);
         if (digest is null)
         {
             logger.LogWarning("Published '{Name}', but couldn't read its digest; it is deployed by tag {Repository}:{Tag}.",
                 name, repository, tag);
-            return;
+            return null;
         }
 
         config.PublishedImages.Record(repository, tag, digest, Time.GetUtcNow());
         logger.LogInformation("'{Name}' is {Repository}@{Digest}.", name, repository, digest);
+        return digest;
     }
 
-    private async Task BuildDockerfileAsync(
+    private async Task<BuiltImage> BuildDockerfileAsync(
         string name, DockerfileBuild build, EnvironmentConfig config, ContainerRuntime runtime, CancellationToken ct)
     {
         var tool = runtime == ContainerRuntime.Podman ? "podman" : "docker";
         var tag = ServiceImage.Tag(name, config);
-        var reference = ImageReference.Format(ServiceImage.Repository(name, config), tag);
+        var repository = ServiceImage.Repository(name, config);
+        var reference = ImageReference.Format(repository, tag);
 
         logger.LogInformation("Building '{Name}' → {Reference} from {Dockerfile} ({Tool})...",
             name, reference, build.Dockerfile, tool);
@@ -172,7 +236,7 @@ public partial class Publisher(ILogger<Publisher> logger) : IPublisher
         if (string.IsNullOrEmpty(config.ContainerRegistry))
         {
             logger.LogInformation("No container registry configured: '{Name}' stays a local image.", name);
-            return;
+            return new BuiltImage(name, repository, tag, Pushed: false, Digest: null);
         }
 
         if (runtime == ContainerRuntime.Podman)
@@ -183,7 +247,8 @@ public partial class Publisher(ILogger<Publisher> logger) : IPublisher
             {
                 (await Runner.RunAsync(new ProcessSpec(tool, ["push", "--digestfile", digestFile, reference]) { Log = logger }, ct))
                     .EnsureSuccess("podman push");
-                RecordDigest(config, name, tag, File.Exists(digestFile) ? (await File.ReadAllTextAsync(digestFile, ct)).Trim() : null);
+                return new BuiltImage(name, repository, tag, Pushed: true, RecordDigest(config, name, tag,
+                    File.Exists(digestFile) ? (await File.ReadAllTextAsync(digestFile, ct)).Trim() : null));
             }
             finally
             {
@@ -194,7 +259,7 @@ public partial class Publisher(ILogger<Publisher> logger) : IPublisher
         {
             var push = (await Runner.RunAsync(new ProcessSpec(tool, ["push", reference]) { Log = logger }, ct))
                 .EnsureSuccess("docker push");
-            RecordDigest(config, name, tag, ReadPushDigest(push.Stdout));
+            return new BuiltImage(name, repository, tag, Pushed: true, RecordDigest(config, name, tag, ReadPushDigest(push.Stdout)));
         }
     }
 

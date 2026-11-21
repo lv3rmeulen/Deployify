@@ -87,6 +87,24 @@ at a given width instead.
     NOMAD_TOKEN: ${{ secrets.NOMAD_TOKEN }}
 ```
 
+### GitHub Actions — deploy with signed SBOMs
+
+With [`sbom.enabled`](/Deployify/guides/publishing-images/#sboms-and-attestations), the publish
+step needs syft and cosign, and keyless signing needs the job's OIDC token:
+
+```yaml
+permissions:
+  contents: read
+  id-token: write   # keyless cosign signing
+  packages: write   # pushing to GHCR
+
+steps:
+  - uses: sigstore/cosign-installer@v3
+  - uses: anchore/sbom-action/download-syft@v0
+  - name: Deploy
+    run: deployify ci --project-path src/MyApp.AppHost --env prod --auto-approve
+```
+
 ### GitHub Actions — plan-gate (fail on drift)
 
 ```yaml

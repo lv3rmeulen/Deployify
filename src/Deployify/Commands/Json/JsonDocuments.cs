@@ -153,4 +153,5 @@ internal sealed record JsonPromotedImage(
     bool NeedsCopy,
     bool AlreadyPromoted,
     bool Copied,
-    string? Problem);
+    string? Problem,
+    int? AttestationsCopied);

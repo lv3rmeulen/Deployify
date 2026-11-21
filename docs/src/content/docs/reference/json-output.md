@@ -259,7 +259,8 @@ unknown `--rollout` ID fails with exit code `1` and `result: null`.
       "needsCopy": true,
       "alreadyPromoted": false,
       "copied": true,
-      "problem": null
+      "problem": null,
+      "attestationsCopied": 1
     }
   ]
 }
@@ -273,6 +274,7 @@ unknown `--rollout` ID fails with exit code `1` and `result: null`.
 | `images[].repository`, `tag` | Where the `to` environment pulls the image from. |
 | `images[].needsCopy` | `true` when the target uses another repository, so the image is copied there first. |
 | `images[].copied` | `true` when this run copied the image. An image that was already in the target registry isn't copied again. |
+| `images[].attestationsCopied` | How many cosign attestations this run copied to the target registry with the image; `0` when it already had them all. `null` when attestations aren't copied: the image stays in the same repository, the source environment doesn't attest SBOMs, or with `--dry-run`. |
 | `images[].problem` | Why the image can't be promoted, such as a missing digest. Any problem means nothing is promoted and the exit code is `1`; the `images` list still shows which ones. |
 
 ## Using it

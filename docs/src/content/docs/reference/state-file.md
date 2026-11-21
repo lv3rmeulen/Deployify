@@ -100,3 +100,13 @@ Override image tag, replica count, or environment variables per service:
   "worker": { "count": 2, "env": { "LOG_LEVEL": "debug" } }
 }
 ```
+
+## SBOMs
+
+`sbom` turns on SBOM generation at publish and attaches each SBOM to the pushed image as a
+signed cosign attestation. It needs syft and cosign installed. See
+[SBOMs and attestations](/Deployify/guides/publishing-images/#sboms-and-attestations).
+
+```json
+"sbom": { "enabled": true, "format": "Spdx", "key": "awskms:///alias/deployify-signing" }
+```
