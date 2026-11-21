@@ -1,12 +1,16 @@
 using System;
 using System.Collections.Generic;
 using System.CommandLine;
+using System.CommandLine.Parsing;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
 using Deployify.Core.Services;
+using Deployify.Core.State;
 using Deployify.Target.AwsEcs;
 using Deployify.Target.AzureContainerApps;
 using Deployify.Target.Compose;
@@ -55,6 +59,16 @@ public static class EnvCommand
             {
                 var isActive = name == stateFile.ActiveEnvironment;
                 var label = isActive ? $"[bold cyan]▶ {Markup.Escape(name)}[/]" : $"  {Markup.Escape(name)}";
+                if (cfg.Extends is { } extends)
+                {
+                    label += $" [dim]← {Markup.Escape(extends)}[/]";
+                }
+
+                if (cfg.Abstract)
+                {
+                    label += " [dim](abstract)[/]";
+                }
+
                 var address = Markup.Escape(GetDisplayAddress(cfg));
                 table.AddRow(label, cfg.Target.ToString(), address,
                     cfg.ContainerRegistry is { } registry ? Markup.Escape(registry) : "[dim]-[/]");
@@ -83,9 +97,15 @@ public static class EnvCommand
             var stateManager = BuildStateManager();
             var stateFile = await stateManager.LoadFileAsync(directory, ct);
 
-            if (!stateFile.Environments.ContainsKey(name))
+            if (!stateFile.Environments.TryGetValue(name, out var chosen))
             {
                 AnsiConsole.MarkupLineInterpolated($"[red]✗[/] Environment '[bold]{name}[/]' not found. Available: {string.Join(", ", stateFile.Environments.Keys)}");
+                return 1;
+            }
+
+            if (chosen.Abstract)
+            {
+                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] '[bold]{name}[/]' is abstract: it only holds settings other environments extend. Switch to one of those instead.");
                 return 1;
             }
 
@@ -103,456 +123,439 @@ public static class EnvCommand
 
     // ── add ───────────────────────────────────────────────────────────────────
 
-    private static Command AddCommand()
+    /// <summary>The arguments and options of <c>env add</c>.</summary>
+    private sealed class AddOptions
     {
-        var nameArg = new Argument<string>("name")
+        public readonly Argument<string> Name = new("name") { Description = "New environment name." };
+
+        public readonly Option<DeploymentTargetType> Target = new("--target")
         {
-            Description = "New environment name."
-        };
-        var targetOpt = new Option<DeploymentTargetType>("--target")
-        {
-            Description = TargetOption.Description,
-            Required = true,
+            Description = TargetOption.Description + " Required unless --extends is given.",
             CustomParser = TargetOption.Parse
         };
-        var activateOpt = new Option<bool>("--activate")
+
+        public readonly Option<bool> Activate = new("--activate") { Description = "Set as active after adding." };
+
+        public readonly Option<string?> Extends = new("--extends")
         {
-            Description = "Set as active after adding."
-        };
-        var registryOpt = new Option<string?>("--container-registry")
-        {
-            Description = "Container registry."
-        };
-        var tagOpt = new Option<string?>("--image-tag")
-        {
-            Description = "Default image tag."
-        };
-        var containerOsOpt = new Option<string?>("--container-os")
-        {
-            Description = "Target OS for container images (e.g. linux)."
-        };
-        var containerArchOpt = new Option<string?>("--container-arch")
-        {
-            Description = "Target CPU architecture: x64 | arm64 | arm."
-        };
-        // Nomad
-        var nomadAddrOpt = new Option<string?>("--nomad-address")
-        {
-            Description = "Nomad address."
-        };
-        var nomadNsOpt = new Option<string?>("--nomad-namespace")
-        {
-            Description = "Nomad namespace."
-        };
-        var nomadDcOpt = new Option<string?>("--nomad-datacenter")
-        {
-            Description = "Nomad datacenter."
-        };
-        var nomadTokOpt = new Option<string?>("--nomad-token")
-        {
-            Description = "Nomad ACL token as env:NAME. Default: NOMAD_TOKEN at run time."
-        };
-        // Kubernetes
-        var kubernetesCtxOpt = new Option<string?>("--kubernetes-context")
-        {
-            Description = "kubectl context."
-        };
-        var kubernetesPrefOpt = new Option<string?>("--kubernetes-namespace-prefix")
-        {
-            Description = "Namespace prefix."
-        };
-        var kubernetesDomOpt = new Option<string?>("--kubernetes-ingress-domain")
-        {
-            Description = "Ingress base domain."
-        };
-        // Compose
-        var cmpProjOpt = new Option<string?>("--compose-project")
-        {
-            Description = "Docker Compose project name."
-        };
-        var cmpRestOpt = new Option<string?>("--compose-restart")
-        {
-            Description = "Restart policy."
+            Description = "Build on another environment: start from its settings and keep only what differs. " +
+                          "Takes the target and settings given here as overrides; no prompts."
         };
 
-        var cmd = new Command("add", "Add a new environment.") { nameArg };
-        Option[] addOptions =
+        public readonly Option<bool> Abstract = new("--abstract")
+        {
+            Description = "Only hold settings for other environments to extend; it can't be deployed or made active."
+        };
+
+        public readonly Option<string?> Registry = new("--container-registry") { Description = "Container registry." };
+        public readonly Option<string?> ImageTag = new("--image-tag") { Description = "Default image tag." };
+        public readonly Option<string?> ContainerOs = new("--container-os") { Description = "Target OS for container images (e.g. linux)." };
+        public readonly Option<string?> ContainerArch = new("--container-arch") { Description = "Target CPU architecture: x64 | arm64 | arm." };
+
+        // Nomad
+        public readonly Option<string?> NomadAddress = new("--nomad-address") { Description = "Nomad address." };
+        public readonly Option<string?> NomadNamespace = new("--nomad-namespace") { Description = "Nomad namespace." };
+        public readonly Option<string?> NomadDatacenter = new("--nomad-datacenter") { Description = "Nomad datacenter." };
+        public readonly Option<string?> NomadToken = new("--nomad-token") { Description = "Nomad ACL token as env:NAME. Default: NOMAD_TOKEN at run time." };
+
+        // Kubernetes
+        public readonly Option<string?> KubernetesContext = new("--kubernetes-context") { Description = "kubectl context." };
+        public readonly Option<string?> KubernetesPrefix = new("--kubernetes-namespace-prefix") { Description = "Namespace prefix." };
+        public readonly Option<string?> KubernetesDomain = new("--kubernetes-ingress-domain") { Description = "Ingress base domain." };
+
+        // Compose
+        public readonly Option<string?> ComposeProject = new("--compose-project") { Description = "Docker Compose project name." };
+        public readonly Option<string?> ComposeRestart = new("--compose-restart") { Description = "Restart policy." };
+
+        /// <summary>Every option, in the order help and the CLI reference list them.</summary>
+        public Option[] All =>
         [
             GlobalOptions.ProjectPath, GlobalOptions.NonInteractive,
-            targetOpt, activateOpt, registryOpt, tagOpt, containerOsOpt, containerArchOpt,
-            nomadAddrOpt, nomadNsOpt, nomadDcOpt, nomadTokOpt,
-            kubernetesCtxOpt, kubernetesPrefOpt, kubernetesDomOpt,
-            cmpProjOpt, cmpRestOpt, PlaintextSecretFlags.AllowOption
+            Target, Extends, Abstract, Activate, Registry, ImageTag, ContainerOs, ContainerArch,
+            NomadAddress, NomadNamespace, NomadDatacenter, NomadToken,
+            KubernetesContext, KubernetesPrefix, KubernetesDomain,
+            ComposeProject, ComposeRestart, PlaintextSecretFlags.AllowOption
         ];
-        foreach (var o in addOptions)
+
+        /// <summary>Options that fill in one target's section of <c>targetConfig</c>.</summary>
+        public Option[] TargetSpecific =>
+        [
+            NomadAddress, NomadNamespace, NomadDatacenter, NomadToken,
+            KubernetesContext, KubernetesPrefix, KubernetesDomain, ComposeProject, ComposeRestart
+        ];
+
+        public TargetSettings ReadTargetSettings(ParseResult pr) => new(
+            NomadAddress: pr.GetValue(NomadAddress),
+            NomadToken: pr.GetValue(NomadToken),
+            NomadNamespace: pr.GetValue(NomadNamespace),
+            NomadDatacenter: pr.GetValue(NomadDatacenter),
+            KubernetesContext: pr.GetValue(KubernetesContext),
+            KubernetesNamespacePrefix: pr.GetValue(KubernetesPrefix),
+            KubernetesIngressDomain: pr.GetValue(KubernetesDomain),
+            ComposeProject: pr.GetValue(ComposeProject),
+            ComposeRestart: pr.GetValue(ComposeRestart));
+    }
+
+    private static Command AddCommand()
+    {
+        var o = new AddOptions();
+        var cmd = new Command("add", "Add a new environment.") { o.Name };
+        foreach (var option in o.All)
         {
-            cmd.Options.Add(o);
+            cmd.Options.Add(option);
         }
 
-        cmd.SetAction(async (parseResult, ct) =>
-        {
-            var name = parseResult.GetRequiredValue(nameArg);
-            var nonInteractive = parseResult.GetValue(GlobalOptions.NonInteractive);
-            var directory = Resolve(parseResult.GetValue(GlobalOptions.ProjectPath)!);
-            var activate = parseResult.GetValue(activateOpt);
-            var stateManager = BuildStateManager();
-
-            DeployifyStateFile stateFile;
-            try
-            {
-                stateFile = await stateManager.LoadFileAsync(directory, ct);
-            }
-            catch (FileNotFoundException)
-            {
-                stateFile = new DeployifyStateFile { Environments = [] };
-            }
-
-            if (stateFile.Environments.ContainsKey(name))
-            {
-                AnsiConsole.MarkupLineInterpolated($"[yellow]![/] '{name}' already exists. Use [cyan]deployify env set[/] to update.");
-                return 1;
-            }
-
-            EnvironmentConfig config;
-            if (nonInteractive)
-            {
-                var pr = parseResult;
-                if (!PlaintextSecretFlags.Check(pr, (nomadTokOpt, "NOMAD_TOKEN", true)))
-                {
-                    return 1;
-                }
-
-                var target = pr.GetValue(targetOpt);
-                config = new EnvironmentConfig
-                {
-                    Target = target,
-                    ContainerRegistry = pr.GetValue(registryOpt),
-                    ImageTag = pr.GetValue(tagOpt) ?? "latest",
-                    TargetConfig = BuildTargetConfig(target,
-                        pr.GetValue(nomadAddrOpt),
-                        pr.GetValue(nomadTokOpt),
-                        pr.GetValue(nomadNsOpt),
-                        pr.GetValue(nomadDcOpt),
-                        pr.GetValue(kubernetesCtxOpt),
-                        pr.GetValue(kubernetesPrefOpt),
-                        pr.GetValue(kubernetesDomOpt),
-                        pr.GetValue(cmpProjOpt),
-                        pr.GetValue(cmpRestOpt))
-                };
-            }
-            else
-            {
-                config = await InitCommand.PromptEnvironmentConfigAsync(name, directory, ct);
-            }
-
-            stateFile.Environments[name] = config;
-            if (activate || stateFile.Environments.Count == 1)
-            {
-                stateFile.ActiveEnvironment = name;
-            }
-
-            await stateManager.SaveFileAsync(stateFile, directory, ct);
-            await SecretsWarning.PrintAsync(stateFile, directory, ct);
-            AnsiConsole.MarkupLineInterpolated($"[green]✓[/] Environment [bold cyan]{name}[/] added ({config.Target}).");
-            if (activate)
-            {
-                AnsiConsole.MarkupLineInterpolated($"  Now active: [bold cyan]{name}[/]");
-            }
-
-            return 0;
-        });
+        cmd.Validators.Add(result => ValidateAdd(result, o));
+        cmd.SetAction((parseResult, ct) => RunAddAsync(parseResult, o, ct));
         return cmd;
+    }
+
+    private static void ValidateAdd(CommandResult result, AddOptions o)
+    {
+        var extends = result.GetResult(o.Extends) is not null;
+        if (!extends && result.GetResult(o.Target) is null)
+        {
+            result.AddError("Option '--target' is required (or give --extends to build on another environment).");
+        }
+
+        if (extends && o.TargetSpecific.FirstOrDefault(option => result.GetResult(option) is not null) is { } given)
+        {
+            result.AddError(
+                $"{given.Name} can't be combined with --extends. Add the environment, then override target " +
+                "settings with 'deployify env set'.");
+        }
+
+        if (result.GetValue(o.Activate) && result.GetValue(o.Abstract))
+        {
+            result.AddError("An --abstract environment can't be made active.");
+        }
+    }
+
+    private static async Task<int> RunAddAsync(ParseResult pr, AddOptions o, CancellationToken ct)
+    {
+        var name = pr.GetRequiredValue(o.Name);
+        var directory = Resolve(pr.GetValue(GlobalOptions.ProjectPath)!);
+        var stateManager = BuildStateManager();
+        var stateFile = await LoadOrNewAsync(stateManager, directory, ct);
+
+        if (stateFile.Environments.ContainsKey(name))
+        {
+            AnsiConsole.MarkupLineInterpolated($"[yellow]![/] '{name}' already exists. Use [cyan]deployify env set[/] to update.");
+            return 1;
+        }
+
+        var config = await CreateConfigAsync(pr, o, stateFile, name, directory, ct);
+        if (config is null)
+        {
+            return 1;
+        }
+
+        config.Abstract = pr.GetValue(o.Abstract);
+        stateFile.Environments[name] = config;
+        var activate = pr.GetValue(o.Activate);
+        if (activate || (stateFile.Environments.Count == 1 && !config.Abstract))
+        {
+            stateFile.ActiveEnvironment = name;
+        }
+
+        await stateManager.SaveFileAsync(stateFile, directory, ct);
+        await SecretsWarning.PrintAsync(stateFile, directory, ct);
+        PrintAdded(name, config, activate);
+        return 0;
+    }
+
+    private static async Task<DeployifyStateFile> LoadOrNewAsync(IStateManager stateManager, string directory, CancellationToken ct)
+    {
+        try
+        {
+            return await stateManager.LoadFileAsync(directory, ct);
+        }
+        catch (FileNotFoundException)
+        {
+            return new DeployifyStateFile { Environments = [] };
+        }
+    }
+
+    /// <summary>The new environment's settings, or null after printing why there are none.</summary>
+    private static async Task<EnvironmentConfig?> CreateConfigAsync(
+        ParseResult pr, AddOptions o, DeployifyStateFile stateFile, string name, string directory, CancellationToken ct)
+    {
+        if (pr.GetValue(o.Extends) is { } baseName)
+        {
+            return CreateExtending(pr, o, stateFile, baseName);
+        }
+
+        if (pr.GetValue(GlobalOptions.NonInteractive))
+        {
+            return CreateFromOptions(pr, o);
+        }
+
+        return await InitCommand.PromptEnvironmentConfigAsync(name, directory, ct);
+    }
+
+    private static EnvironmentConfig? CreateExtending(ParseResult pr, AddOptions o, DeployifyStateFile stateFile, string baseName)
+    {
+        if (!stateFile.Environments.TryGetValue(baseName, out var baseConfig))
+        {
+            AnsiConsole.MarkupLineInterpolated(
+                $"[red]✗[/] Can't extend '{baseName}': no such environment. Available: {string.Join(", ", stateFile.Environments.Keys)}");
+            return null;
+        }
+
+        var config = StateManager.CreateExtending(baseConfig, baseName);
+        if (pr.GetResult(o.Target) is not null)
+        {
+            ChangeTarget(config, pr.GetValue(o.Target));
+        }
+
+        var changes = new Changes(pr);
+        changes.Set(o.Registry, v => config.ContainerRegistry = v);
+        changes.Set(o.ImageTag, v => config.ImageTag = v);
+        changes.Set(o.ContainerOs, v => config.ContainerOs = v);
+        changes.Set(o.ContainerArch, v => config.ContainerArch = v);
+        return config;
+    }
+
+    /// <summary>
+    /// Switches an extending environment to another target, adding default settings for it
+    /// where the base has none. The base's sections for other targets stay inherited.
+    /// </summary>
+    private static void ChangeTarget(EnvironmentConfig config, DeploymentTargetType target)
+    {
+        if (target == config.Target)
+        {
+            return;
+        }
+
+        config.Target = target;
+        foreach (var (key, section) in BuildTargetConfig(target, TargetSettings.Defaults))
+        {
+            config.TargetConfig.TryAdd(key, section);
+        }
+    }
+
+    private static EnvironmentConfig? CreateFromOptions(ParseResult pr, AddOptions o)
+    {
+        if (!PlaintextSecretFlags.Check(pr, (o.NomadToken, "NOMAD_TOKEN", true)))
+        {
+            return null;
+        }
+
+        var target = pr.GetValue(o.Target);
+        return new EnvironmentConfig
+        {
+            Target = target,
+            ContainerRegistry = pr.GetValue(o.Registry),
+            ImageTag = pr.GetValue(o.ImageTag) ?? "latest",
+            TargetConfig = BuildTargetConfig(target, o.ReadTargetSettings(pr))
+        };
+    }
+
+    private static void PrintAdded(string name, EnvironmentConfig config, bool activated)
+    {
+        var details = new List<string> { config.Target.ToString() };
+        if (config.Extends is { } extends)
+        {
+            details.Add($"extends {extends}");
+        }
+
+        if (config.Abstract)
+        {
+            details.Add("abstract");
+        }
+
+        AnsiConsole.MarkupLineInterpolated($"[green]✓[/] Environment [bold cyan]{name}[/] added ({string.Join(", ", details)}).");
+        if (activated)
+        {
+            AnsiConsole.MarkupLineInterpolated($"  Now active: [bold cyan]{name}[/]");
+        }
     }
 
     // ── set ───────────────────────────────────────────────────────────────────
 
-    private static Command SetCommand()
+    /// <summary>The arguments and options of <c>env set</c>.</summary>
+    private sealed class SetOptions
     {
-        var nameArg = new Argument<string>("name")
-        {
-            Description = "Environment to update."
-        };
-        var registryOpt = new Option<string?>("--container-registry")
-        {
-            Description = "Update container registry."
-        };
-        var tagOpt = new Option<string?>("--image-tag")
-        {
-            Description = "Update default image tag."
-        };
-        var containerOsOpt = new Option<string?>("--container-os")
-        {
-            Description = "Target OS for container images (e.g. linux)."
-        };
-        var containerArchOpt = new Option<string?>("--container-arch")
-        {
-            Description = "Target CPU architecture: x64 | arm64 | arm."
-        };
-        var nomadAddrOpt = new Option<string?>("--nomad-address")
-        {
-            Description = "Update Nomad address."
-        };
-        var nomadTokOpt = new Option<string?>("--nomad-token")
-        {
-            Description = "Update the Nomad token reference (env:NAME)."
-        };
-        var nomadNsOpt = new Option<string?>("--nomad-namespace")
-        {
-            Description = "Update Nomad namespace."
-        };
-        var nomadDcOpt = new Option<string?>("--nomad-datacenter")
-        {
-            Description = "Update Nomad datacenter."
-        };
-        var nomadRegUserOpt = new Option<string?>("--nomad-registry-username")
-        {
-            Description = "Docker registry username (empty string to remove)."
-        };
-        var nomadRegPassOpt = new Option<string?>("--nomad-registry-password")
-        {
-            Description = "Docker registry password or token as env:NAME (empty string to remove)."
-        };
-        var nomadRegisterOpt = new Option<bool?>("--nomad-register-services")
-        {
-            Description = "Enable (true) or disable (false) service registration."
-        };
-        var nomadProviderOpt = new Option<string?>("--nomad-service-provider")
-        {
-            Description = "Service provider: nomad | consul."
-        };
-        var nomadHealthPathOpt = new Option<string?>("--nomad-health-check-path")
-        {
-            Description = "HTTP path for service health checks."
-        };
-        var deployDashboardOpt = new Option<bool?>("--deploy-dashboard")
-        {
-            Description = "Enable (true) or disable (false) the Aspire Dashboard."
-        };
-        var dashboardTagOpt = new Option<string?>("--dashboard-tag")
-        {
-            Description = "Image tag for the Aspire Dashboard."
-        };
-        var dashboardPortOpt = new Option<int?>("--dashboard-port")
-        {
-            Description = "Host port for the dashboard UI."
-        };
-        var dashboardOtlpPortOpt = new Option<int?>("--dashboard-otlp-port")
-        {
-            Description = "Host port for the OTLP gRPC endpoint."
-        };
-        var dashboardTokenOpt = new Option<string?>("--dashboard-token")
-        {
-            Description = "Browser auth token as env:NAME (empty string to remove)."
-        };
-        var deployDaprOpt = new Option<bool?>("--deploy-dapr")
-        {
-            Description = "Enable (true) or disable (false) Dapr sidecar injection."
-        };
-        var daprVersionOpt = new Option<string?>("--dapr-version")
-        {
-            Description = "Dapr sidecar image tag."
-        };
-        var daprComponentsOpt = new Option<string?>("--dapr-components-path")
-        {
-            Description = "Path to Dapr components directory."
-        };
-        var daprConfigPathOpt = new Option<string?>("--dapr-config-path")
-        {
-            Description = "Path to Dapr config file."
-        };
-        var daprLogLevelOpt = new Option<string?>("--dapr-log-level")
-        {
-            Description = "Dapr sidecar log level."
-        };
+        public readonly Argument<string> Name = new("name") { Description = "Environment to update." };
 
-        var cmd = new Command("set", "Update settings on an existing environment.") { nameArg };
-        foreach (var o in new Option[] { GlobalOptions.ProjectPath, registryOpt, tagOpt,
-            containerOsOpt, containerArchOpt,
-            nomadAddrOpt, nomadTokOpt, nomadNsOpt, nomadDcOpt,
-            nomadRegUserOpt, nomadRegPassOpt,
-            nomadRegisterOpt, nomadProviderOpt, nomadHealthPathOpt,
-            deployDashboardOpt, dashboardTagOpt, dashboardPortOpt, dashboardOtlpPortOpt, dashboardTokenOpt,
-            deployDaprOpt, daprVersionOpt, daprComponentsOpt, daprConfigPathOpt, daprLogLevelOpt,
-            PlaintextSecretFlags.AllowOption })
+        public readonly Option<string?> Registry = new("--container-registry") { Description = "Update container registry." };
+        public readonly Option<string?> ImageTag = new("--image-tag") { Description = "Update default image tag." };
+        public readonly Option<string?> ContainerOs = new("--container-os") { Description = "Target OS for container images (e.g. linux)." };
+        public readonly Option<string?> ContainerArch = new("--container-arch") { Description = "Target CPU architecture: x64 | arm64 | arm." };
+
+        // Nomad
+        public readonly Option<string?> NomadAddress = new("--nomad-address") { Description = "Update Nomad address." };
+        public readonly Option<string?> NomadToken = new("--nomad-token") { Description = "Update the Nomad token reference (env:NAME)." };
+        public readonly Option<string?> NomadNamespace = new("--nomad-namespace") { Description = "Update Nomad namespace." };
+        public readonly Option<string?> NomadDatacenter = new("--nomad-datacenter") { Description = "Update Nomad datacenter." };
+        public readonly Option<string?> NomadRegistryUser = new("--nomad-registry-username") { Description = "Docker registry username (empty string to remove)." };
+        public readonly Option<string?> NomadRegistryPassword = new("--nomad-registry-password") { Description = "Docker registry password or token as env:NAME (empty string to remove)." };
+        public readonly Option<bool?> NomadRegisterServices = new("--nomad-register-services") { Description = "Enable (true) or disable (false) service registration." };
+        public readonly Option<string?> NomadServiceProvider = new("--nomad-service-provider") { Description = "Service provider: nomad | consul." };
+        public readonly Option<string?> NomadHealthCheckPath = new("--nomad-health-check-path") { Description = "HTTP path for service health checks." };
+
+        // Aspire Dashboard
+        public readonly Option<bool?> DeployDashboard = new("--deploy-dashboard") { Description = "Enable (true) or disable (false) the Aspire Dashboard." };
+        public readonly Option<string?> DashboardTag = new("--dashboard-tag") { Description = "Image tag for the Aspire Dashboard." };
+        public readonly Option<int?> DashboardPort = new("--dashboard-port") { Description = "Host port for the dashboard UI." };
+        public readonly Option<int?> DashboardOtlpPort = new("--dashboard-otlp-port") { Description = "Host port for the OTLP gRPC endpoint." };
+        public readonly Option<string?> DashboardToken = new("--dashboard-token") { Description = "Browser auth token as env:NAME (empty string to remove)." };
+
+        // Dapr
+        public readonly Option<bool?> DeployDapr = new("--deploy-dapr") { Description = "Enable (true) or disable (false) Dapr sidecar injection." };
+        public readonly Option<string?> DaprVersion = new("--dapr-version") { Description = "Dapr sidecar image tag." };
+        public readonly Option<string?> DaprComponents = new("--dapr-components-path") { Description = "Path to Dapr components directory." };
+        public readonly Option<string?> DaprConfigPath = new("--dapr-config-path") { Description = "Path to Dapr config file." };
+        public readonly Option<string?> DaprLogLevel = new("--dapr-log-level") { Description = "Dapr sidecar log level." };
+
+        /// <summary>Every option, in the order help and the CLI reference list them.</summary>
+        public Option[] All =>
+        [
+            GlobalOptions.ProjectPath, Registry, ImageTag, ContainerOs, ContainerArch,
+            NomadAddress, NomadToken, NomadNamespace, NomadDatacenter,
+            NomadRegistryUser, NomadRegistryPassword,
+            NomadRegisterServices, NomadServiceProvider, NomadHealthCheckPath,
+            DeployDashboard, DashboardTag, DashboardPort, DashboardOtlpPort, DashboardToken,
+            DeployDapr, DaprVersion, DaprComponents, DaprConfigPath, DaprLogLevel,
+            PlaintextSecretFlags.AllowOption
+        ];
+    }
+
+    /// <summary>
+    /// Applies the options that were given and records their names, without the leading dashes,
+    /// for the summary line.
+    /// </summary>
+    private sealed class Changes(ParseResult pr)
+    {
+        public List<string> Names { get; } = [];
+
+        public void Set<T>(Option<T?> option, Action<T> apply) where T : class
         {
-            cmd.Options.Add(o);
+            if (pr.GetValue(option) is { } value)
+            {
+                apply(value);
+                Names.Add(option.Name.TrimStart('-'));
+            }
         }
 
-        cmd.SetAction(async (parseResult, ct) =>
+        public void Set<T>(Option<T?> option, Action<T> apply) where T : struct
         {
-            var name = parseResult.GetRequiredValue(nameArg);
-            var directory = Resolve(parseResult.GetValue(GlobalOptions.ProjectPath)!);
-            var stateManager = BuildStateManager();
-            var stateFile = await stateManager.LoadFileAsync(directory, ct);
-
-            if (!stateFile.Environments.TryGetValue(name, out var config))
+            if (pr.GetValue(option) is { } value)
             {
-                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] Environment '{name}' not found.");
-                return 1;
+                apply(value);
+                Names.Add(option.Name.TrimStart('-'));
             }
+        }
 
-            if (!PlaintextSecretFlags.Check(parseResult,
-                    (nomadTokOpt, "NOMAD_TOKEN", true),
-                    (nomadRegPassOpt, "DEPLOYIFY_REGISTRY_PASSWORD", true),
-                    (dashboardTokenOpt, "DEPLOYIFY_DASHBOARD_TOKEN", false)))
-            {
-                return 1;
-            }
+        /// <summary>Like <c>Set</c>, with an empty string meaning "remove" (null).</summary>
+        public void SetOrClear(Option<string?> option, Action<string?> apply)
+            => Set(option, v => apply(string.IsNullOrEmpty(v) ? null : v));
+    }
 
-            var changed = new List<string>();
-            var pr = parseResult;
+    private static Command SetCommand()
+    {
+        var o = new SetOptions();
+        var cmd = new Command("set", "Update settings on an existing environment.") { o.Name };
+        foreach (var option in o.All)
+        {
+            cmd.Options.Add(option);
+        }
 
-            void SetOpt<T>(Option<T?> opt, Action<T> apply) where T : class
-            {
-                var v = pr.GetValue(opt);
-                if (v is not null)
-                {
-                    apply(v);
-                    changed.Add(opt.Name);
-                }
-            }
-
-            SetOpt(registryOpt, v => config.ContainerRegistry = v);
-            SetOpt(tagOpt, v => config.ImageTag = v);
-            SetOpt(containerOsOpt, v => config.ContainerOs = v);
-            SetOpt(containerArchOpt, v => config.ContainerArch = v);
-
-            // Dapr
-            var deployDapr = pr.GetValue(deployDaprOpt);
-            if (deployDapr.HasValue)
-            {
-                config.DeployDapr = deployDapr.Value;
-                changed.Add("deploy-dapr");
-            }
-
-            var daprVer = pr.GetValue(daprVersionOpt);
-            if (daprVer is not null)
-            {
-                config.Dapr.DaprVersion = daprVer;
-                changed.Add("dapr-version");
-            }
-
-            var daprComp = pr.GetValue(daprComponentsOpt);
-            if (daprComp is not null)
-            {
-                config.Dapr.ComponentsPath = string.IsNullOrEmpty(daprComp) ? null : daprComp;
-                changed.Add("dapr-components-path");
-            }
-
-            var daprCfgPath = pr.GetValue(daprConfigPathOpt);
-            if (daprCfgPath is not null)
-            {
-                config.Dapr.ConfigPath = string.IsNullOrEmpty(daprCfgPath) ? null : daprCfgPath;
-                changed.Add("dapr-config-path");
-            }
-
-            var daprLog = pr.GetValue(daprLogLevelOpt);
-            if (daprLog is not null)
-            {
-                config.Dapr.LogLevel = daprLog;
-                changed.Add("dapr-log-level");
-            }
-
-            var deployDb = pr.GetValue(deployDashboardOpt);
-            if (deployDb.HasValue)
-            {
-                config.DeployDashboard = deployDb.Value;
-                changed.Add("deploy-dashboard");
-            }
-
-            var dbTag = pr.GetValue(dashboardTagOpt);
-            if (dbTag is not null)
-            {
-                config.Dashboard.ImageTag = dbTag;
-                changed.Add("dashboard-tag");
-            }
-
-            var dbPort = pr.GetValue(dashboardPortOpt);
-            if (dbPort.HasValue)
-            {
-                config.Dashboard.Port = dbPort.Value;
-                changed.Add("dashboard-port");
-            }
-
-            var dbOtlp = pr.GetValue(dashboardOtlpPortOpt);
-            if (dbOtlp.HasValue)
-            {
-                config.Dashboard.OtlpPort = dbOtlp.Value;
-                changed.Add("dashboard-otlp-port");
-            }
-
-            var dbToken = pr.GetValue(dashboardTokenOpt);
-            if (dbToken is not null)
-            {
-                config.Dashboard.BrowserToken = string.IsNullOrEmpty(dbToken) ? null : dbToken;
-                changed.Add("dashboard-token");
-            }
-
-            // Patch nomad sub-config
-            if (config.Target == DeploymentTargetType.Nomad &&
-                config.TargetConfig.TryGetValue("nomad", out var rawNomad) &&
-                rawNomad is JsonElement nomadEl)
-            {
-                // Same options init uses, so stri"Docker" deserialize.
-                var nc = nomadEl.Deserialize<NomadTargetConfig>(TargetConfigJsonOptions.Default)!;
-                SetOpt(nomadAddrOpt, v => nc.Address = v);
-                SetOpt(nomadTokOpt, v => nc.Token = v);
-                SetOpt(nomadNsOpt, v => nc.Namespace = v);
-                SetOpt(nomadDcOpt, v => nc.Datacenters = [v]);
-                var regUser = parseResult.GetValue(nomadRegUserOpt);
-                if (regUser is not null)
-                {
-                    nc.RegistryUsername = string.IsNullOrEmpty(regUser) ? null : regUser;
-                    changed.Add("nomad-registry-username");
-                }
-
-                var regPass = parseResult.GetValue(nomadRegPassOpt);
-                if (regPass is not null)
-                {
-                    nc.RegistryPassword = string.IsNullOrEmpty(regPass) ? null : regPass;
-                    changed.Add("nomad-registry-password");
-                }
-
-                var register = parseResult.GetValue(nomadRegisterOpt);
-                if (register.HasValue)
-                {
-                    nc.RegisterServices = register.Value;
-                    changed.Add("nomad-register-services");
-                }
-
-                var provider = parseResult.GetValue(nomadProviderOpt);
-                if (provider is not null)
-                {
-                    nc.ServiceProvider = provider;
-                    changed.Add("nomad-service-provider");
-                }
-
-                var healthPath = parseResult.GetValue(nomadHealthPathOpt);
-                if (healthPath is not null)
-                {
-                    nc.HealthCheckPath = healthPath;
-                    changed.Add("nomad-health-check-path");
-                }
-
-                if (changed.Any(c => c.StartsWith("nomad")))
-                {
-                    config.TargetConfig["nomad"] = JsonSerializer.SerializeToElement(nc, TargetConfigJsonOptions.Default);
-                }
-            }
-
-            if (changed.Count == 0)
-            {
-                AnsiConsole.MarkupLine("[yellow]No changes specified.[/]");
-                return 0;
-            }
-
-            await stateManager.SaveFileAsync(stateFile, directory, ct);
-            await SecretsWarning.PrintAsync(stateFile, directory, ct);
-            AnsiConsole.MarkupLineInterpolated($"[green]✓[/] [bold cyan]{name}[/] updated: {string.Join(", ", changed)}");
-
-            return 0;
-        });
+        cmd.SetAction((parseResult, ct) => RunSetAsync(parseResult, o, ct));
         return cmd;
+    }
+
+    private static async Task<int> RunSetAsync(ParseResult pr, SetOptions o, CancellationToken ct)
+    {
+        var name = pr.GetRequiredValue(o.Name);
+        var directory = Resolve(pr.GetValue(GlobalOptions.ProjectPath)!);
+        var stateManager = BuildStateManager();
+        var stateFile = await stateManager.LoadFileAsync(directory, ct);
+
+        if (!stateFile.Environments.TryGetValue(name, out var config))
+        {
+            AnsiConsole.MarkupLineInterpolated($"[red]✗[/] Environment '{name}' not found.");
+            return 1;
+        }
+
+        if (!PlaintextSecretFlags.Check(pr,
+                (o.NomadToken, "NOMAD_TOKEN", true),
+                (o.NomadRegistryPassword, "DEPLOYIFY_REGISTRY_PASSWORD", true),
+                (o.DashboardToken, "DEPLOYIFY_DASHBOARD_TOKEN", false)))
+        {
+            return 1;
+        }
+
+        var changes = new Changes(pr);
+        SetImageSettings(changes, o, config);
+        SetDapr(changes, o, config);
+        SetDashboard(changes, o, config);
+        SetNomad(changes, o, config);
+
+        if (changes.Names.Count == 0)
+        {
+            AnsiConsole.MarkupLine("[yellow]No changes specified.[/]");
+            return 0;
+        }
+
+        await stateManager.SaveFileAsync(stateFile, directory, ct);
+        await SecretsWarning.PrintAsync(stateFile, directory, ct);
+        AnsiConsole.MarkupLineInterpolated($"[green]✓[/] [bold cyan]{name}[/] updated: {string.Join(", ", changes.Names)}");
+        return 0;
+    }
+
+    private static void SetImageSettings(Changes changes, SetOptions o, EnvironmentConfig config)
+    {
+        changes.Set(o.Registry, v => config.ContainerRegistry = v);
+        changes.Set(o.ImageTag, v => config.ImageTag = v);
+        changes.Set(o.ContainerOs, v => config.ContainerOs = v);
+        changes.Set(o.ContainerArch, v => config.ContainerArch = v);
+    }
+
+    private static void SetDapr(Changes changes, SetOptions o, EnvironmentConfig config)
+    {
+        changes.Set(o.DeployDapr, v => config.DeployDapr = v);
+        changes.Set(o.DaprVersion, v => config.Dapr.DaprVersion = v);
+        changes.SetOrClear(o.DaprComponents, v => config.Dapr.ComponentsPath = v);
+        changes.SetOrClear(o.DaprConfigPath, v => config.Dapr.ConfigPath = v);
+        changes.Set(o.DaprLogLevel, v => config.Dapr.LogLevel = v);
+    }
+
+    private static void SetDashboard(Changes changes, SetOptions o, EnvironmentConfig config)
+    {
+        changes.Set(o.DeployDashboard, v => config.DeployDashboard = v);
+        changes.Set(o.DashboardTag, v => config.Dashboard.ImageTag = v);
+        changes.Set(o.DashboardPort, v => config.Dashboard.Port = v);
+        changes.Set(o.DashboardOtlpPort, v => config.Dashboard.OtlpPort = v);
+        changes.SetOrClear(o.DashboardToken, v => config.Dashboard.BrowserToken = v);
+    }
+
+    /// <summary>Applies the Nomad options to a Nomad environment's <c>targetConfig.nomad</c>; other targets ignore them.</summary>
+    private static void SetNomad(Changes changes, SetOptions o, EnvironmentConfig config)
+    {
+        if (config.Target != DeploymentTargetType.Nomad ||
+            !config.TargetConfig.TryGetValue("nomad", out var raw) || raw is not JsonElement element)
+        {
+            return;
+        }
+
+        // Same options init uses, so enum values stored as strings ("Docker") deserialize.
+        var nomad = element.Deserialize<NomadTargetConfig>(TargetConfigJsonOptions.Default)!;
+        var before = changes.Names.Count;
+        changes.Set(o.NomadAddress, v => nomad.Address = v);
+        changes.Set(o.NomadToken, v => nomad.Token = v);
+        changes.Set(o.NomadNamespace, v => nomad.Namespace = v);
+        changes.Set(o.NomadDatacenter, v => nomad.Datacenters = [v]);
+        changes.SetOrClear(o.NomadRegistryUser, v => nomad.RegistryUsername = v);
+        changes.SetOrClear(o.NomadRegistryPassword, v => nomad.RegistryPassword = v);
+        changes.Set(o.NomadRegisterServices, v => nomad.RegisterServices = v);
+        changes.Set(o.NomadServiceProvider, v => nomad.ServiceProvider = v);
+        changes.Set(o.NomadHealthCheckPath, v => nomad.HealthCheckPath = v);
+
+        if (changes.Names.Count > before)
+        {
+            config.TargetConfig["nomad"] = JsonSerializer.SerializeToElement(nomad, TargetConfigJsonOptions.Default);
+        }
     }
 
     // ── remove ────────────────────────────────────────────────────────────────
@@ -596,6 +599,13 @@ public static class EnvCommand
                 return 1;
             }
 
+            if (EnvironmentInheritance.ExtendedBy(name, stateFile.Environments) is { Count: > 0 } children)
+            {
+                AnsiConsole.MarkupLineInterpolated(
+                    $"[red]✗[/] Cannot remove '{name}': {string.Join(", ", children)} extend{(children.Count == 1 ? "s" : "")} it. Point them elsewhere or remove them first.");
+                return 1;
+            }
+
             if (!force && !await ConsolePrompts.ConfirmAsync($"Remove '[bold]{Markup.Escape(name)}[/]'?", defaultValue: false, ct))
             {
                 return 0;
@@ -613,119 +623,123 @@ public static class EnvCommand
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    internal static Dictionary<string, object?> BuildTargetConfig(
-        DeploymentTargetType target,
-        string? nomadAddr, string? nomadToken, string? nomadNs, string? nomadDc,
-        string? kubernetesContext, string? kubernetesPrefix, string? kubernetesDomain,
-        string? composeProject, string? composeRestart)
+    /// <summary>
+    /// Settings a new environment's <c>targetConfig</c> starts from; null takes the default.
+    /// Each target reads only its own.
+    /// </summary>
+    internal sealed record TargetSettings(
+        string? NomadAddress = null,
+        string? NomadToken = null,
+        string? NomadNamespace = null,
+        string? NomadDatacenter = null,
+        string? KubernetesContext = null,
+        string? KubernetesNamespacePrefix = null,
+        string? KubernetesIngressDomain = null,
+        string? ComposeProject = null,
+        string? ComposeRestart = null)
     {
-        return target.Value switch
-        {
-            DeploymentTargetType.Names.Nomad => Serialize("nomad", new NomadTargetConfig
-            {
-                Address = nomadAddr ?? "http://localhost:4646",
-                Token = string.IsNullOrWhiteSpace(nomadToken) ? null : nomadToken,
-                Namespace = nomadNs ?? "default",
-                Datacenters = [nomadDc ?? "dc1"]
-            }),
-            DeploymentTargetType.Names.Kubernetes => Serialize("kubernetes", new KubernetesTargetConfig
-            {
-                Context = string.IsNullOrWhiteSpace(kubernetesContext) ? null : kubernetesContext,
-                NamespacePrefix = kubernetesPrefix ?? "deployify",
-                IngressBaseDomain = string.IsNullOrWhiteSpace(kubernetesDomain) ? null : kubernetesDomain,
-                GenerateIngress = !string.IsNullOrWhiteSpace(kubernetesDomain)
-            }),
-            DeploymentTargetType.Names.Compose => Serialize("compose", new ComposeTargetConfig
-            {
-                ProjectName = composeProject ?? "deployify",
-                RestartPolicy = composeRestart ?? "unless-stopped",
-                GenerateProfiles = true,
-                GenerateEnvFile = true,
-                GenerateMergedFile = true
-            }),
-            DeploymentTargetType.Names.AwsEcs => Serialize("ecs", new EcsTargetConfig()),
-            DeploymentTargetType.Names.AzureContainerApps => Serialize("aca", new AcaTargetConfig()),
-            DeploymentTargetType.Names.NomadConsul => Serialize("nomadconsul", new NomadConsulTargetConfig()),
-            // Helm deploys the Kubernetes target's manifests, so it reads the same settings.
-            DeploymentTargetType.Names.Helm => new Dictionary<string, object?>
-            {
-                ["kubernetes"] = JsonSerializer.SerializeToElement(new KubernetesTargetConfig
-                {
-                    Context = string.IsNullOrWhiteSpace(kubernetesContext) ? null : kubernetesContext,
-                    NamespacePrefix = kubernetesPrefix ?? "deployify",
-                    IngressBaseDomain = string.IsNullOrWhiteSpace(kubernetesDomain) ? null : kubernetesDomain,
-                    GenerateIngress = !string.IsNullOrWhiteSpace(kubernetesDomain)
-                }, TargetConfigJsonOptions.Default),
-                ["helm"] = JsonSerializer.SerializeToElement(new HelmTargetConfig(), TargetConfigJsonOptions.Default)
-            },
-            // The GitOps targets render the Kubernetes target's manifests; set gitops.repoUrl before applying.
-            DeploymentTargetType.Names.ArgoCd or DeploymentTargetType.Names.Flux => new Dictionary<string, object?>
-            {
-                ["kubernetes"] = JsonSerializer.SerializeToElement(new KubernetesTargetConfig
-                {
-                    Context = string.IsNullOrWhiteSpace(kubernetesContext) ? null : kubernetesContext,
-                    NamespacePrefix = kubernetesPrefix ?? "deployify",
-                    IngressBaseDomain = string.IsNullOrWhiteSpace(kubernetesDomain) ? null : kubernetesDomain,
-                    GenerateIngress = !string.IsNullOrWhiteSpace(kubernetesDomain)
-                }, TargetConfigJsonOptions.Default),
-                ["gitops"] = JsonSerializer.SerializeToElement(new GitOpsTargetConfig(), TargetConfigJsonOptions.Default),
-                [target == DeploymentTargetType.ArgoCd ? "argocd" : "flux"] = target == DeploymentTargetType.ArgoCd
-                    ? JsonSerializer.SerializeToElement(new ArgoCdTargetConfig(), TargetConfigJsonOptions.Default)
-                    : JsonSerializer.SerializeToElement(new FluxTargetConfig(), TargetConfigJsonOptions.Default)
-            },
-            // OVHcloud deploys the Kubernetes target's manifests; set ovhcloud.projectId and clusterId.
-            DeploymentTargetType.Names.OvhCloud => new Dictionary<string, object?>
-            {
-                ["kubernetes"] = JsonSerializer.SerializeToElement(new KubernetesTargetConfig
-                {
-                    NamespacePrefix = kubernetesPrefix ?? "deployify",
-                    IngressBaseDomain = string.IsNullOrWhiteSpace(kubernetesDomain) ? null : kubernetesDomain,
-                    GenerateIngress = !string.IsNullOrWhiteSpace(kubernetesDomain)
-                }, TargetConfigJsonOptions.Default),
-                ["ovhcloud"] = JsonSerializer.SerializeToElement(new OvhCloudTargetConfig { Endpoint = "ovh-eu" }, TargetConfigJsonOptions.Default)
-            },
-            // Deploys to this machine until iis.host is set.
-            DeploymentTargetType.Names.Iis => Serialize("iis", new IisTargetConfig()),
-            _ => []
-        };
+        public static readonly TargetSettings Defaults = new();
     }
 
-    private static Dictionary<string, object?> Serialize(string key, object cfg)
-        => new() { [key] = JsonSerializer.SerializeToElement(cfg, TargetConfigJsonOptions.Default) };
-
-    private static string GetDisplayAddress(EnvironmentConfig cfg)
-    {
-        var key = cfg.Target.Value switch
+    internal static Dictionary<string, object?> BuildTargetConfig(DeploymentTargetType target, TargetSettings settings)
+        => target.Value switch
         {
-            DeploymentTargetType.Names.Nomad => "nomad",
-            DeploymentTargetType.Names.Kubernetes or DeploymentTargetType.Names.Helm => "kubernetes",
-            DeploymentTargetType.Names.Compose => "compose",
-            DeploymentTargetType.Names.AwsEcs => "ecs",
-            DeploymentTargetType.Names.AzureContainerApps => "aca",
-            DeploymentTargetType.Names.NomadConsul => "nomadconsul",
-            DeploymentTargetType.Names.ArgoCd or DeploymentTargetType.Names.Flux => "gitops",
-            DeploymentTargetType.Names.OvhCloud => "ovhcloud",
-            DeploymentTargetType.Names.Iis => "iis",
-            _ => cfg.Target.ToString().ToLower()
+            DeploymentTargetType.Names.Nomad => Sections(("nomad", NomadSettings(settings))),
+            DeploymentTargetType.Names.Kubernetes => Sections(("kubernetes", KubernetesSettings(settings))),
+            DeploymentTargetType.Names.Compose => Sections(("compose", ComposeSettings(settings))),
+            DeploymentTargetType.Names.AwsEcs => Sections(("ecs", new EcsTargetConfig())),
+            DeploymentTargetType.Names.AzureContainerApps => Sections(("aca", new AcaTargetConfig())),
+            DeploymentTargetType.Names.NomadConsul => Sections(("nomadconsul", new NomadConsulTargetConfig())),
+            // Helm deploys the Kubernetes target's manifests, so it reads the same settings.
+            DeploymentTargetType.Names.Helm => Sections(
+                ("kubernetes", KubernetesSettings(settings)), ("helm", new HelmTargetConfig())),
+            // The GitOps targets render the Kubernetes target's manifests; set gitops.repoUrl before applying.
+            DeploymentTargetType.Names.ArgoCd => Sections(
+                ("kubernetes", KubernetesSettings(settings)), ("gitops", new GitOpsTargetConfig()), ("argocd", new ArgoCdTargetConfig())),
+            DeploymentTargetType.Names.Flux => Sections(
+                ("kubernetes", KubernetesSettings(settings)), ("gitops", new GitOpsTargetConfig()), ("flux", new FluxTargetConfig())),
+            // OVHcloud deploys the Kubernetes target's manifests with the kubeconfig it fetches, so no
+            // context; set ovhcloud.projectId and clusterId.
+            DeploymentTargetType.Names.OvhCloud => Sections(
+                ("kubernetes", KubernetesSettings(settings with { KubernetesContext = null })),
+                ("ovhcloud", new OvhCloudTargetConfig { Endpoint = "ovh-eu" })),
+            // Deploys to this machine until iis.host is set.
+            DeploymentTargetType.Names.Iis => Sections(("iis", new IisTargetConfig())),
+            _ => []
         };
-        if (!cfg.TargetConfig.TryGetValue(key, out var raw) || raw is not JsonElement el)
+
+    private static NomadTargetConfig NomadSettings(TargetSettings s) => new()
+    {
+        Address = s.NomadAddress ?? "http://localhost:4646",
+        Token = NullIfBlank(s.NomadToken),
+        Namespace = s.NomadNamespace ?? "default",
+        Datacenters = [s.NomadDatacenter ?? "dc1"]
+    };
+
+    private static KubernetesTargetConfig KubernetesSettings(TargetSettings s) => new()
+    {
+        Context = NullIfBlank(s.KubernetesContext),
+        NamespacePrefix = s.KubernetesNamespacePrefix ?? "deployify",
+        IngressBaseDomain = NullIfBlank(s.KubernetesIngressDomain),
+        GenerateIngress = NullIfBlank(s.KubernetesIngressDomain) is not null
+    };
+
+    private static ComposeTargetConfig ComposeSettings(TargetSettings s) => new()
+    {
+        ProjectName = s.ComposeProject ?? "deployify",
+        RestartPolicy = s.ComposeRestart ?? "unless-stopped",
+        GenerateProfiles = true,
+        GenerateEnvFile = true,
+        GenerateMergedFile = true
+    };
+
+    private static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
+
+    private static Dictionary<string, object?> Sections(params (string Key, object Config)[] sections)
+        => sections.ToDictionary(
+            s => s.Key, object? (s) => JsonSerializer.SerializeToElement(s.Config, TargetConfigJsonOptions.Default));
+
+    /// <summary>Per target: the <c>targetConfig</c> section and key <c>env list</c> shows, and what to show when it's unset.</summary>
+    private static readonly Dictionary<string, (string Section, string Key, string Unset)> s_displayAddress = new(StringComparer.Ordinal)
+    {
+        [DeploymentTargetType.Names.Nomad] = ("nomad", "address", "-"),
+        [DeploymentTargetType.Names.Kubernetes] = ("kubernetes", "context", "(current)"),
+        [DeploymentTargetType.Names.Helm] = ("kubernetes", "context", "(current)"),
+        [DeploymentTargetType.Names.Compose] = ("compose", "projectName", "-"),
+        [DeploymentTargetType.Names.AwsEcs] = ("ecs", "region", "-"),
+        [DeploymentTargetType.Names.AzureContainerApps] = ("aca", "location", "-"),
+        [DeploymentTargetType.Names.NomadConsul] = ("nomadconsul", "nomadAddress", "-"),
+        [DeploymentTargetType.Names.ArgoCd] = ("gitops", "repoUrl", "-"),
+        [DeploymentTargetType.Names.Flux] = ("gitops", "repoUrl", "-"),
+        [DeploymentTargetType.Names.OvhCloud] = ("ovhcloud", "clusterId", "-"),
+        [DeploymentTargetType.Names.Iis] = ("iis", "host", "localhost")
+    };
+
+    internal static string GetDisplayAddress(EnvironmentConfig cfg)
+    {
+        if (!s_displayAddress.TryGetValue(cfg.Target.Value, out var shown) ||
+            !cfg.TargetConfig.TryGetValue(shown.Section, out var raw) || raw is not JsonElement section)
         {
-            return "[dim]-[/]";
+            return "-";
         }
 
-        return cfg.Target.Value switch
+        return GetString(section, shown.Key) ?? shown.Unset;
+    }
+
+    /// <summary>
+    /// A string property of <paramref name="element"/>, matching its name in any case like every
+    /// key in the state file: init and env set write "Address", hand-written files often "address".
+    /// </summary>
+    private static string? GetString(JsonElement element, string name)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
         {
-            DeploymentTargetType.Names.Nomad => el.TryGetProperty("address", out var a) ? a.GetString() ?? "-" : "-",
-            DeploymentTargetType.Names.Kubernetes or DeploymentTargetType.Names.Helm => el.TryGetProperty("context", out var c) ? c.GetString() ?? "(current)" : "(current)",
-            DeploymentTargetType.Names.Compose => el.TryGetProperty("projectName", out var p) ? p.GetString() ?? "-" : "-",
-            DeploymentTargetType.Names.AwsEcs => el.TryGetProperty("region", out var r) ? r.GetString() ?? "-" : "-",
-            DeploymentTargetType.Names.AzureContainerApps => el.TryGetProperty("location", out var l) ? l.GetString() ?? "-" : "-",
-            DeploymentTargetType.Names.NomadConsul => el.TryGetProperty("nomadAddress", out var na) ? na.GetString() ?? "-" : "-",
-            DeploymentTargetType.Names.ArgoCd or DeploymentTargetType.Names.Flux => el.TryGetProperty("repoUrl", out var g) ? g.GetString() ?? "-" : "-",
-            DeploymentTargetType.Names.OvhCloud => el.TryGetProperty("clusterId", out var k) || el.TryGetProperty("ClusterId", out k) ? k.GetString() ?? "-" : "-",
-            DeploymentTargetType.Names.Iis => el.TryGetProperty("host", out var h) || el.TryGetProperty("Host", out h) ? h.GetString() ?? "localhost" : "localhost",
-            _ => "-"
-        };
+            return null;
+        }
+
+        var property = element.EnumerateObject()
+            .FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+        return property.Value.ValueKind == JsonValueKind.String ? property.Value.GetString() : null;
     }
 
     private static IStateManager BuildStateManager()

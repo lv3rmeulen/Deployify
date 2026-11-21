@@ -13,6 +13,18 @@ Each release can have these sections: **Added**, **Changed**, **Deprecated**, **
 
 ### Added
 
+- Layered environments: an environment in `deployify-state.json` can set `extends` to build on
+  another and hold only what differs. Objects (`targetConfig`, `parameters`, `serviceOverrides`
+  and the rest) merge key by key, anything else (lists included) replaces the base's value, and
+  `null` removes it. Chains are allowed. Saving keeps the layers: an extending environment is
+  written as what it set plus what the command changed, so later changes to the base still
+  reach it. `abstract: true` marks an environment that only holds settings to extend; it can't be
+  deployed or made active. `env add --extends <base>` (with `--target`, `--container-registry`,
+  `--image-tag`, `--container-os` and `--container-arch` as overrides) and `env add --abstract`;
+  `env list` shows each environment's base, and `env remove` refuses a base others extend.
+  `--target` on `env add` is now required only without `--extends`.
+  See [layered environments](https://lv3rmeulen.github.io/Deployify/reference/state-file/#layered-environments).
+
 - `deployify logs <service>`: one command to read a deployed service's console output on every
   target. It finds the service's instances in the environment and reads them where the platform
   keeps them: `kubectl logs` of the service's pods (Kubernetes, Helm, Argo CD, Flux, OVHcloud),
@@ -114,6 +126,9 @@ Each release can have these sections: **Added**, **Changed**, **Deprecated**, **
 
 ### Changed
 
+- `deployify-state.json` format version 2, written only when an environment extends another.
+  Earlier releases refuse such a file instead of deploying an environment without its base's
+  settings; a file without layers is still written as version 1.
 - `Deployify.Plugin.Sdk`: a plugin that doesn't pass a version to `Named` reports its package
   version (the informational version without `+build` metadata) instead of its assembly
   version, which MinVer keeps at `Major.0.0`. Relock a plugin built with this SDK:
@@ -131,6 +146,9 @@ Each release can have these sections: **Added**, **Changed**, **Deprecated**, **
 
 ### Fixed
 
+- `env list` shows the address (or context, project, region) of every environment again. It
+  looked the key up with its case, and found nothing in files written by `init` and `env`,
+  which write `Address`.
 - Keys in `deployify-state.json` are case-insensitive, as the stability policy says. A file
   written in camelCase, like the examples in the docs, used to load as if it had no
   environments, and `TargetConfig` sections were only found in lower case. A file that sets the

@@ -97,7 +97,7 @@ public sealed class StateFormatTests : IDisposable
         await manager.SaveFileAsync(file, _local.Path, Ct);
 
         var saved = JsonNode.Parse(await File.ReadAllTextAsync(path, Ct))!.AsObject();
-        ((int)saved["FormatVersion"]!).ShouldBe(StateFormat.StateFile);
+        ((int)saved["FormatVersion"]!).ShouldBe(StateFormat.StateFileWithoutLayers);
         (await manager.LoadFileAsync(_local.Path, Ct)).Environments["prod"].ImageTag.ShouldBe("1.4.2");
     }
 

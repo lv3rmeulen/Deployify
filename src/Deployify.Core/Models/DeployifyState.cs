@@ -43,6 +43,27 @@ public sealed class EnvironmentConfig
     public string? Name { get; set; }
 
     /// <summary>
+    /// Name of the environment this one builds on. It starts from that environment's settings
+    /// and the state file holds only what differs: objects merge key by key, anything else
+    /// (lists included) replaces the base's value, and <c>null</c> removes it. Chains are allowed
+    /// (prod extends staging extends base). See <see cref="EnvironmentInheritance"/>.
+    /// </summary>
+    [JsonPropertyOrder(-1)]
+    public string? Extends { get; set; }
+
+    /// <summary>
+    /// When true, this environment only holds settings for others to extend: commands refuse to
+    /// deploy it or make it active. Not inherited.
+    /// </summary>
+    [JsonPropertyOrder(-1)]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Abstract { get; set; }
+
+    /// <summary>How this environment was read from the file, when it extends another; see <see cref="EnvironmentInheritance"/>.</summary>
+    [JsonIgnore]
+    internal EnvironmentLayer? Loaded { get; set; }
+
+    /// <summary>
     /// The deployment platform for this environment.
     /// Drives which <see cref="IDeploymentTarget"/> is resolved at runtime.
     /// </summary>

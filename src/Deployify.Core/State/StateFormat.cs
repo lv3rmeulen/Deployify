@@ -20,8 +20,17 @@ namespace Deployify.Core.State;
 /// </remarks>
 public static class StateFormat
 {
-    /// <summary>deployify-state.json. 0: alpha, no version field. 1: <c>FormatVersion</c> added.</summary>
-    public const int StateFile = 1;
+    /// <summary>
+    /// deployify-state.json. 0: alpha, no version field. 1: <c>FormatVersion</c> added.
+    /// 2: environments can extend each other (<c>Extends</c>). A file is written as version 2 only
+    /// when an environment extends another, so a release that can't merge layers refuses it
+    /// instead of deploying an environment without its base's settings; otherwise it is written
+    /// as <see cref="StateFileWithoutLayers"/>.
+    /// </summary>
+    public const int StateFile = 2;
+
+    /// <summary>The version a state file in which no environment extends another is written in.</summary>
+    public const int StateFileWithoutLayers = 1;
 
     /// <summary>{env}/inventory.json. 0: alpha, no version field. 1: <c>formatVersion</c> added.</summary>
     public const int Inventory = 1;

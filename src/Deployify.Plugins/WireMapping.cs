@@ -38,6 +38,9 @@ public static class WireMapping
     {
         var node = JsonSerializer.SerializeToNode(config, s_stateJson)!.AsObject();
         node.Remove(nameof(EnvironmentConfig.Parameters));
+        // Already merged with its bases: a plugin sees the environment's full settings.
+        node.Remove(nameof(EnvironmentConfig.Extends));
+        node.Remove(nameof(EnvironmentConfig.Abstract));
         return node.Deserialize<JsonElement>();
     }
 

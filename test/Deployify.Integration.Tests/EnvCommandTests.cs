@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Deployify.Commands;
 using Deployify.Core.Services;
@@ -253,5 +254,158 @@ public sealed class EnvCommandTests
         await Root().InvokeAsync(["env", "remove", "local", "--project-path", dir.Path, "--force"], TestContext.Current.CancellationToken);
         var sf = await new StateManager().LoadFileAsync(dir.Path, TestContext.Current.CancellationToken);
         sf.Environments.ShouldContainKey("local"); // unchanged — active, can't remove
+    }
+
+    // ── layered environments ──────────────────────────────────────────────────
+
+    [Fact]
+    public async Task EnvAdd_WithExtends_InheritsTheBase_AndStoresOnlyTheDifferences()
+    {
+        using var dir = new TempDir();
+        await Harness.WriteMultiEnvStateAsync(dir.Path, TestContext.Current.CancellationToken);
+        var code = await Root().InvokeAsync(
+            $"env add canary --project-path {dir.Path} --extends prod --image-tag canary", TestContext.Current.CancellationToken);
+        code.ShouldBe(0);
+
+        var sf = await new StateManager().LoadFileAsync(dir.Path, TestContext.Current.CancellationToken);
+        var canary = sf.Environments["canary"];
+        canary.Extends.ShouldBe("prod");
+        canary.ImageTag.ShouldBe("canary");
+        canary.Target.ShouldBe(sf.Environments["prod"].Target);
+        canary.ContainerRegistry.ShouldBe(sf.Environments["prod"].ContainerRegistry);
+        canary.TargetConfig.ShouldContainKey("nomad");
+
+        var saved = System.Text.Json.Nodes.JsonNode.Parse(
+            await System.IO.File.ReadAllTextAsync(System.IO.Path.Combine(dir.Path, "deployify-state.json"), TestContext.Current.CancellationToken))!;
+        saved["Environments"]!["canary"]!.AsObject().Count.ShouldBe(2); // Extends and ImageTag
+    }
+
+    [Fact]
+    public async Task EnvAdd_WithExtends_RefusesAMissingBase()
+    {
+        using var dir = new TempDir();
+        await Harness.WriteMultiEnvStateAsync(dir.Path, TestContext.Current.CancellationToken);
+        var code = await Root().InvokeAsync(
+            $"env add canary --project-path {dir.Path} --extends ghost", TestContext.Current.CancellationToken);
+        code.ShouldNotBe(0);
+        (await new StateManager().LoadFileAsync(dir.Path, TestContext.Current.CancellationToken)).Environments.ShouldNotContainKey("canary");
+    }
+
+    [Fact]
+    public async Task EnvAdd_WithExtends_RefusesTargetSpecificFlags()
+    {
+        using var dir = new TempDir();
+        await Harness.WriteMultiEnvStateAsync(dir.Path, TestContext.Current.CancellationToken);
+        var code = await Root().InvokeAsync(
+            $"env add canary --project-path {dir.Path} --extends prod --nomad-address http://x:4646", TestContext.Current.CancellationToken);
+        code.ShouldNotBe(0);
+    }
+
+    [Fact]
+    public async Task EnvAdd_WithoutTargetOrExtends_Fails()
+    {
+        using var dir = new TempDir();
+        await Harness.WriteMultiEnvStateAsync(dir.Path, TestContext.Current.CancellationToken);
+        var code = await Root().InvokeAsync(
+            $"env add canary --project-path {dir.Path} --non-interactive", TestContext.Current.CancellationToken);
+        code.ShouldNotBe(0);
+    }
+
+    [Fact]
+    public async Task EnvUse_RefusesAnAbstractEnvironment()
+    {
+        using var dir = new TempDir();
+        await Harness.WriteMultiEnvStateAsync(dir.Path, TestContext.Current.CancellationToken);
+        (await Root().InvokeAsync(
+            $"env add shared --project-path {dir.Path} --extends prod --abstract", TestContext.Current.CancellationToken)).ShouldBe(0);
+
+        var code = await Root().InvokeAsync(["env", "use", "shared", "--project-path", dir.Path], TestContext.Current.CancellationToken);
+        code.ShouldNotBe(0);
+        (await new StateManager().LoadFileAsync(dir.Path, TestContext.Current.CancellationToken)).ActiveEnvironment.ShouldBe("local");
+    }
+
+    [Fact]
+    public async Task EnvRemove_RefusesABaseOthersExtend()
+    {
+        using var dir = new TempDir();
+        await Harness.WriteMultiEnvStateAsync(dir.Path, TestContext.Current.CancellationToken);
+        await Root().InvokeAsync($"env add canary --project-path {dir.Path} --extends prod", TestContext.Current.CancellationToken);
+
+        var code = await Root().InvokeAsync(["env", "remove", "prod", "--project-path", dir.Path, "--force"], TestContext.Current.CancellationToken);
+        code.ShouldNotBe(0);
+        (await new StateManager().LoadFileAsync(dir.Path, TestContext.Current.CancellationToken)).Environments.ShouldContainKey("prod");
+    }
+
+    // ── env list address column ───────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("Address")]
+    [InlineData("address")]
+    [InlineData("ADDRESS")]
+    public void DisplayAddress_IgnoresTheCaseOfTheKey(string key)
+    {
+        var config = new Deployify.Core.Models.EnvironmentConfig
+        {
+            Target = Deployify.Core.Models.DeploymentTargetType.Nomad,
+            TargetConfig =
+            {
+                ["nomad"] = System.Text.Json.JsonSerializer.SerializeToElement(
+                    new System.Collections.Generic.Dictionary<string, string> { [key] = "http://nomad:4646" })
+            }
+        };
+
+        EnvCommand.GetDisplayAddress(config).ShouldBe("http://nomad:4646");
+    }
+
+    [Fact]
+    public void DisplayAddress_ShowsWhatEnvAddWrites()
+    {
+        var config = new Deployify.Core.Models.EnvironmentConfig
+        {
+            Target = Deployify.Core.Models.DeploymentTargetType.Nomad,
+            TargetConfig = EnvCommand.BuildTargetConfig(Deployify.Core.Models.DeploymentTargetType.Nomad,
+                new EnvCommand.TargetSettings(NomadAddress: "http://nomad:4646"))
+        };
+        config.TargetConfig["nomad"] = System.Text.Json.JsonSerializer.SerializeToElement(config.TargetConfig["nomad"]);
+
+        EnvCommand.GetDisplayAddress(config).ShouldBe("http://nomad:4646");
+    }
+
+    // ── env set ───────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task EnvSet_SavesNomadSettings()
+    {
+        using var dir = new TempDir();
+        await Harness.WriteNomadStateAsync(dir.Path, envName: "local", ct: TestContext.Current.CancellationToken);
+        var code = await Root().InvokeAsync(
+            $"env set local --project-path {dir.Path} --nomad-address http://new:4646 --nomad-register-services false",
+            TestContext.Current.CancellationToken);
+        code.ShouldBe(0);
+
+        var sf = await new StateManager().LoadFileAsync(dir.Path, TestContext.Current.CancellationToken);
+        var nomad = ((System.Text.Json.JsonElement)sf.Environments["local"].TargetConfig["nomad"]!)
+            .Deserialize<Deployify.Target.Nomad.NomadTargetConfig>(Deployify.Core.Models.TargetConfigJsonOptions.Default)!;
+        nomad.Address.ShouldBe("http://new:4646");
+        nomad.RegisterServices.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task EnvSet_EmptyString_RemovesAValue_AndOtherSettingsApply()
+    {
+        using var dir = new TempDir();
+        await Harness.WriteNomadStateAsync(dir.Path, envName: "local", ct: TestContext.Current.CancellationToken);
+        await Root().InvokeAsync(
+            ["env", "set", "local", "--project-path", dir.Path, "--dapr-components-path", "./components", "--dashboard-port", "19000"],
+            TestContext.Current.CancellationToken);
+        await Root().InvokeAsync(
+            ["env", "set", "local", "--project-path", dir.Path, "--dapr-components-path", "", "--deploy-dapr", "true", "--image-tag", "v2"],
+            TestContext.Current.CancellationToken);
+
+        var env = (await new StateManager().LoadFileAsync(dir.Path, TestContext.Current.CancellationToken)).Environments["local"];
+        env.Dapr.ComponentsPath.ShouldBeNull();
+        env.DeployDapr.ShouldBeTrue();
+        env.Dashboard.Port.ShouldBe(19000);
+        env.ImageTag.ShouldBe("v2");
     }
 }

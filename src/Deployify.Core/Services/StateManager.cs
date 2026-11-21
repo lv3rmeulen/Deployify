@@ -79,6 +79,25 @@ public sealed class StateManager(SecretRegistry? secrets = null) : IStateManager
 
         root.Remove(versionKey);
         root[nameof(DeployifyStateFile.FormatVersion)] = version;
+
+        // Layered environments: merge each with its bases before reading it.
+        Dictionary<string, JsonObject>? own = null;
+        if (EnvironmentInheritance.FindKey(root, nameof(DeployifyStateFile.Environments)) is { } envKey &&
+            root[envKey] is JsonObject environments && EnvironmentInheritance.AnyLayered(environments, path))
+        {
+            var resolved = EnvironmentInheritance.Resolve(environments, path);
+            own = [];
+            foreach (var (name, layer) in resolved)
+            {
+                if (EnvironmentInheritance.ReadExtends(layer, name, path) is not null)
+                {
+                    own[name] = EnvironmentInheritance.WithoutMetadata((JsonObject)environments[name]!);
+                }
+
+                environments[name] = layer.DeepClone();
+            }
+        }
+
         DeployifyStateFile file;
         try
         {
@@ -96,9 +115,21 @@ public sealed class StateManager(SecretRegistry? secrets = null) : IStateManager
             throw new StateFormatException($"{path} can't be read: {ex.Message}", ex);
         }
 
+        if (own is not null)
+        {
+            foreach (var (name, layer) in own)
+            {
+                var config = file.Environments[name];
+                config.Loaded = new EnvironmentLayer(config.Extends!, layer, Serialize(config));
+            }
+        }
+
         file.FormatVersion = StateFormat.StateFile;
         return file;
     }
+
+    private static JsonObject Serialize(EnvironmentConfig config)
+        => EnvironmentInheritance.WithoutMetadata(JsonSerializer.SerializeToNode(config, s_jsonOptions)!.AsObject());
 
     public async Task SaveFileAsync(DeployifyStateFile stateFile, string directory, CancellationToken ct = default)
     {
@@ -106,8 +137,7 @@ public sealed class StateManager(SecretRegistry? secrets = null) : IStateManager
         var path = Path.Combine(directory, StateFileName);
         // Write to a temp file and move it into place, so a failure part-way through
         // can never leave a truncated state file behind.
-        stateFile.FormatVersion = StateFormat.StateFile;
-        var json = JsonSerializer.Serialize(stateFile, s_jsonOptions);
+        var json = Write(stateFile);
         if (secrets is { Count: > 0 })
         {
             SecretLeakScanner.ThrowIfAny(
@@ -120,6 +150,66 @@ public sealed class StateManager(SecretRegistry? secrets = null) : IStateManager
         File.Move(tmp, path, overwrite: true);
     }
 
+    /// <summary>
+    /// The state file as JSON. An environment that extends another is written as its own layer:
+    /// what the file already said for it plus what changed since it was read, not its merged
+    /// settings, so it keeps inheriting everything else.
+    /// </summary>
+    public static string Write(DeployifyStateFile stateFile)
+    {
+        if (EnvironmentInheritance.Validate(stateFile.Environments) is { } problem)
+        {
+            throw new InvalidOperationException($"Can't save {StateFileName}: {problem}");
+        }
+
+        var layered = stateFile.Environments.Values.Any(e => e.Extends is not null);
+        stateFile.FormatVersion = layered ? StateFormat.StateFile : StateFormat.StateFileWithoutLayers;
+        if (!layered)
+        {
+            return JsonSerializer.Serialize(stateFile, s_jsonOptions);
+        }
+
+        var root = JsonSerializer.SerializeToNode(stateFile, s_jsonOptions)!.AsObject();
+        var environments = root[nameof(DeployifyStateFile.Environments)]!.AsObject();
+        var current = stateFile.Environments.ToDictionary(
+            e => e.Key, e => environments[e.Key]!.AsObject().DeepClone().AsObject(), StringComparer.Ordinal);
+        foreach (var (name, config) in stateFile.Environments)
+        {
+            if (config.Extends is not { } extends)
+            {
+                continue;
+            }
+
+            var loaded = config.Loaded?.Extends == extends ? config.Loaded : null;
+            var layer = new JsonObject { [nameof(EnvironmentConfig.Extends)] = extends };
+            if (config.Abstract)
+            {
+                layer[nameof(EnvironmentConfig.Abstract)] = true;
+            }
+
+            foreach (var (key, value) in EnvironmentInheritance.OwnLayer(current[name], current[extends], loaded).ToList())
+            {
+                layer[key] = value?.DeepClone();
+            }
+
+            environments[name] = layer;
+        }
+
+        return root.ToJsonString(s_jsonOptions);
+    }
+
+    /// <summary>
+    /// A new environment that extends <paramref name="baseName"/>: its settings start as the
+    /// base's, and saving writes only what is changed afterward.
+    /// </summary>
+    public static EnvironmentConfig CreateExtending(EnvironmentConfig baseConfig, string baseName)
+    {
+        var inherited = EnvironmentInheritance.Inheritable(JsonSerializer.SerializeToNode(baseConfig, s_jsonOptions)!.AsObject());
+        var config = inherited.Deserialize<EnvironmentConfig>(s_jsonOptions)!;
+        config.Extends = baseName;
+        return config;
+    }
+
     public async Task<(EnvironmentConfig Config, string EnvName)> LoadActiveAsync(
         string directory, string? envOverride = null, CancellationToken ct = default)
     {
@@ -129,6 +219,14 @@ public sealed class StateManager(SecretRegistry? secrets = null) : IStateManager
         {
             throw new KeyNotFoundException(
                 $"Environment '{envName}' not found. Available: {string.Join(", ", file.Environments.Keys)}");
+        }
+
+        if (config.Abstract)
+        {
+            var deployable = file.Environments.Where(e => !e.Value.Abstract).Select(e => e.Key).ToList();
+            throw new KeyNotFoundException(
+                $"Environment '{envName}' is abstract: it only holds settings other environments extend, " +
+                $"and can't be deployed. Deployable: {(deployable.Count > 0 ? string.Join(", ", deployable) : "none")}.");
         }
 
         config.Name = envName;

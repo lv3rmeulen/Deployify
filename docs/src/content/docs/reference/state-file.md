@@ -43,6 +43,71 @@ description: "The configuration file Deployify reads for every environment."
 }
 ```
 
+## Layered environments
+
+An environment can extend another and set only what differs, instead of repeating every
+setting. `staging` and `prod` below start from `base` and keep everything they don't change:
+
+```json
+"environments": {
+  "base": {
+    "abstract": true,
+    "target": "Nomad",
+    "containerRegistry": "registry.example.com/myapp",
+    "ignoreResources": ["storage", "frontend"],
+    "parameters": { "db-user": "app", "region": "eu" },
+    "targetConfig": {
+      "nomad": { "address": "http://nomad.internal:4646", "datacenters": ["dc1"] }
+    }
+  },
+  "staging": {
+    "extends": "base",
+    "imageTag": "staging",
+    "targetConfig": { "nomad": { "namespace": "staging" } }
+  },
+  "prod": {
+    "extends": "staging",
+    "imageTag": "stable",
+    "protected": true,
+    "ignoreResources": ["storage"],
+    "parameters": { "region": null },
+    "targetConfig": { "nomad": { "namespace": "production", "token": "env:NOMAD_TOKEN" } }
+  }
+}
+```
+
+How the layers combine:
+
+- **Objects merge key by key**, at any depth. `prod` above keeps the Nomad address from `base`
+  and replaces only the namespace and token. This covers `targetConfig`, `parameters`,
+  `serviceOverrides`, `secrets`, `dashboard` and every other object.
+- **Everything else replaces** the base's value, lists included: `prod` ignores only `storage`.
+- **`null` removes** the base's value, so the setting falls back to its default (or, in a map
+  such as `parameters`, the entry is gone).
+- **Chains** are allowed (`prod` → `staging` → `base`), up to 10 environments deep. A base that
+  doesn't exist, or environments that extend each other in a loop, stop every command with a
+  message naming the environments.
+- **Not inherited:** `extends`, `abstract`, and the secret references `apply` records under
+  `secrets.references`, which belong to the environment that wrote them.
+
+An `abstract` environment only holds settings to extend. Commands refuse to deploy it,
+`env use` refuses to switch to it, and `env list` marks it.
+
+Deployify keeps the layers when it saves the file. An extending environment is written back
+as what it set itself plus whatever the command changed in it, so `env set staging --image-tag 2.0`
+adds one key to `staging`, and `env set base --container-registry …` reaches every
+environment that inherits the registry. To add a layered environment from the command line:
+
+```bash
+deployify env add canary --extends prod --image-tag canary
+```
+
+`env remove` refuses to remove an environment that others extend.
+
+A state file in which an environment extends another is written in format version 2, which
+earlier releases refuse rather than deploy an environment without its base's settings. Files
+without layers stay at version 1.
+
 ## Secrets
 
 Don't put tokens and passwords in `deployify-state.json` as plain text. Any secret field
