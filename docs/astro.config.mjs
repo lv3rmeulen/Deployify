@@ -37,6 +37,7 @@ export default defineConfig({
 						'guides/parameters-and-secrets',
 						'guides/publishing-images',
 						'guides/ci-cd',
+						'guides/production-checklist',
 						'guides/aspire-deploy',
 						'guides/dapr',
 						'guides/dashboard',
@@ -68,6 +69,8 @@ export default defineConfig({
 					items: [
 						'reference/state-file',
 						'reference/stability',
+						'reference/upgrading-from-alphas',
+						'reference/known-limitations',
 						{ label: 'CLI', collapsed: true, items: [{ autogenerate: { directory: 'reference/cli' } }] },
 					],
 				},

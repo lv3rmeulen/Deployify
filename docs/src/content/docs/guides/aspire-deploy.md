@@ -28,8 +28,7 @@ Not yet from `aspire deploy`: `--prune` (use `deployify apply --prune`).
 
 ## Details
 
-approval, build and push project images, record the deployment in state, and apply (health-gated
-with automatic rollback where the target supports it). Run `deployify init` once first.
+Run `deployify init` once first, so the AppHost has a `deployify-state.json`.
 
 ```
 aspire deploy --list-steps                         # publish-manifest → deployify-deploy → deploy

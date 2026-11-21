@@ -38,7 +38,7 @@ Notes:
   `registerServices` (on by default) and Nomad 1.4 or later. With `registerServices: false`,
   services reach each other on `localhost:<port>`, which only works on a single node.
   Container `args` can't be templated, so a service address in `args` stays on `localhost`;
-  pass it as an environment variable instead. For mTLS between services use the `NomadConsul` target.
+  pass it as an environment variable instead (see [known limitations](/Deployify/reference/known-limitations/#nomad-container-args)). For mTLS between services use the `NomadConsul` target.
 - **Health checks.** `healthCheckType` is `tcp` (default), `http` (uses `healthCheckPath`,
   default `/health`) or `none`. Aspire's `MapDefaultEndpoints()` only maps `/health` in the
   Development environment, so `http` checks fail in production unless you map it yourself.

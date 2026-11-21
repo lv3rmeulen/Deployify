@@ -33,7 +33,8 @@ Two things it can't build yet, and stops on before building anything:
 - Build arguments whose value comes from another resource, such as a parameter
   (`WithBuildArg("VERSION", versionParameter)`). Literal values work.
 
-Build and push those images yourself and give the resource the resulting image instead.
+Build and push those images yourself and give the resource the resulting image instead; see
+[known limitations](/Deployify/reference/known-limitations/#dockerfile-build-secrets) for an example.
 
 ## Pinning images by digest
 
