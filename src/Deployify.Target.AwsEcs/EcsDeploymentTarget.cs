@@ -52,12 +52,52 @@ public sealed class EcsDeploymentTarget(
 
     // ── Secrets ───────────────────────────────────────────────────────────────
 
-    public IReadOnlyCollection<SecretBackendType> SupportedSecretBackends { get; } = [SecretBackendType.Ssm];
+    public IReadOnlyCollection<SecretBackendType> SupportedSecretBackends { get; } =
+        [SecretBackendType.Ssm, SecretBackendType.SecretsManager];
 
     public ISecretStore CreateSecretStore(EnvironmentConfig config, ILogger storeLogger)
     {
         var cfg = GetConfig(config);
-        return new SsmSecretStore(new EcsCliClient(cfg, storeLogger), EcsTaskDefinitionGenerator.GeneratedParametersPath(cfg));
+        var client = new EcsCliClient(cfg, storeLogger, Runner);
+        return config.Secrets.Backend == SecretBackendType.SecretsManager
+            ? new SecretsManagerSecretStore(
+                client, EcsTaskDefinitionGenerator.GeneratedParametersSecretName(cfg),
+                client, EcsTaskDefinitionGenerator.GeneratedParametersPath(cfg))
+            : new SsmSecretStore(client, EcsTaskDefinitionGenerator.GeneratedParametersPath(cfg));
+    }
+
+    private static bool UsesSecretsManager(EnvironmentConfig config)
+        => config.Secrets.Backend == SecretBackendType.SecretsManager;
+
+    /// <summary>
+    /// SecretsManager backend: writes a service's secret env vars as one JSON secret, unless it
+    /// already holds exactly them, and records each key's location and version in the state file.
+    /// Returns the version the service's task definition must be pinned to, or null when it has no secrets.
+    /// </summary>
+    internal static async Task<SecretsManagerVersion?> SyncSecretsManagerAsync(
+        EcsService svc, EnvironmentConfig config, EcsTargetConfig cfg, ISecretsManagerClient client, CancellationToken ct)
+    {
+        if (svc.SecretEnv.Count == 0)
+        {
+            return null;
+        }
+
+        var name = EcsTaskDefinitionGenerator.ServiceSecretName(cfg, svc.Name);
+        var values = svc.SecretEnv.ToDictionary(
+            kv => kv.Key, kv => new SensitiveValue(kv.Value.ToString()), StringComparer.Ordinal);
+        var (version, _) = await SecretsManagerSecrets.PutIfChangedAsync(client, name, values, ct);
+        foreach (var key in svc.SecretEnv.Keys)
+        {
+            config.Secrets.References[$"{svc.Name}/{key}"] = new SecretReference
+            {
+                Backend = SecretBackendType.SecretsManager,
+                Location = name,
+                Key = key,
+                Version = version.VersionId
+            };
+        }
+
+        return version;
     }
 
     /// <summary>
@@ -223,11 +263,28 @@ public sealed class EcsDeploymentTarget(
         }
 
         string? taskDefArn = null;
+        string? pinnedPath = null;
         try
         {
-            await SyncSecretsAsync(svc, config, cfg, client, ct);
+            var registerPath = taskDefPath;
+            if (UsesSecretsManager(config))
+            {
+                // The file only names the secret; register a copy with its full ARN and version.
+                if (await SyncSecretsManagerAsync(svc, config, cfg, client, ct) is { } version)
+                {
+                    pinnedPath = Path.Combine(Path.GetTempPath(), $"deployify-taskdef-{svc.Name}-{Guid.NewGuid():N}.json");
+                    var pinned = EcsTaskDefinitionGenerator.PinSecretsManagerReferences(
+                        await File.ReadAllTextAsync(taskDefPath, ct), version.Arn, version.VersionId);
+                    await File.WriteAllTextAsync(pinnedPath, pinned, new System.Text.UTF8Encoding(false), ct);
+                    registerPath = pinnedPath;
+                }
+            }
+            else
+            {
+                await SyncSecretsAsync(svc, config, cfg, client, ct);
+            }
 
-            taskDefArn = await client.RegisterTaskDefinitionAsync(taskDefPath, ct);
+            taskDefArn = await client.RegisterTaskDefinitionAsync(registerPath, ct);
             logger.LogInformation("Registered task definition: {Arn}", taskDefArn);
 
             var serviceArn = await client.UpsertServiceAsync(
@@ -255,6 +312,13 @@ public sealed class EcsDeploymentTarget(
                 Error = ex.Message
             }, taskDefArn);
         }
+        finally
+        {
+            if (pinnedPath is not null)
+            {
+                File.Delete(pinnedPath);
+            }
+        }
     }
 
     // ── Rollout (health-gated apply) ──────────────────────────────────────────
@@ -274,7 +338,9 @@ public sealed class EcsDeploymentTarget(
         {
             [DesiredCountKey] = status.DesiredCount.ToString(CultureInfo.InvariantCulture)
         };
-        if (await CaptureSsmVersionsAsync(client, cfg, service, ct) is { } versions)
+        // With Secrets Manager each task definition revision is pinned to its secret version,
+        // so going back to the previous revision is enough.
+        if (!UsesSecretsManager(config) && await CaptureSsmVersionsAsync(client, cfg, service, ct) is { } versions)
         {
             data[SsmVersionsKey] = versions;
         }
@@ -547,7 +613,8 @@ public sealed class EcsDeploymentTarget(
 
     /// <summary>
     /// Deletes the service, deregisters its task definition revisions, and (unless secrets are
-    /// kept) deletes its SSM parameters under <c>{secretsPrefix}/{service}</c>.
+    /// kept) deletes its SSM parameters under <c>{secretsPrefix}/{service}</c> and, with the
+    /// SecretsManager backend, schedules its secret for deletion.
     /// </summary>
     public async Task DeleteServiceAsync(EnvironmentConfig config, string service, DeleteOptions options, CancellationToken ct = default)
     {
@@ -564,6 +631,17 @@ public sealed class EcsDeploymentTarget(
             {
                 logger.LogInformation("Deleted {Count} SSM parameter(s) under {Path}.", count, path);
             }
+
+            if (UsesSecretsManager(config))
+            {
+                var name = EcsTaskDefinitionGenerator.ServiceSecretName(cfg, service);
+                if (await client.DeleteSecretAsync(name, ct))
+                {
+                    logger.LogInformation(
+                        "Scheduled secret {Name} for deletion in {Days} days; deploying {Service} again before then restores it.",
+                        name, EcsCliClient.SecretRecoveryWindowDays, service);
+                }
+            }
         }
     }
 
@@ -573,12 +651,16 @@ public sealed class EcsDeploymentTarget(
         var kept = new List<string>
         {
             $"the cluster '{cfg.ClusterName}', its networking, load balancers and log groups",
-            $"generated parameter values under {EcsTaskDefinitionGenerator.GeneratedParametersPath(cfg)}",
+            UsesSecretsManager(config)
+                ? $"generated parameter values in the secret {EcsTaskDefinitionGenerator.GeneratedParametersSecretName(cfg)}"
+                : $"generated parameter values under {EcsTaskDefinitionGenerator.GeneratedParametersPath(cfg)}",
             "images in the registry"
         };
         if (options.KeepSecrets)
         {
-            kept.Add($"the services' SSM parameters under {EcsTaskDefinitionGenerator.SecretsPrefix(cfg)} (--keep-secrets)");
+            kept.Add(UsesSecretsManager(config)
+                ? $"the services' secrets under {EcsTaskDefinitionGenerator.ServiceSecretName(cfg, "*")} (--keep-secrets)"
+                : $"the services' SSM parameters under {EcsTaskDefinitionGenerator.SecretsPrefix(cfg)} (--keep-secrets)");
         }
 
         return Task.FromResult<IReadOnlyList<string>>(kept);

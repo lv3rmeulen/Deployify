@@ -46,7 +46,7 @@ public sealed record ManagedService(string Name, string? TargetId = null, string
 
 public sealed class DeleteOptions
 {
-    /// <summary>Leave the service's platform-side secrets (Nomad variables, SSM parameters) in place.</summary>
+    /// <summary>Leave the service's platform-side secrets (Nomad variables, SSM parameters, Secrets Manager secrets) in place.</summary>
     public bool KeepSecrets { get; init; }
 
     /// <summary>Also remove data volumes (Compose). Off by default: volumes hold data.</summary>

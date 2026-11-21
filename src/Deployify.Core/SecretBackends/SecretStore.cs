@@ -32,6 +32,15 @@ public interface ISecretStore
         IReadOnlyDictionary<string, SensitiveValue> all,
         IReadOnlyCollection<string> changed,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Values an earlier backend kept that this store doesn't hold yet, read after
+    /// <see cref="LoadAsync"/>. They are carried over like values from deployify-parameters.json:
+    /// used in this run and written to this store on the next apply. Failing to read them is
+    /// only a warning, since the earlier backend may never have been used.
+    /// </summary>
+    Task<IReadOnlyDictionary<string, SensitiveValue>> LoadCarriedOverAsync(CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyDictionary<string, SensitiveValue>>(new Dictionary<string, SensitiveValue>());
 }
 
 /// <summary>Implemented by targets that can keep secrets in an external backend.</summary>
@@ -108,6 +117,30 @@ public sealed class GeneratedSecretSession
             logger?.LogWarning(
                 "Could not read generated secrets from {Store}: {Message}. Plan output may show new values; " +
                 "apply will refuse to run until the store can be read.", store.Description, ex.Message);
+        }
+
+        if (session.LoadError is null)
+        {
+            try
+            {
+                foreach (var (key, value) in await store.LoadCarriedOverAsync(ct))
+                {
+                    if (session._values.TryAdd(key, value.Reveal()))
+                    {
+                        session._pending.Add(key);
+                    }
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger?.LogWarning(
+                    "Could not read generated secrets kept by the previous secret backend ({Message}). If it holds any, " +
+                    "they will be generated again, which changes those passwords.", ex.Message);
+            }
         }
 
         foreach (var (key, value) in legacy ?? new Dictionary<string, string>())

@@ -58,9 +58,10 @@ deployify ci --skip-validate
 | [Your first deployment](https://lv3rmeulen.github.io/Deployify/getting-started/first-deployment/) | Deploy the `hello-aspire` sample to Docker Compose in five minutes |
 | [Deployment targets](https://lv3rmeulen.github.io/Deployify/targets/compose/) | Compose, Kubernetes, Helm, Argo CD / Flux, OVHcloud, Nomad, Nomad + Consul, AWS ECS, Azure Container Apps, IIS, and DigitalOcean App Platform as a plugin |
 | [Health-gated rollouts](https://lv3rmeulen.github.io/Deployify/guides/rollouts/) | Wave-by-wave deploys with automatic rollback |
-| [Parameters and secrets](https://lv3rmeulen.github.io/Deployify/guides/parameters-and-secrets/) | Aspire parameters, secret backends (Vault, Key Vault, SSM) |
+| [Parameters and secrets](https://lv3rmeulen.github.io/Deployify/guides/parameters-and-secrets/) | Aspire parameters, secret backends (Vault, Key Vault, SSM, Secrets Manager) |
 | [Running from `aspire deploy`](https://lv3rmeulen.github.io/Deployify/guides/aspire-deploy/) | `builder.AddDeployify()` in your AppHost |
 | [CI/CD](https://lv3rmeulen.github.io/Deployify/guides/ci-cd/) | `deployify ci`, plan gates, GitHub Actions |
+| [Signing in from CI](https://lv3rmeulen.github.io/Deployify/guides/ci-cloud-sign-in/) | OIDC sign-in to AWS and Azure, no stored keys |
 | [State and locking](https://lv3rmeulen.github.io/Deployify/concepts/state/) | Inventory, ownership, the environment lock, remote state |
 | [Writing target plugins](https://lv3rmeulen.github.io/Deployify/extending/plugins/) | Add any platform as an out-of-process plugin |
 | [CLI reference](https://lv3rmeulen.github.io/Deployify/reference/cli/) | Every command and option |

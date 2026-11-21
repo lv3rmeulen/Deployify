@@ -31,7 +31,9 @@ On ECS the deployment circuit breaker with rollback is turned on by default
 service itself, Deployify waits for the old task definition to be healthy instead of rolling back
 a second time. Rolling back also puts the service's SSM parameters back: the journal records each
 parameter's version (never its value), and the rollback writes that version's value back as the
-newest version before the tasks restart. SSM keeps a parameter's last 100 versions.
+newest version before the tasks restart. SSM keeps a parameter's last 100 versions. With the
+`SecretsManager` backend there's nothing to put back: each task definition revision is pinned to
+the secret version it was deployed with, so the previous revision reads the previous values.
 
 On Nomad, jobs get `auto_revert = true` in their update block by default (`"autoRevert": false`
 under `targetConfig.nomad` or `targetConfig.nomadconsul` turns it off). A revision is a job

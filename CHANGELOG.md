@@ -13,6 +13,19 @@ Each release can have these sections: **Added**, **Changed**, **Deprecated**, **
 
 ### Added
 
+- AWS Secrets Manager secret backend for the ECS target: `"secrets": { "backend": "SecretsManager" }`.
+  Each service's secret env vars are one JSON secret, `<secretsPrefix>/<service>` (default
+  `deployify/<cluster>/<service>`), and the task definition reads each key by ARN. `apply` writes a
+  new version only when a value changed, creates the secret tagged as Deployify's (with
+  `targetConfig.ecs.secretsKmsKeyId` if set), and registers the task definition pinned to the
+  version it wrote, so rolling back a revision also rolls back its secrets. Generated parameter
+  values live in the secret `<secretsPrefix>/_parameters`; values the `Ssm` backend generated are
+  read from SSM until the first `apply` copies them across. `destroy` schedules the service's
+  secret for deletion with a 7-day recovery window (not with `--keep-secrets`), and deploying the
+  service again within that window restores it.
+- Guide: [signing in to AWS and Azure from CI](https://lv3rmeulen.github.io/Deployify/guides/ci-cloud-sign-in/)
+  with OIDC instead of stored access keys or client secrets, for GitHub Actions, GitLab CI and
+  Azure Pipelines, with the IAM policy and Azure roles Deployify needs.
 - Plugin index: `deployify plugin search` and `deployify plugin install <id>[@version]` find and
   install third-party target plugins from a signed index, published with the docs at
   `https://lv3rmeulen.github.io/Deployify/plugins/index.json` and built from

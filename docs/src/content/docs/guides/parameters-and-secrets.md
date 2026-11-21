@@ -92,6 +92,7 @@ platform at run time.
 | `KubernetesSecret` | Kubernetes | `secretKeyRef`s; values are server-side applied by `apply` from memory | Secret `deployify-parameters` in `<prefix>-system` |
 | `Vault` | Kubernetes | Vault Agent annotations and a template | KV v2 `<mount>/<pathPrefix>/<prefix>/_parameters` |
 | `Ssm` | AwsEcs | SSM parameter names (as with `Inline`) | SecureStrings under `<secretsPrefix>/_parameters/` |
+| `SecretsManager` | AwsEcs | Secrets Manager ARNs with a JSON key, pinned to a version by `apply` | Secret `<secretsPrefix>/_parameters` (one JSON document) |
 | `KeyVault` | AzureContainerApps, Kubernetes | ACA: `keyVaultUrl` references. Kubernetes: a `SecretProviderClass` and `secretKeyRef`s | Key Vault secrets `<prefix>-parameters-*`, tagged |
 
 **Kubernetes Secrets.** A value that is exactly one secret becomes a `secretKeyRef`. A value that embeds one, such as
@@ -131,6 +132,59 @@ showing the policy, useful when `manageAuth` is off and roles are managed elsewh
 **SSM.** ECS already references secrets from SSM. With `Ssm`, `apply` also skips values that haven't
 changed (instead of creating a new parameter version on every deploy) and generated values move from
 `deployify-parameters.json` into SSM.
+
+**AWS Secrets Manager.** Each service's secret env vars become one JSON secret,
+`<secretsPrefix>/<service>` without the leading slash (by default `deployify/<cluster>/<service>`),
+with one key per env var. The task definition reads each key with ECS's
+`<secret ARN>:<key>::<version ID>` reference. One secret per service rather than one per value
+keeps the monthly per-secret charge down.
+
+```json
+"prod": {
+  "secrets": { "backend": "SecretsManager" },
+  "targetConfig": {
+    "ecs": {
+      "clusterName": "shop",
+      "secretsPrefix": "/apps/shop",
+      "secretsKmsKeyId": "alias/shop-secrets"
+    }
+  }
+}
+```
+
+- The `.taskdef.json` file Deployify generates names the secret with `ACCOUNT_ID` in place of the
+  account. The account ID and the random suffix of a secret's ARN aren't known until the secret
+  exists. `apply` writes the secret, then registers the task definition with the full ARN and the
+  version ID it just wrote.
+- Pinning means a task definition revision always reads the values it was deployed with. Rolling
+  back to the previous revision (Deployify's rollout or the ECS circuit breaker) brings its secrets
+  back too. Secrets Manager removes versions that have no staging label once a secret has more
+  than about 100 versions, so a revision that is a hundred deploys old can't start any more.
+- `apply` writes a new version only when a value changed, and creates the secret on the first
+  deploy, tagged `deployify-managed-by` and `deployify-env`. `secretsKmsKeyId` encrypts new secrets
+  with your own KMS key instead of `aws/secretsmanager`.
+- Generated values (`default.generate`) are kept in the secret `<secretsPrefix>/_parameters`.
+  When you switch from `Ssm`, Deployify keeps reading the generated values from SSM until the first
+  `apply` copies them across, so a database password doesn't change.
+- `destroy` schedules the service's secret for deletion with a 7-day recovery window, unless you
+  pass `--keep-secrets`. Deploying the service again within those 7 days restores the secret.
+
+The execution role reads the secrets when a task starts. It needs `secretsmanager:GetSecretValue`
+on them, and `kms:Decrypt` when they use your own key:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": "secretsmanager:GetSecretValue",
+  "Resource": "arn:aws:secretsmanager:eu-west-1:111122223333:secret:apps/shop/*"
+}
+```
+
+Whoever runs `apply` needs `secretsmanager:GetSecretValue`, `PutSecretValue`, `CreateSecret` and
+`TagResource` on the same secrets, plus `DeleteSecret` and `RestoreSecret` to destroy a service and
+redeploy it. `plan` needs `GetSecretValue` on `<secretsPrefix>/_parameters`. See
+[signing in from CI](/Deployify/guides/ci-cloud-sign-in/#a-permissions-policy-for-the-ecs-target)
+for a complete policy.
 
 **Azure Key Vault.** Each secret env var of a container app becomes a Key Vault secret named
 `<prefix>-<app>-<name>` (prefix defaults to `deployify-<environmentName>`, so environments can share

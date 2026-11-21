@@ -21,7 +21,7 @@ namespace Deployify.Target.AwsEcs;
 /// sources: env vars, ~/.aws/credentials, instance profiles, etc.).
 /// </summary>
 public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger, IProcessRunner? runner = null)
-    : ISsmParameterClient
+    : ISsmParameterClient, ISecretsManagerClient
 {
     private readonly IProcessRunner _runner = runner ?? ProcessRunner.Default;
 
@@ -205,6 +205,154 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger, IProces
         new SensitiveValue(p.GetProperty("Value").GetString() ?? ""),
         p.TryGetProperty("Version", out var v) ? v.GetInt64() : 0);
 
+    // ── Secrets Manager ───────────────────────────────────────────────────────
+
+    /// <summary>Days a deleted secret can still be restored. Re-deploying the service restores it.</summary>
+    public const int SecretRecoveryWindowDays = 7;
+
+    /// <inheritdoc />
+    public async Task<SecretsManagerSecret?> GetSecretAsync(string name, CancellationToken ct = default)
+    {
+        // Output holds the value: it's parsed and wrapped, never logged.
+        var (exit, output) = await RunAsync(
+            BuildArgs("secretsmanager", "get-secret-value", "--secret-id", name, "--output", "json"), ct, sensitive: true);
+        if (exit != 0)
+        {
+            if (IsNotFound(output) || IsMarkedForDeletion(output))
+            {
+                return null;
+            }
+
+            throw new InvalidOperationException($"Failed to read secret {name}: {output.Trim()}");
+        }
+
+        return ParseSecretValue(output);
+    }
+
+    /// <summary>Parses <c>get-secret-value</c> output.</summary>
+    internal static SecretsManagerSecret ParseSecretValue(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        return new SecretsManagerSecret(
+            root.GetProperty("ARN").GetString()!,
+            root.GetProperty("Name").GetString()!,
+            new SensitiveValue(root.TryGetProperty("SecretString", out var s) ? s.GetString() ?? "" : ""),
+            root.GetProperty("VersionId").GetString()!);
+    }
+
+    /// <inheritdoc />
+    public async Task<SecretsManagerVersion> PutSecretAsync(string name, string value, CancellationToken ct = default)
+    {
+        var (exit, output) = await RunWithInputAsync(
+            ["secretsmanager", "put-secret-value"],
+            new Dictionary<string, object> { ["SecretId"] = name, ["SecretString"] = value }, ct);
+        if (exit != 0 && IsMarkedForDeletion(output))
+        {
+            // Destroyed earlier and deployed again within the recovery window.
+            var (rExit, rOutput) = await RunAsync(BuildArgs("secretsmanager", "restore-secret", "--secret-id", name, "--output", "json"), ct);
+            if (rExit != 0)
+            {
+                throw new InvalidOperationException($"Failed to restore secret {name}, which is scheduled for deletion: {rOutput.Trim()}");
+            }
+
+            logger.LogInformation("Restored secret {Name}, which was scheduled for deletion.", name);
+            (exit, output) = await RunWithInputAsync(
+                ["secretsmanager", "put-secret-value"],
+                new Dictionary<string, object> { ["SecretId"] = name, ["SecretString"] = value }, ct);
+        }
+        else if (exit != 0 && IsNotFound(output))
+        {
+            (exit, output) = await RunWithInputAsync(["secretsmanager", "create-secret"], CreateSecretInput(name, value), ct);
+        }
+
+        if (exit != 0)
+        {
+            throw new InvalidOperationException($"Failed to store secret {name}: {output.Trim()}");
+        }
+
+        using var doc = JsonDocument.Parse(output);
+        return new SecretsManagerVersion(
+            doc.RootElement.GetProperty("ARN").GetString()!,
+            doc.RootElement.GetProperty("VersionId").GetString()!);
+    }
+
+    /// <summary>The <c>create-secret</c> input: tagged like Deployify's services, encrypted with <c>secretsKmsKeyId</c> if set.</summary>
+    internal Dictionary<string, object> CreateSecretInput(string name, string value)
+    {
+        var tags = new List<Dictionary<string, string>>
+        {
+            new() { ["Key"] = EcsOwnership.ManagedByTag, ["Value"] = EcsOwnership.ManagedByValue }
+        };
+        if (!string.IsNullOrWhiteSpace(config.DeployifyEnvironment))
+        {
+            tags.Add(new() { ["Key"] = EcsOwnership.EnvironmentTag, ["Value"] = config.DeployifyEnvironment });
+        }
+
+        var input = new Dictionary<string, object>
+        {
+            ["Name"] = name,
+            ["Description"] = "Managed by Deployify",
+            ["SecretString"] = value,
+            ["Tags"] = tags
+        };
+        if (!string.IsNullOrWhiteSpace(config.SecretsKmsKeyId))
+        {
+            input["KmsKeyId"] = config.SecretsKmsKeyId;
+        }
+
+        return input;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> DeleteSecretAsync(string name, CancellationToken ct = default)
+    {
+        var (exit, output) = await RunAsync(BuildArgs(
+            "secretsmanager", "delete-secret", "--secret-id", name,
+            "--recovery-window-in-days", SecretRecoveryWindowDays.ToString(CultureInfo.InvariantCulture), "--output", "json"), ct);
+        if (exit == 0)
+        {
+            return true;
+        }
+
+        if (IsNotFound(output) || IsMarkedForDeletion(output))
+        {
+            return false;
+        }
+
+        throw new InvalidOperationException($"Failed to delete secret {name}: {output.Trim()}");
+    }
+
+    private static bool IsNotFound(string output) => output.Contains("ResourceNotFoundException", StringComparison.Ordinal);
+
+    private static bool IsMarkedForDeletion(string output)
+        => output.Contains("InvalidRequestException", StringComparison.Ordinal) &&
+           output.Contains("deletion", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Runs a command whose input holds a secret value through a temporary owner-only file rather
+    /// than the command line, so the value doesn't show up in the process list.
+    /// </summary>
+    private async Task<(int ExitCode, string Output)> RunWithInputAsync(
+        string[] command, Dictionary<string, object> input, CancellationToken ct)
+    {
+        var inputPath = Path.Combine(Path.GetTempPath(), $"deployify-sm-{Guid.NewGuid():N}.json");
+        try
+        {
+            await File.WriteAllTextAsync(inputPath, JsonSerializer.Serialize(input), ct);
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(inputPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            }
+
+            return await RunAsync(BuildArgs([.. command, "--cli-input-json", $"file://{inputPath}", "--output", "json"]), ct);
+        }
+        finally
+        {
+            File.Delete(inputPath);
+        }
+    }
+
     // ── Create or update service ──────────────────────────────────────────────
 
     public async Task<string> UpsertServiceAsync(
@@ -332,7 +480,6 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger, IProces
         => config.DeploymentCircuitBreaker
             ? ["--deployment-configuration", "deploymentCircuitBreaker={enable=true,rollback=true}"]
             : [];
-
 
     private async Task<string> CreateServiceAsync(
         string serviceName, string taskDefinitionArn, int desiredCount, CancellationToken ct)

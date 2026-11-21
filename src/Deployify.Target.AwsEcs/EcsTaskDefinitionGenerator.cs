@@ -154,6 +154,58 @@ public sealed class EcsTaskDefinitionGenerator
         return prefix;
     }
 
+    /// <summary>
+    /// The Secrets Manager secret holding a service's secret env vars (SecretsManager backend):
+    /// the SSM prefix without its leading slash, then the service, e.g. <c>deployify/prod/api</c>.
+    /// </summary>
+    public static string ServiceSecretName(EcsTargetConfig ecsConfig, string serviceName)
+        => $"{SecretsPrefix(ecsConfig).TrimStart('/')}/{serviceName}";
+
+    /// <summary>The Secrets Manager secret holding generated parameter values (SecretsManager backend).</summary>
+    public static string GeneratedParametersSecretName(EcsTargetConfig ecsConfig)
+        => $"{SecretsPrefix(ecsConfig).TrimStart('/')}/_parameters";
+
+    /// <summary>
+    /// The <c>valueFrom</c> written to the task definition file for a Secrets Manager secret key.
+    /// The account ID and the ARN's random suffix aren't known until the secret exists, so apply
+    /// replaces it with the full ARN, pinned to the version it just wrote (see <see cref="PinSecretsManagerReferences"/>).
+    /// </summary>
+    public static string SecretsManagerValueFrom(EcsTargetConfig ecsConfig, string serviceName, string key)
+        => $"arn:{Partition(ecsConfig.Region)}:secretsmanager:{ecsConfig.Region}:{AccountPlaceholder}:secret:" +
+           $"{ServiceSecretName(ecsConfig, serviceName)}:{key}::";
+
+    /// <summary>Stands in for the account ID in a task definition file until apply fills in the real ARN.</summary>
+    public const string AccountPlaceholder = "ACCOUNT_ID";
+
+    private static string Partition(string region)
+        => region.StartsWith("cn-", StringComparison.Ordinal) ? "aws-cn"
+            : region.StartsWith("us-gov-", StringComparison.Ordinal) ? "aws-us-gov"
+            : "aws";
+
+    /// <summary>
+    /// Rewrites every Secrets Manager <c>valueFrom</c> of a task definition to
+    /// <c>{secretArn}:{env var}::{versionId}</c>, so the revision reads exactly the version
+    /// written with it. Rolling back to an older revision then also brings back its secrets.
+    /// </summary>
+    public static string PinSecretsManagerReferences(string taskDefinitionJson, string secretArn, string versionId)
+    {
+        var root = System.Text.Json.Nodes.JsonNode.Parse(taskDefinitionJson)!;
+        foreach (var container in root["containerDefinitions"]?.AsArray() ?? [])
+        {
+            foreach (var secret in container?["secrets"]?.AsArray() ?? [])
+            {
+                if (secret?["valueFrom"]?.GetValue<string>() is { } from &&
+                    from.Contains(":secretsmanager:", StringComparison.Ordinal) &&
+                    secret["name"]?.GetValue<string>() is { } name)
+                {
+                    secret["valueFrom"] = $"{secretArn}:{name}::{versionId}";
+                }
+            }
+        }
+
+        return root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+    }
+
     // ── Task definition builder ───────────────────────────────────────────────
 
     private static object BuildTaskDefinition(
@@ -192,14 +244,18 @@ public sealed class EcsTaskDefinitionGenerator
                 }).ToList();
         }
 
-        // Secret env vars are read from SSM Parameter Store at task start; apply writes them.
+        // Secret env vars are read from SSM Parameter Store (or one Secrets Manager secret per
+        // service) at task start; apply writes them.
         if (service.SecretEnv.Count > 0)
         {
+            var secretsManager = config.Secrets.Backend == SecretBackendType.SecretsManager;
             containerDef["secrets"] = service.SecretEnv.Keys
                 .Select(key => new Dictionary<string, string>
                 {
                     ["name"] = key,
-                    ["valueFrom"] = SecretParameterName(ecsConfig, service.Name, key)
+                    ["valueFrom"] = secretsManager
+                        ? SecretsManagerValueFrom(ecsConfig, service.Name, key)
+                        : SecretParameterName(ecsConfig, service.Name, key)
                 }).ToList();
         }
 

@@ -37,6 +37,7 @@ export default defineConfig({
 						'guides/parameters-and-secrets',
 						'guides/publishing-images',
 						'guides/ci-cd',
+						'guides/ci-cloud-sign-in',
 						'guides/production-checklist',
 						'guides/aspire-deploy',
 						'guides/dapr',

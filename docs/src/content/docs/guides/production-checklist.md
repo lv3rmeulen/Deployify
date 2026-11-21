@@ -137,8 +137,10 @@ Skip this if every environment uses a built-in target.
 ## Also worth checking
 
 - **Secret backends.** With the default `Inline` backend, secret values end up in
-  `deployify-output/` and `deployify-parameters.json`. Vault, Azure Key Vault or AWS SSM keep them
-  out of both. See [secret backends](/Deployify/guides/parameters-and-secrets/#secret-backends-keeping-values-out-of-output-and-state).
+  `deployify-output/` and `deployify-parameters.json`. Vault, Azure Key Vault, AWS SSM or AWS
+  Secrets Manager keep them out of both. See [secret backends](/Deployify/guides/parameters-and-secrets/#secret-backends-keeping-values-out-of-output-and-state).
+- **No stored cloud keys in CI.** Sign the pipeline in to AWS or Azure with OIDC, so there is no
+  access key or client secret to leak or rotate. See [signing in from CI](/Deployify/guides/ci-cloud-sign-in/).
 - **No plain-text credentials** in `deployify-state.json`: `deployify state migrate-secrets --dry-run`
   lists any. Rotate values that were ever committed.
 - **`--strict`** in the pipeline, so a manifest resource Deployify can't deploy fails the run

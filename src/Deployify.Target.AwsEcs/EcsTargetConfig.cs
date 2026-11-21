@@ -98,8 +98,18 @@ public sealed class EcsTargetConfig
     /// so no secret is written to the task definition file. Defaults to
     /// <c>/deployify/{ClusterName}</c>. The execution role needs <c>ssm:GetParameters</c> on
     /// this path (and <c>kms:Decrypt</c> if the parameters use a customer-managed key).
+    /// With the <c>SecretsManager</c> backend it is the name prefix of the secrets instead
+    /// (<c>{prefix}/{service}</c>, without the leading slash): the execution role needs
+    /// <c>secretsmanager:GetSecretValue</c> on them.
     /// </summary>
     public string? SecretsPrefix { get; set; }
+
+    /// <summary>
+    /// SecretsManager backend: KMS key (ID, ARN or alias) that new secrets are encrypted with.
+    /// Null = the account's <c>aws/secretsmanager</c> key. With a customer-managed key the
+    /// execution role also needs <c>kms:Decrypt</c> on it.
+    /// </summary>
+    public string? SecretsKmsKeyId { get; set; }
 
     /// <summary>
     /// The Deployify environment this config belongs to. Not part of the config file: filled in

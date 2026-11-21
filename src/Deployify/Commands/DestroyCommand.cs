@@ -25,7 +25,7 @@ public static class DestroyCommand
         };
         var keepSecrets = new Option<bool>("--keep-secrets")
         {
-            Description = "Keep the services' platform-side secrets (Nomad variables, SSM parameters).",
+            Description = "Keep the services' platform-side secrets (Nomad variables, SSM parameters, Secrets Manager secrets).",
             DefaultValueFactory = _ => false
         };
         var volumes = new Option<bool>("--volumes")

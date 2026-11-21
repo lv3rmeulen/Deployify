@@ -274,7 +274,7 @@ jobs:
 
       - name: Smoke test
         run: |
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if body=$(curl -fsS http://localhost:8080/); then
               echo "$body"
               echo "$body" | grep -q '"logged"' && exit 0
@@ -493,7 +493,7 @@ jobs:
       # The api answers once Redis and Postgres both do; "logged" comes from Postgres.
       - name: Smoke test
         run: |
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if body=$(curl -fsS http://localhost:8080/); then
               echo "$body"
               echo "$body" | grep -q '"logged"' && exit 0
@@ -595,7 +595,7 @@ jobs:
 
       - name: Smoke test
         run: |
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             curl -fsS http://localhost:8090/ && exit 0
             sleep 2
           done

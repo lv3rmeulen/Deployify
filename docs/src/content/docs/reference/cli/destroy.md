@@ -26,7 +26,7 @@ deployify destroy [options]
 | `--allow-unverified` | Start target plugins that deployify-plugins.lock.json has no hash for, with a warning each time (a plugin whose files don't match its locked hash is still refused). Run 'deployify plugin lock' instead to verify them. | `false` |
 | `--dry-run` | Simulate the operation without making changes. | `false` |
 | `--service`, `-s` | Only destroy these services (comma-separated or repeated). Default: all of them. |  |
-| `--keep-secrets` | Keep the services' platform-side secrets (Nomad variables, SSM parameters). | `false` |
+| `--keep-secrets` | Keep the services' platform-side secrets (Nomad variables, SSM parameters, Secrets Manager secrets). | `false` |
 | `--volumes` | Also remove data volumes (Compose). They are kept by default. | `false` |
 | `--auto-approve` | Destroy without typing the environment name to confirm. Required when there is no interactive terminal. | `false` |
 

@@ -33,7 +33,13 @@ public enum SecretBackendType
     /// HashiCorp Vault KV v2. On Kubernetes, the Vault Agent Injector renders the secrets into
     /// the pod from a template; manifests only hold the template, never the values.
     /// </summary>
-    Vault
+    Vault,
+
+    /// <summary>
+    /// AWS Secrets Manager. On ECS, each service's secret env vars are one JSON secret; task
+    /// definitions reference a key of it by ARN, pinned to the version they were deployed with.
+    /// </summary>
+    SecretsManager
 }
 
 /// <summary>
@@ -183,12 +189,12 @@ public sealed class SecretReference
 {
     public SecretBackendType Backend { get; set; }
 
-    /// <summary>Backend location, e.g. <c>ns/name</c>, an SSM parameter name or a Vault path.</summary>
+    /// <summary>Backend location, e.g. <c>ns/name</c>, an SSM parameter name, a Secrets Manager secret name or a Vault path.</summary>
     public string Location { get; set; } = string.Empty;
 
     /// <summary>Key inside the location, when the backend stores several values per location.</summary>
     public string? Key { get; set; }
 
-    /// <summary>Backend version: a Kubernetes resourceVersion, an SSM or a Vault KV version.</summary>
+    /// <summary>Backend version: a Kubernetes resourceVersion, an SSM or a Vault KV version, or a Secrets Manager version ID.</summary>
     public string? Version { get; set; }
 }

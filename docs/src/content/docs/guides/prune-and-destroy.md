@@ -55,7 +55,7 @@ What each target removes, and keeps:
 | Nomad, Nomad + Consul | purges each job; its `nomad/jobs/<job>` variable and rollback copies (unless `--keep-secrets`) | the namespace |
 | Kubernetes | each service's namespace (only ones labeled `app.kubernetes.io/managed-by=deployify`) | the `<prefix>-system` secrets namespace, Vault / Key Vault secrets |
 | Compose | the services' containers, then the project network; volumes with `--volumes` | images, volumes by default |
-| AWS ECS | `delete-service --force`, every revision of its task definition family, its SSM parameters under `<secretsPrefix>/<service>` (unless `--keep-secrets`) | the cluster, networking, load balancers, log groups, generated parameter values |
+| AWS ECS | `delete-service --force`, every revision of its task definition family, its SSM parameters under `<secretsPrefix>/<service>` and, with the `SecretsManager` backend, its secret (deleted after a 7-day recovery window); both unless `--keep-secrets` | the cluster, networking, load balancers, log groups, generated parameter values |
 | Azure Container Apps | each Container App | the resource group, the Container Apps environment, Key Vault secrets |
 | DigitalOcean App Platform (plugin) | each component, and the app with its dev databases once the last one goes; with `--volumes`, the database clusters Deployify created for the app | database clusters by default, clusters Deployify didn't create |
 

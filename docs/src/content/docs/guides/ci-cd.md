@@ -73,6 +73,10 @@ at a given width instead.
 
 ## Workflows
 
+Deployify signs in to AWS and Azure through the `aws` and `az` CLIs. In a pipeline, sign those
+in with OIDC rather than storing access keys or client secrets: see
+[signing in to AWS and Azure from CI](/Deployify/guides/ci-cloud-sign-in/).
+
 ### GitHub Actions — full deploy
 
 ```yaml

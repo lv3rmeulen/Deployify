@@ -189,7 +189,7 @@ public sealed class SsmSecretBackendTests
     {
         var target = new EcsDeploymentTarget(Substitute.For<IPublisher>(), NullLogger<EcsDeploymentTarget>.Instance);
 
-        target.SupportedSecretBackends.ShouldBe([SecretBackendType.Ssm]);
+        target.SupportedSecretBackends.ShouldContain(SecretBackendType.Ssm);
         var config = Config();
         config.TargetConfig["ecs"] = JsonSerializer.SerializeToElement(new { clusterName = "shop", secretsPrefix = "/apps/shop" });
         target.CreateSecretStore(config, NullLogger.Instance).Description.ShouldBe("SSM Parameter Store /apps/shop/_parameters");
