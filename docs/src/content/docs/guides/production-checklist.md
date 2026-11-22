@@ -69,6 +69,11 @@ for every shared environment:
 - **Set `LockWaitSeconds`** when pipeline jobs can queue up behind each other, so a second job
   waits for the lock instead of failing.
 - **Set `"Protected": true`** so `destroy` refuses to run against the environment.
+- **Keep the release history there too.** `deployify history` shows who published, promoted and
+  deployed which digests, from which commit and CI run. With local state that record exists only
+  on the machine that ran each release. Raise `State.History.Keep` (default 200 records per
+  environment) if you need a longer audit trail, and don't set it to `-1` (history off) on an
+  environment you may have to audit. See [release history](/Deployify/concepts/state/#release-history).
 
 ## Deploy by digest only
 

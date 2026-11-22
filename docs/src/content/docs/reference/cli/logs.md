@@ -3,7 +3,7 @@ title: deployify logs
 description: "Show a deployed service's console output (stdout and stderr), on any target."
 sidebar:
   label: logs
-  order: 16
+  order: 17
 ---
 
 :::note

@@ -147,7 +147,47 @@ public sealed record DeploymentSession(
             Reporter.Warn($"Could not record published image digests in state ({State.Backend.Description}): {ex.Message}");
         }
 
+        await RecordReleaseAsync(ReleaseKind.Publish, ReleaseOutcome.Succeeded, manifest, builtThisRun: true, ct: ct);
         await Target.GenerateAsync(manifest, Config, OutputDirectory, ct);
+    }
+
+    /// <summary>
+    /// Adds a record to the environment's release history (<see cref="ReleaseLog"/>). Never
+    /// fails the run: a record that can't be written is a warning.
+    /// </summary>
+    /// <param name="manifest">The manifest whose built images the release covers; null for a rollback.</param>
+    /// <param name="builtThisRun">
+    /// True when this run built the images, so the commit is the one being built (a CI variable or a
+    /// clean git HEAD). Otherwise the commit comes from the image tag or the history, never from
+    /// the working tree, which may be checked out at another commit than the images came from.
+    /// </param>
+    /// <param name="commit">The commit, when the caller already knows it.</param>
+    public async Task RecordReleaseAsync(ReleaseKind kind, ReleaseOutcome outcome, AspireManifest? manifest,
+        bool builtThisRun = false, string? commit = null, string? fromEnvironment = null, string? rolloutId = null,
+        string? summary = null, CancellationToken ct = default)
+    {
+        // History off: skip the commit lookup (git, or reading the history) too.
+        if (ReleaseRecorder.IsDisabled(State))
+        {
+            return;
+        }
+
+        var images = manifest is null ? [] : ReleaseRecorder.Images(manifest, Config);
+        var tag = images.Count > 0 ? Config.ImageTag : null;
+        commit ??= images.Count == 0 ? null
+            : builtThisRun ? await ReleaseRecorder.CommitBeingBuiltAsync(AppHostDirectory, ct)
+            : await ReleaseRecorder.CommitOfTagAsync(State, tag, ct);
+
+        var record = ReleaseRecorder.Create(kind, EnvName, outcome) with
+        {
+            Images = images,
+            Tag = tag,
+            Commit = commit,
+            FromEnvironment = fromEnvironment,
+            RolloutId = string.IsNullOrEmpty(rolloutId) ? null : rolloutId,
+            Summary = summary
+        };
+        await ReleaseRecorder.AppendAsync(State, record, Reporter.Warn, ct);
     }
 
     /// <summary>

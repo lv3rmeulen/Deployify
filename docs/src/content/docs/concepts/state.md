@@ -13,14 +13,15 @@ Next to the configuration in `deployify-state.json` (which you commit), Deployif
 | `{prefix}/{env}/images.json` | digests of the images Deployify pushed, so artifacts [pin them](/Deployify/guides/publishing-images/#pinning-images-by-digest) |
 | `{prefix}/{env}/parameters.json` | generated parameter values (remote backends only; locally they are `deployify-parameters.json`) |
 | `{prefix}/{env}/rollouts/{id}.json` | rollout, prune and destroy journals (remote backends only; locally `.deployify/rollouts/`) |
+| `{prefix}/{env}/releases/{time}-{id}.json` | the [release history](#release-history): one record per publish, promote, deploy and rollback |
 
 By default it all lives in `.deployify/state/` next to the state file, which is fine for one
 machine. Keep `.deployify/` and `deployify-parameters.json` out of git.
 
 ## Format versions
 
-`deployify-state.json` (`FormatVersion`), `inventory.json`, `images.json` and `parameters.json`
-(`formatVersion`) record the format they were written in. Files from the alphas have no version;
+`deployify-state.json` (`FormatVersion`), `inventory.json`, `images.json`, `parameters.json` and
+the release records (`formatVersion`) record the format they were written in. Files from the alphas have no version;
 Deployify still reads them and writes them in the current format the next time it saves them.
 `deployify-state.json` is written in version 2 only when an environment
 [extends another](/Deployify/reference/state-file/#layered-environments); otherwise it stays at
@@ -29,6 +30,54 @@ A file written by a newer Deployify is refused with a message naming the file, i
 read in part and overwritten. Update Deployify to work with it. Everyone sharing remote state
 should run the same Deployify version: an alpha build can't read `images.json` or
 `parameters.json` once a newer build has rewritten them.
+
+## Release history
+
+Every release adds a record to the environment's history:
+
+| Kind | Written by | Images |
+|---|---|---|
+| `publish` | `publish`, and `ci` or `aspire deploy` when they build images | the images pushed, by digest |
+| `promote` | `promote`, when it records new digests (`fromEnvironment` says where they came from) | the images the environment now deploys |
+| `deploy` | `apply`, `ci` and `aspire deploy`, whether the deploy succeeded, failed or was rolled back by its health gate | the images deployed |
+| `rollback` | `rollback` (`rolloutId` names the rollout it undid) | none: it restores earlier revisions |
+
+A record also holds the image tag, the commit the images were built from, who ran it, a link to
+the CI run, the rollout journal of a health-gated deploy, and, when the release didn't succeed,
+why. `deployify history` lists them, newest first; `--output json` gives the same for scripts.
+
+- **Who** comes from `DEPLOYIFY_ACTOR`, `GITHUB_ACTOR`, `BUILD_REQUESTEDFOR` (Azure Pipelines),
+  `GITLAB_USER_LOGIN` or `BUILD_USER_ID` (Jenkins). Outside CI it is your account name; in a CI
+  system Deployify doesn't recognize it is left empty rather than recording the runner's
+  account. The run link is the same as [the lock's](#the-lock).
+- **The commit** of a run that builds its images is the CI commit variable, or `git rev-parse
+  HEAD` when the working tree is clean. A run that deploys or promotes images built elsewhere
+  never reads the working tree, which can be checked out at another commit: the commit is the
+  tag itself when it is a full commit SHA (what `ci` tags with), or else the commit of that tag's
+  publish record.
+- **Records are written once and never changed**, each under its own key, so concurrent CI jobs
+  never conflict. Writing one never fails a release: if the backend refuses, Deployify warns
+  and carries on.
+- **The oldest records are deleted** once there are more than `State.History.Keep` (default
+  200) in an environment.
+
+| `State.History.Keep` | |
+|---|---|
+| `200` (default), or any positive number | Records are kept up to that number; the oldest go first. |
+| `0` | Every record is kept. |
+| `-1` | **The history is off**: nothing is recorded for the environment, and Deployify doesn't look up commits for it. Records written before stay where they are (delete their keys yourself if you want them gone), and `deployify history` lists them with a warning that the history is off. |
+| any other negative number | Refused: every command for the environment stops with an error naming the setting, so a typo can't quietly turn the history off. |
+
+```json
+"State": {
+  "Backend": "S3",
+  "S3": { "Bucket": "acme-deploy-state" },
+  "History": { "Keep": 1000 }
+}
+```
+
+With local state, the history is only on the machine that made the releases. Use a remote
+backend for a history that CI and your team share.
 
 ## Ownership
 
@@ -64,8 +113,8 @@ fails at once with who holds it:
 
 The lock is a lease: its holder renews it every third of `LockTtlSeconds` (default 180), so a run
 that crashes frees it within that time. Set `LockWaitSeconds` to wait for a busy lock instead of
-failing (useful when CI jobs queue up). The CI run URL comes from GitHub Actions, GitLab CI or
-Azure Pipelines variables, or from `DEPLOYIFY_RUN_URL`. Every state write is compare-and-swap,
+failing (useful when CI jobs queue up). The CI run URL comes from GitHub Actions, GitLab CI,
+Azure Pipelines or Jenkins variables, or from `DEPLOYIFY_RUN_URL`. Every state write is compare-and-swap,
 so a run that lost its lock (it expired while the run hung) can't overwrite the next run's state.
 Machines sharing a lock need roughly synchronized clocks (NTP is plenty).
 

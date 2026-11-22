@@ -241,6 +241,11 @@ public sealed class DeploymentRunner(DeploymentSession session)
             ? await RolloutAsync(rollout, manifest, plan, options.Rollout, ct)
             : await ApplyAsync(manifest, plan, ct);
 
+        await session.RecordReleaseAsync(ReleaseKind.Deploy,
+            result.Rollout is { } r ? ReleaseRecorder.Outcome(r.Outcome) : result.Succeeded ? ReleaseOutcome.Succeeded : ReleaseOutcome.Failed,
+            manifest, builtThisRun: publishes, rolloutId: result.Rollout?.RolloutId,
+            summary: result.Succeeded ? null : result.Summary, ct: ct);
+
         if (result.Succeeded && config.Prune)
         {
             Reporter.Warn("This environment has prune enabled, but services are not pruned from 'aspire deploy' yet. " +

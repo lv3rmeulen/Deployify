@@ -3,7 +3,7 @@ title: deployify plugin
 description: "Find, install, show and lock the target plugins this project can use."
 sidebar:
   label: plugin
-  order: 21
+  order: 22
 ---
 
 :::note

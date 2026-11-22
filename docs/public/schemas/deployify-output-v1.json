@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://lv3rmeulen.github.io/Deployify/schemas/deployify-output-v1.json",
   "title": "Deployify --output json, schema version 1",
-  "description": "The document plan, diff, status, explain and promote write to stdout with --output json. Within schema version 1, properties are only added: consumers must ignore properties they don't know.",
+  "description": "The document plan, diff, status, explain, promote and history write to stdout with --output json. Within schema version 1, properties are only added: consumers must ignore properties they don't know.",
   "type": "object",
   "required": [
     "schemaVersion",
@@ -26,7 +26,8 @@
         "diff",
         "status",
         "explain",
-        "promote"
+        "promote",
+        "history"
       ]
     },
     "success": {
@@ -183,6 +184,29 @@
               },
               {
                 "$ref": "#/$defs/promote"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "history"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/$defs/history"
               }
             ]
           }
@@ -554,6 +578,118 @@
               "$ref": "#/$defs/rollout"
             }
           ]
+        }
+      }
+    },
+    "history": {
+      "type": "object",
+      "required": [
+        "releases"
+      ],
+      "description": "The environment's release history, newest first, up to --limit.",
+      "properties": {
+        "releases": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/release"
+          }
+        }
+      }
+    },
+    "release": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "at",
+        "outcome",
+        "tag",
+        "commit",
+        "fromEnvironment",
+        "actor",
+        "actorSource",
+        "runUrl",
+        "rolloutId",
+        "summary",
+        "deployifyVersion",
+        "images"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "description": "publish, promote, deploy or rollback. Open-ended: a minor release can add kinds."
+        },
+        "at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "outcome": {
+          "type": "string",
+          "description": "succeeded, rolledBack or failed. Open-ended: a minor release can add outcomes."
+        },
+        "tag": {
+          "$ref": "#/$defs/nullableString",
+          "description": "The image tag of the release. Null when it covers no built images (a rollback)."
+        },
+        "commit": {
+          "$ref": "#/$defs/nullableString",
+          "description": "The commit the images were built from, when known."
+        },
+        "fromEnvironment": {
+          "$ref": "#/$defs/nullableString",
+          "description": "For a promote: the environment the digests came from."
+        },
+        "actor": {
+          "$ref": "#/$defs/nullableString",
+          "description": "Who ran it: a CI user name, or the local account name outside CI."
+        },
+        "actorSource": {
+          "$ref": "#/$defs/nullableString",
+          "description": "Where actor came from: a CI variable such as GITHUB_ACTOR, or local."
+        },
+        "runUrl": {
+          "$ref": "#/$defs/nullableString",
+          "description": "A link to the CI run."
+        },
+        "rolloutId": {
+          "$ref": "#/$defs/nullableString",
+          "description": "The rollout journal of a health-gated deploy, or the rollout a rollback undid."
+        },
+        "summary": {
+          "$ref": "#/$defs/nullableString",
+          "description": "What happened, for people; set when the release didn't succeed and for rollbacks."
+        },
+        "deployifyVersion": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "images": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "service",
+              "repository",
+              "tag",
+              "digest"
+            ],
+            "properties": {
+              "service": {
+                "type": "string"
+              },
+              "repository": {
+                "type": "string"
+              },
+              "tag": {
+                "type": "string"
+              },
+              "digest": {
+                "$ref": "#/$defs/nullableString",
+                "description": "Null when the image isn't pinned by digest."
+              }
+            }
+          }
         }
       }
     },

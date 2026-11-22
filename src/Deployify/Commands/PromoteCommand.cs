@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.CommandLine;
 using System.Linq;
+using System.Threading;
 using Deployify.Commands.Json;
 using Deployify.Core.Deployments;
 using Deployify.Core.Interfaces;
@@ -103,6 +104,7 @@ public static class PromoteCommand
             var target = resolved.Config;
 
             Core.Models.EnvironmentConfig source;
+            string? sourceCommit = null;
             try
             {
                 var stateManager = resolved.Services.GetRequiredService<IStateManager>();
@@ -110,6 +112,10 @@ public static class PromoteCommand
                 await using var sourceState = new StateSession(resolved.Directory, from, source.State,
                     onWarning: ConsoleDeploymentReporter.Instance.Warn);
                 await PublishedImageStore.LoadIntoAsync(sourceState, source.PublishedImages, ct);
+
+                // For the release record: the commit the promoted images were built from, from the source's history.
+                sourceCommit = await ReleaseRecorder.CommitOfTagAsync(sourceState,
+                    string.IsNullOrEmpty(tagOverride) ? source.ImageTag : tagOverride, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -418,6 +424,12 @@ public static class PromoteCommand
                         $"Could not record the digests in {to}'s state ({resolved.State.Backend.Description}): {ex.Message}");
                     return 1;
                 }
+            }
+
+            if (recorded > 0)
+            {
+                await resolved.RecordReleaseAsync(Core.Models.ReleaseKind.Promote, Core.Models.ReleaseOutcome.Succeeded, manifest,
+                    commit: sourceCommit, fromEnvironment: from, ct: CancellationToken.None);
             }
 
             SetResult(promoted: true, recorded);

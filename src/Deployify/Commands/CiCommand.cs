@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.CommandLine;
 using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Deployify.Core.Deployments;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
 using Deployify.Core.Processes;
@@ -273,34 +275,17 @@ public static class CiCommand
                     AnsiConsole.MarkupLineInterpolated($"[yellow]![/] Could not record secret references: {ex.Message}");
                 }
 
+                await resolved.RecordReleaseAsync(ReleaseKind.Deploy, ReleaseRecorder.Outcome(rolloutResult.Outcome), manifest,
+                    builtThisRun: publishReason is null, rolloutId: rolloutResult.RolloutId,
+                    summary: rolloutResult.Outcome == RolloutOutcome.Succeeded ? null : rolloutResult.Reason,
+                    ct: CancellationToken.None);
+
                 if (rolloutResult.ExitCode != 0)
                 {
                     return rolloutResult.ExitCode;
                 }
             }
-            else if (!await StepAsync("5/5 Apply", async stepCt =>
-            {
-                await resolved.SaveGeneratedSecretsAsync(stepCt);
-                var results = await target.ApplyAsync(manifest, config, outputDir, stepCt);
-                await resolved.SaveSecretReferencesAsync(stepCt);
-                var failed = results.Where(r => !r.Success).ToList();
-                foreach (var r in results)
-                {
-                    if (r.Success)
-                    {
-                        AnsiConsole.MarkupLineInterpolated($"[dim] ✓ {r.ServiceName}[/]");
-                    }
-                    else
-                    {
-                        AnsiConsole.MarkupLineInterpolated($"[dim] ✗ {r.ServiceName}: {r.Error ?? ""}[/]");
-                    }
-                }
-
-                if (failed.Count > 0)
-                {
-                    throw new InvalidOperationException($"{failed.Count} service(s) failed to deploy.");
-                }
-            }, ct))
+            else if (!await ApplyStepAsync(resolved, manifest, outputDir, builtThisRun: publishReason is null, ct))
             {
                 return 1;
             }
@@ -386,6 +371,59 @@ public static class CiCommand
                 AnsiConsole.MarkupInterpolated($"[dim]{pinned} image(s) pinned by digest[/] ");
             }
         }, ct);
+    }
+
+    /// <summary>
+    /// Step 5 without a health gate: stores generated secrets, applies, and records the deploy in
+    /// the release history whether it succeeded or not (but not when it failed before deploying).
+    /// </summary>
+    private static async Task<bool> ApplyStepAsync(
+        ResolvedContext resolved, AspireManifest manifest, string outputDir, bool builtThisRun, CancellationToken ct)
+    {
+        string? failure = null;
+        var deploying = false;
+        var ok = await StepAsync("5/5 Apply", async stepCt =>
+        {
+            await resolved.SaveGeneratedSecretsAsync(stepCt);
+            deploying = true;
+            IReadOnlyList<DeploymentResult> results;
+            try
+            {
+                results = await resolved.Target.ApplyAsync(manifest, resolved.Config, outputDir, stepCt);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                failure = $"Apply failed: {ex.Message}";
+                throw;
+            }
+
+            await resolved.SaveSecretReferencesAsync(stepCt);
+            foreach (var r in results)
+            {
+                if (r.Success)
+                {
+                    AnsiConsole.MarkupLineInterpolated($"[dim] ✓ {r.ServiceName}[/]");
+                }
+                else
+                {
+                    AnsiConsole.MarkupLineInterpolated($"[dim] ✗ {r.ServiceName}: {r.Error ?? ""}[/]");
+                }
+            }
+
+            if (results.Any(r => !r.Success))
+            {
+                failure = ApplyCommand.FailedServices(results);
+                throw new InvalidOperationException($"{results.Count(r => !r.Success)} service(s) failed to deploy.");
+            }
+        }, ct);
+
+        if (deploying)
+        {
+            await resolved.RecordReleaseAsync(ReleaseKind.Deploy, ok ? ReleaseOutcome.Succeeded : ReleaseOutcome.Failed,
+                manifest, builtThisRun, summary: ok ? null : failure ?? "Apply failed.", ct: CancellationToken.None);
+        }
+
+        return ok;
     }
 
     private static async Task<bool> StepAsync(string label, Func<CancellationToken, Task> step, CancellationToken ct)

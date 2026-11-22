@@ -41,6 +41,9 @@ public static class StateFormat
     /// <summary>{env}/parameters.json. 0: alpha, a bare map of values. 1: <c>{ formatVersion, parameters }</c>.</summary>
     public const int Parameters = 1;
 
+    /// <summary>{env}/releases/{time}-{id}.json, one release record each. 1: the first version; there is no version 0.</summary>
+    public const int Releases = 1;
+
     /// <summary>Property name in the camelCase backend files.</summary>
     public const string VersionProperty = "formatVersion";
 

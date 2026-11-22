@@ -46,6 +46,9 @@ public sealed class StateBackendConfig
     /// <summary>How long to wait for a lock someone else holds before giving up. 0 fails at once.</summary>
     public int LockWaitSeconds { get; set; }
 
+    /// <summary>How much release history to keep; see <see cref="ReleaseLog"/>.</summary>
+    public StateHistoryConfig History { get; set; } = new();
+
     public AzureBlobStateConfig? AzureBlob { get; set; }
     public S3StateConfig? S3 { get; set; }
     public ConsulStateConfig? Consul { get; set; }
@@ -53,6 +56,17 @@ public sealed class StateBackendConfig
 
     [JsonIgnore]
     public bool IsRemote => Backend != StateBackendType.Local;
+}
+
+/// <summary>The <c>State.History</c> section: the environment's release history.</summary>
+public sealed class StateHistoryConfig
+{
+    /// <summary>
+    /// Release records kept per environment; the oldest are deleted as new ones are written.
+    /// 0 keeps every record; -1 (<see cref="ReleaseLog.Disabled"/>) records nothing, and leaves
+    /// records written before alone. Other negative numbers are refused.
+    /// </summary>
+    public int Keep { get; set; } = ReleaseLog.DefaultKeep;
 }
 
 public sealed class AzureBlobStateConfig

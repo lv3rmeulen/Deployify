@@ -1,9 +1,9 @@
 ---
 title: "JSON output (--output json)"
-description: "The machine-readable output of plan, diff, status, explain and promote, and its schema."
+description: "The machine-readable output of plan, diff, status, explain, promote and history, and its schema."
 ---
 
-`plan`, `diff`, `status`, `explain` and `promote` take `--output json` (or `-o json`). The
+`plan`, `diff`, `status`, `explain`, `promote` and `history` take `--output json` (or `-o json`). The
 command then writes exactly one JSON document to stdout, and everything it would normally print
 (the tables, warnings, progress and logs) to stderr. A pipeline can parse stdout and still
 show the human-readable output in its log:
@@ -39,7 +39,7 @@ Deployify 1.x (see [Stability](/Deployify/reference/stability/#json-output)):
 - A minor release can **add properties**, anywhere. Ignore the ones you don't know, and don't
   validate with `additionalProperties: false`.
 - The values of `command`, `severity`, diff `kind` and the plan lists are fixed. Rollout
-  `operation` and `state` values are open-ended: a new kind of rollout or state can appear in
+  `operation` and `state` values, and release `kind` and `outcome` values, are open-ended: a new kind of rollout or state can appear in
   a minor release, so handle a value you don't know.
 - `message`, `reason`, `error` and similar texts are for people. They can change in any
   release; don't match on them.
@@ -70,7 +70,7 @@ Every command writes the same envelope; `result` holds the command's own documen
 | Property | Type | |
 |---|---|---|
 | `schemaVersion` | `1` | |
-| `command` | string | `plan`, `diff`, `status`, `explain` or `promote`. |
+| `command` | string | `plan`, `diff`, `status`, `explain`, `promote` or `history`. |
 | `success` | boolean | `true` exactly when `exitCode` is `0`. |
 | `exitCode` | integer | The process exit code. |
 | `error` | string \| null | Why the command failed: the first error in `diagnostics`. `null` on success. |
@@ -287,6 +287,52 @@ unknown `--rollout` ID fails with exit code `1` and `result: null`.
 | `images[].signaturesCopied` | How many cosign signatures this run copied to the target registry with the image; `0` when it already had them all. `null` when signatures aren't copied: the image stays in the same repository, the source environment doesn't sign images and `--require-signature` isn't set, or with `--dry-run`. |
 | `images[].signatureVerified` | With `--require-signature`: `true` when the image's signature verified where the target pulls it from (checked again after copying), `false` when that wasn't checked yet, such as with `--dry-run` for an image that is copied. `null` without `--require-signature`. |
 | `images[].problem` | Why the image can't be promoted, such as a missing digest. Any problem means nothing is promoted and the exit code is `1`; the `images` list still shows which ones. |
+
+## history
+
+`releases` lists the environment's [release history](/Deployify/concepts/state/#release-history),
+newest first and up to `--limit`:
+
+```json
+"result": {
+  "releases": [
+    {
+      "id": "8c1f0a2b9d3e",
+      "kind": "deploy",
+      "at": "2026-11-22T09:14:03.512+00:00",
+      "outcome": "rolledBack",
+      "tag": "4f2c9e1a7b3d4f2c9e1a7b3d4f2c9e1a7b3d4f2c",
+      "commit": "4f2c9e1a7b3d4f2c9e1a7b3d4f2c9e1a7b3d4f2c",
+      "fromEnvironment": null,
+      "actor": "lv3rmeulen",
+      "actorSource": "GITHUB_ACTOR",
+      "runUrl": "https://github.com/acme/shop/actions/runs/123",
+      "rolloutId": "20261122-091240-prod",
+      "summary": "Rollout failed and was rolled back. api failed its health check",
+      "deployifyVersion": "1.1.0",
+      "images": [
+        {
+          "service": "api",
+          "repository": "acme.azurecr.io/shop/api",
+          "tag": "4f2c9e1a7b3d4f2c9e1a7b3d4f2c9e1a7b3d4f2c",
+          "digest": "sha256:4b1d…"
+        }
+      ]
+    }
+  ]
+}
+```
+
+| Property | |
+|---|---|
+| `kind` | `publish`, `promote`, `deploy` or `rollback`. Can grow. |
+| `outcome` | `succeeded`, `rolledBack` (a deploy whose health gate failed and was rolled back) or `failed`. Can grow. |
+| `tag`, `commit` | The image tag and the commit the images were built from. `null` when unknown, and for a rollback. |
+| `fromEnvironment` | For a promote, the environment the digests came from. |
+| `actor`, `actorSource` | Who ran it, and the CI variable that said so (`local` outside CI). Both `null` in a CI system Deployify doesn't recognize; set `DEPLOYIFY_ACTOR`. |
+| `rolloutId` | The rollout journal of a health-gated deploy (see `status --rollout`), or the rollout a rollback undid. |
+| `summary` | Why a release failed, or what a rollback restored. For people. |
+| `images[].digest` | `null` when the image isn't pinned, such as in an environment without a container registry. |
 
 ## Using it
 

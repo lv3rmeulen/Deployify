@@ -3,7 +3,9 @@ using System.CommandLine;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using Deployify.Core.Deployments;
 using Deployify.Core.Models;
+using Deployify.Core.Rollouts;
 using Spectre.Console;
 
 namespace Deployify.Commands;
@@ -152,6 +154,11 @@ public static class ApplyCommand
                     AnsiConsole.MarkupLineInterpolated($"[yellow]![/] Could not record secret references: {ex.Message}");
                 }
 
+                await resolved.RecordReleaseAsync(ReleaseKind.Deploy, ReleaseRecorder.Outcome(rolloutResult.Outcome), manifest,
+                    rolloutId: rolloutResult.RolloutId,
+                    summary: rolloutResult.Outcome == RolloutOutcome.Succeeded ? null : rolloutResult.Reason,
+                    ct: CancellationToken.None);
+
                 if (rolloutResult.ExitCode != 0 || !prune)
                 {
                     return rolloutResult.ExitCode;
@@ -173,6 +180,8 @@ public static class ApplyCommand
 
             var succeeded = results.Count(r => r.Success);
             var failed = results.Count(r => !r.Success);
+            await resolved.RecordReleaseAsync(ReleaseKind.Deploy, failed == 0 ? ReleaseOutcome.Succeeded : ReleaseOutcome.Failed,
+                manifest, summary: failed == 0 ? null : FailedServices(results), ct: CancellationToken.None);
 
             foreach (var r in results)
             {
@@ -211,5 +220,12 @@ public static class ApplyCommand
         });
 
         return cmd;
+    }
+
+    /// <summary>"2 service(s) failed: api, web", for the release record.</summary>
+    internal static string FailedServices(System.Collections.Generic.IEnumerable<DeploymentResult> results)
+    {
+        var failed = results.Where(r => !r.Success).Select(r => r.ServiceName).ToList();
+        return $"{failed.Count} service(s) failed: {string.Join(", ", failed)}";
     }
 }

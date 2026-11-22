@@ -26,6 +26,7 @@ Generated from the command definitions by `tools/Deployify.DocGen`; don't edit b
 | [`graph`](./graph/) | Display a dependency graph of all services. |
 | [`diff`](./diff/) | Show differences between local manifest and the running target. |
 | [`status`](./status/) | Show recent rollouts and how they ended. |
+| [`history`](./history/) | Show who published, promoted and deployed which images, and when. |
 | [`logs`](./logs/) | Show a deployed service's console output (stdout and stderr), on any target. |
 | [`dashboard`](./dashboard/) | Serve the environment's deployed resources to the Aspire dashboard (a standalone resource service). |
 | [`rollback`](./rollback/) | Undo a rollout: restore the revisions that ran before it. |

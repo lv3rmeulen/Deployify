@@ -44,32 +44,7 @@ public sealed class LockInfo
         return $"{Who}, {Operation}, started {since} (lock id {Id})" + (RunUrl is null ? "" : $", run: {RunUrl}");
     }
 
-    internal static string? DetectRunUrl()
-    {
-        static string? Env(string name) => Environment.GetEnvironmentVariable(name) is { Length: > 0 } v ? v : null;
-
-        if (Env("DEPLOYIFY_RUN_URL") is { } custom)
-        {
-            return custom;
-        }
-
-        if (Env("GITHUB_RUN_ID") is { } runId && Env("GITHUB_REPOSITORY") is { } repo)
-        {
-            return $"{Env("GITHUB_SERVER_URL") ?? "https://github.com"}/{repo}/actions/runs/{runId}";
-        }
-
-        if (Env("CI_JOB_URL") is { } gitlab)
-        {
-            return gitlab;
-        }
-
-        if (Env("BUILD_BUILDID") is { } build && Env("SYSTEM_COLLECTIONURI") is { } collection && Env("SYSTEM_TEAMPROJECT") is { } project)
-        {
-            return $"{collection.TrimEnd('/')}/{Uri.EscapeDataString(project)}/_build/results?buildId={build}";
-        }
-
-        return null;
-    }
+    internal static string? DetectRunUrl() => Services.ReleaseContext.DetectRunUrl();
 }
 
 /// <summary>Another run holds the lock.</summary>

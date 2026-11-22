@@ -35,6 +35,11 @@ public sealed class StateSession : IAsyncDisposable
         StateDirectory = stateDirectory;
         Environment = environment;
         Config = config ?? new StateBackendConfig();
+        if (ReleaseLog.Validate(Config.History?.Keep ?? ReleaseLog.DefaultKeep) is { } problem)
+        {
+            throw new StateBackendException(problem);
+        }
+
         Backend = backend ?? StateBackendFactory.Create(Config, stateDirectory);
         _time = time ?? TimeProvider.System;
         _onWarning = onWarning;

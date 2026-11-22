@@ -13,6 +13,21 @@ Each release can have these sections: **Added**, **Changed**, **Deprecated**, **
 
 ### Added
 
+- Release history: every `publish`, `promote`, deploy (`apply`, `ci`, `aspire deploy`) and
+  `rollback` adds a record to the environment's deployment state, with the images and digests,
+  the image tag, the commit they were built from, who ran it, the CI run link, the rollout and,
+  for a release that didn't succeed, why. Deploys are recorded whether they succeed, fail or are
+  rolled back by their health gate. Records are written once, each under its own key
+  (`{prefix}/{env}/releases/`), so concurrent CI jobs never conflict, and failing to write one is
+  a warning, never a failed release. `State.History.Keep` (default 200) sets how many are kept
+  per environment; `0` keeps them all and `-1` records nothing. A deploy or promote of images built elsewhere takes the commit from the tag
+  (when it is a full commit SHA) or from that tag's publish record, never from the working tree.
+  See [release history](https://lv3rmeulen.github.io/Deployify/concepts/state/#release-history).
+- `deployify history`: lists the environment's releases, newest first, with `--limit` and
+  `--output json` (schema version 1 gains a `history` document).
+- `DEPLOYIFY_ACTOR` names who ran a release in a CI system Deployify doesn't recognize. The lock's
+  run link now also comes from `BUILD_URL` (Jenkins).
+
 - Layered environments: an environment in `deployify-state.json` can set `extends` to build on
   another and hold only what differs. Objects (`targetConfig`, `parameters`, `serviceOverrides`
   and the rest) merge key by key, anything else (lists included) replaces the base's value, and

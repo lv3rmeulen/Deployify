@@ -3,7 +3,7 @@ title: deployify state
 description: "Inspect and manage deployment state (inventory, lock, remote backend)."
 sidebar:
   label: state
-  order: 20
+  order: 21
 ---
 
 :::note

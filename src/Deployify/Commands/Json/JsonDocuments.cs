@@ -131,6 +131,28 @@ internal sealed record JsonServiceSnapshot(bool Existed, string? Revision);
 
 internal sealed record JsonRolloutEvent(DateTimeOffset At, string? Service, string Message);
 
+// ── history ───────────────────────────────────────────────────────────────────
+
+internal sealed record JsonHistory(IReadOnlyList<JsonRelease> Releases);
+
+internal sealed record JsonRelease(
+    string Id,
+    string Kind,
+    DateTimeOffset At,
+    string Outcome,
+    string? Tag,
+    string? Commit,
+    string? FromEnvironment,
+    string? Actor,
+    string? ActorSource,
+    string? RunUrl,
+    string? RolloutId,
+    string? Summary,
+    string? DeployifyVersion,
+    IReadOnlyList<JsonReleaseImage> Images);
+
+internal sealed record JsonReleaseImage(string Service, string Repository, string Tag, string? Digest);
+
 // ── promote ───────────────────────────────────────────────────────────────────
 
 internal sealed record JsonPromotion(

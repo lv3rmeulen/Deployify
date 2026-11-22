@@ -81,7 +81,7 @@ recommendation. Such changes are listed in the changelog, and `plan` shows them 
 
 The files Deployify writes for itself, locally or in a remote backend: `deployify-state.json`,
 `inventory.json`, `images.json`, `parameters.json` (and `deployify-parameters.json`),
-`lock.json` and the rollout journals.
+`lock.json`, the rollout journals and the release records.
 
 - **Every 1.x release reads every file an earlier 1.x release wrote**, and files from the
   1.0.0 alphas, and upgrades them to its own format the next time it saves them.

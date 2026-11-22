@@ -107,6 +107,125 @@ public sealed class DeploymentRunnerTests : IAsyncDisposable
         await _target.ReceivedWithAnyArgs(1).PublishAsync(default!, default!, default!, Ct);
     }
 
+    // ── Release history ───────────────────────────────────────────────────────
+
+    private const string ApiDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    [Fact]
+    public async Task A_deploy_is_recorded_with_its_images()
+    {
+        var result = await Runner(TaggedConfig(withDigest: true)).RunAsync(_manifest, new DeploymentRunOptions { Publish = false }, Ct);
+
+        result.Outcome.ShouldBe(DeploymentRunOutcome.Deployed);
+        var release = (await ReleaseLog.ListAsync(_state, ct: Ct)).ShouldHaveSingleItem();
+        release.Kind.ShouldBe(ReleaseKind.Deploy);
+        release.Outcome.ShouldBe(ReleaseOutcome.Succeeded);
+        release.Environment.ShouldBe("dev");
+        release.Tag.ShouldBe("abc123");
+        release.Summary.ShouldBeNull();
+        release.Images.ShouldBe([new ReleaseImage("api", "localhost:5000/api", "abc123", ApiDigest)]);
+    }
+
+    [Fact]
+    public async Task A_deploy_of_images_built_elsewhere_takes_the_commit_from_their_publish_record()
+    {
+        await ReleaseLog.AppendAsync(_state, new ReleaseRecord
+        {
+            Id = "publish00001", Kind = ReleaseKind.Publish, Environment = "dev",
+            At = DateTimeOffset.UtcNow.AddMinutes(-5), Tag = "abc123", Commit = "4f2c9e1a7b3d"
+        }, ct: Ct);
+
+        await Runner(TaggedConfig(withDigest: true)).RunAsync(_manifest, new DeploymentRunOptions { Publish = false }, Ct);
+
+        (await ReleaseLog.ListAsync(_state, ct: Ct))[0].Commit.ShouldBe("4f2c9e1a7b3d");
+    }
+
+    [Fact]
+    public async Task A_commit_SHA_tag_is_the_commit()
+    {
+        var sha = "4F2C9E1A7B3D4F2C9E1A7B3D4F2C9E1A7B3D4F2C";
+        var config = new EnvironmentConfig { Target = DeploymentTargetType.Compose, ContainerRegistry = "localhost:5000", ImageTag = sha };
+
+        await Runner(config).RunAsync(_manifest, new DeploymentRunOptions { Publish = false }, Ct);
+
+        var release = (await ReleaseLog.ListAsync(_state, ct: Ct)).ShouldHaveSingleItem();
+        release.Commit.ShouldBe(sha.ToLowerInvariant());
+        release.Images.ShouldHaveSingleItem().Digest.ShouldBeNull("nothing was published, so the image isn't pinned");
+    }
+
+    [Fact]
+    public async Task A_run_that_publishes_records_the_publish_and_then_the_deploy()
+    {
+        var config = TaggedConfig(withDigest: false);
+        _target.WhenForAnyArgs(t => t.PublishAsync(default!, default!, default!, default))
+            .Do(_ => config.PublishedImages.Record("localhost:5000/api", "abc123", ApiDigest, DateTimeOffset.UtcNow));
+
+        await Runner(config).RunAsync(_manifest, new DeploymentRunOptions(), Ct);
+
+        var history = await ReleaseLog.ListAsync(_state, ct: Ct);
+        history.Select(r => r.Kind).ShouldBe([ReleaseKind.Deploy, ReleaseKind.Publish]);
+        history.ShouldAllBe(r => r.Images.Single().Digest == ApiDigest);
+    }
+
+    [Fact]
+    public async Task A_failed_deploy_is_recorded_as_failed_with_the_reason()
+    {
+        _target.ApplyAsync(default!, default!, default!, Ct).ReturnsForAnyArgs(
+            [new DeploymentResult { ServiceName = "api", Success = false, Error = "boom" }]);
+
+        var result = await Runner(TaggedConfig(withDigest: true)).RunAsync(_manifest, new DeploymentRunOptions { Publish = false }, Ct);
+
+        result.Outcome.ShouldBe(DeploymentRunOutcome.Failed);
+        var release = (await ReleaseLog.ListAsync(_state, ct: Ct)).ShouldHaveSingleItem();
+        release.Outcome.ShouldBe(ReleaseOutcome.Failed);
+        release.Summary.ShouldBe(result.Summary);
+    }
+
+    [Fact]
+    public async Task A_declined_deploy_is_not_recorded()
+    {
+        await Runner(TaggedConfig(withDigest: true)).RunAsync(_manifest, new DeploymentRunOptions
+        {
+            Publish = false,
+            Approve = (_, _) => Task.FromResult(false)
+        }, Ct);
+
+        (await ReleaseLog.ListAsync(_state, ct: Ct)).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task History_keep_from_the_state_config_prunes_old_records()
+    {
+        await using var state = new StateSession(_dir, "dev", new StateBackendConfig { History = { Keep = 2 } });
+        var runner = new DeploymentRunner(new DeploymentSession(
+            Substitute.For<IServiceProvider>(), TaggedConfig(withDigest: true), "dev", DeploymentTargetType.Compose, _target, _dir)
+        { State = state });
+
+        for (var i = 0; i < 3; i++)
+        {
+            await runner.RunAsync(_manifest, new DeploymentRunOptions { Publish = false }, Ct);
+        }
+
+        (await ReleaseLog.ListAsync(state, limit: 100, ct: Ct)).Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task History_keep_minus_one_records_nothing()
+    {
+        await using var state = new StateSession(_dir, "dev", new StateBackendConfig { History = { Keep = ReleaseLog.Disabled } });
+        var config = TaggedConfig(withDigest: false);
+        _target.WhenForAnyArgs(t => t.PublishAsync(default!, default!, default!, default))
+            .Do(_ => config.PublishedImages.Record("localhost:5000/api", "abc123", ApiDigest, DateTimeOffset.UtcNow));
+        var runner = new DeploymentRunner(new DeploymentSession(
+            Substitute.For<IServiceProvider>(), config, "dev", DeploymentTargetType.Compose, _target, _dir)
+        { State = state });
+
+        var result = await runner.RunAsync(_manifest, new DeploymentRunOptions(), Ct);
+
+        result.Outcome.ShouldBe(DeploymentRunOutcome.Deployed);
+        (await state.Backend.ListAsync(ReleaseLog.Prefix(state), Ct)).ShouldBeEmpty("neither the publish nor the deploy is recorded");
+    }
+
     // ── RequireSignature ──────────────────────────────────────────────────────
 
     private const string ApiImage = "localhost:5000/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";

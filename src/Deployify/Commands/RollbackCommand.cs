@@ -3,6 +3,7 @@ using System.CommandLine;
 using System.Linq;
 using System.Threading;
 using Deployify.Core.Interfaces;
+using Deployify.Core.Models;
 using Deployify.Core.Rollouts;
 using Spectre.Console;
 
@@ -152,6 +153,15 @@ public static class RollbackCommand
                 journal.Record.State = ok ? RolloutState.RolledBack : RolloutState.RollbackFailed;
                 journal.Record.FinishedAt = DateTimeOffset.UtcNow;
                 await journal.SaveAsync(CancellationToken.None);
+
+                var names = string.Join(", ", services.Select(s => s.Name));
+                await resolved.RecordReleaseAsync(ReleaseKind.Rollback, ok ? ReleaseOutcome.Succeeded : ReleaseOutcome.Failed,
+                    manifest: null, rolloutId: record.Id,
+                    summary: ok
+                        ? $"Undid rollout {record.Id}: {names} restored."
+                        : $"Rollback of rollout {record.Id} did not complete: " +
+                          string.Join(", ", services.Where(s => s.State == ServiceRolloutState.RollbackFailed).Select(s => s.Name)),
+                    ct: CancellationToken.None);
 
                 AnsiConsole.WriteLine();
                 if (ok)

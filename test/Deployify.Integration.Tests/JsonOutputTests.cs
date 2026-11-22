@@ -24,14 +24,14 @@ using Xunit;
 namespace Deployify.Integration.Tests;
 
 /// <summary>
-/// <c>--output json</c> on plan, diff, status, explain and promote: stdout holds exactly one
+/// <c>--output json</c> on plan, diff, status, explain, promote and history: stdout holds exactly one
 /// document, it matches the published schema, and it says what the text output says.
 /// </summary>
 /// <remarks>In the console collection: JSON output points the global console at stderr while a command runs.</remarks>
 [Collection(nameof(ConsoleOutput))]
 public sealed class JsonOutputTests
 {
-    private static readonly string[] JsonCommands = ["plan", "diff", "status", "explain", "promote"];
+    private static readonly string[] JsonCommands = ["plan", "diff", "status", "explain", "promote", "history"];
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -417,6 +417,96 @@ public sealed class JsonOutputTests
 
         var run = await RunJsonAsync("status", "--project-path", dir.Path, "--limit", "1");
         run.Result.GetProperty("rollouts").EnumerateArray().Single().GetProperty("id").GetString().ShouldBe(newest);
+    }
+
+    // ── history ───────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task History_WithoutReleases_ListsNone()
+    {
+        using var dir = new TempDir();
+        await Harness.WriteEcsStateAsync(dir.Path, ct: Ct);
+
+        var run = await RunJsonAsync("history", "--project-path", dir.Path);
+
+        run.ExitCode.ShouldBe(0);
+        run.Result.GetProperty("releases").GetArrayLength().ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task History_ListsReleases_NewestFirst_AndLimitsThem()
+    {
+        using var dir = new TempDir();
+        await Harness.WriteEcsStateAsync(dir.Path, ct: Ct);
+        var t0 = new DateTimeOffset(2026, 11, 22, 9, 0, 0, TimeSpan.Zero);
+        await using (var state = new StateSession(dir.Path, "local", null))
+        {
+            await ReleaseLog.AppendAsync(state, new ReleaseRecord
+            {
+                Id = "publish00001", Kind = ReleaseKind.Publish, Environment = "local", At = t0,
+                Images = [new ReleaseImage("api", "reg/api", "4f2c9e1", ApiDigest)],
+                Tag = "4f2c9e1", Commit = "4f2c9e1a7b3d", Actor = "lv3rmeulen", ActorSource = "GITHUB_ACTOR",
+                RunUrl = "https://github.com/acme/shop/actions/runs/42", DeployifyVersion = "1.1.0"
+            }, ct: Ct);
+            await ReleaseLog.AppendAsync(state, new ReleaseRecord
+            {
+                Id = "rollback0001", Kind = ReleaseKind.Rollback, Environment = "local", At = t0.AddMinutes(5),
+                RolloutId = "20261122-090100-local", Summary = "Undid rollout 20261122-090100-local: api restored."
+            }, ct: Ct);
+        }
+
+        var run = await RunJsonAsync("history", "--project-path", dir.Path);
+
+        var releases = run.Result.GetProperty("releases").EnumerateArray().ToList();
+        releases.Select(r => r.GetProperty("id").GetString()).ShouldBe(["rollback0001", "publish00001"]);
+
+        var rollback = releases[0];
+        rollback.GetProperty("kind").GetString().ShouldBe("rollback");
+        rollback.GetProperty("outcome").GetString().ShouldBe("succeeded");
+        rollback.GetProperty("rolloutId").GetString().ShouldBe("20261122-090100-local");
+        rollback.GetProperty("tag").ValueKind.ShouldBe(JsonValueKind.Null);
+        rollback.GetProperty("images").GetArrayLength().ShouldBe(0);
+
+        var publish = releases[1];
+        publish.GetProperty("kind").GetString().ShouldBe("publish");
+        publish.GetProperty("commit").GetString().ShouldBe("4f2c9e1a7b3d");
+        publish.GetProperty("actor").GetString().ShouldBe("lv3rmeulen");
+        publish.GetProperty("runUrl").GetString().ShouldBe("https://github.com/acme/shop/actions/runs/42");
+        var image = publish.GetProperty("images").EnumerateArray().Single();
+        image.GetProperty("service").GetString().ShouldBe("api");
+        image.GetProperty("digest").GetString().ShouldBe(ApiDigest);
+
+        var limited = await RunJsonAsync("history", "--project-path", dir.Path, "--limit", "1");
+        limited.Result.GetProperty("releases").EnumerateArray().Single().GetProperty("id").GetString().ShouldBe("rollback0001");
+    }
+
+    [Fact]
+    public async Task Promote_RecordsARelease_WithTheSourcesCommit()
+    {
+        using var dir = new TempDir();
+        await WritePromotableStateAsync(dir.Path, ("api", ApiDigest), ("worker", WorkerDigest));
+        await using (var staging = new StateSession(dir.Path, "staging", null))
+        {
+            await ReleaseLog.AppendAsync(staging, new ReleaseRecord
+            {
+                Id = "publish00001", Kind = ReleaseKind.Publish, Environment = "staging",
+                At = DateTimeOffset.UtcNow.AddMinutes(-5), Tag = "v1.0.0", Commit = "4f2c9e1a7b3d"
+            }, ct: Ct);
+        }
+
+        (await RunJsonAsync("promote", "--project-path", dir.Path, "--from", "staging", "--to", "prod")).ExitCode.ShouldBe(0);
+        // Nothing new to record the second time, so no second release.
+        (await RunJsonAsync("promote", "--project-path", dir.Path, "--from", "staging", "--to", "prod")).ExitCode.ShouldBe(0);
+
+        var run = await RunJsonAsync("history", "--project-path", dir.Path, "--env", "prod");
+        var release = run.Result.GetProperty("releases").EnumerateArray().Single();
+        release.GetProperty("kind").GetString().ShouldBe("promote");
+        release.GetProperty("fromEnvironment").GetString().ShouldBe("staging");
+        release.GetProperty("tag").GetString().ShouldBe("v1.0.0");
+        release.GetProperty("commit").GetString().ShouldBe("4f2c9e1a7b3d");
+        release.GetProperty("images").EnumerateArray()
+            .Select(i => (i.GetProperty("service").GetString(), i.GetProperty("digest").GetString()))
+            .ShouldBe([("api", ApiDigest), ("worker", WorkerDigest)]);
     }
 
     // ── promote ───────────────────────────────────────────────────────────────
