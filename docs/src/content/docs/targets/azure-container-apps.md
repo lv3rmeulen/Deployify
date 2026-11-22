@@ -35,3 +35,5 @@ Generates Container App spec JSON files and deploys via the Azure CLI.
 Init flags: `--aca-subscription`, `--aca-resource-group`, `--aca-location`, `--aca-environment`, `--aca-acr`
 
 Requires the [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/) on `PATH`.
+
+Canary and blue-green run the app in multiple-revision mode and split traffic between revisions by exact percentages; the candidate is reachable at its `candidate` label. See [canary and blue-green rollouts](/Deployify/guides/rollout-strategies/).

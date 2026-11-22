@@ -28,11 +28,24 @@ public static class HealthGate
     /// <paramref name="timeout"/> returns <see cref="GateOutcome.TimedOut"/>; cancelling
     /// <paramref name="ct"/> throws. A failing or slow observation counts as "still progressing".
     /// </summary>
-    public static async Task<GateResult> WaitAsync(
+    public static Task<GateResult> WaitAsync(
         IRolloutTarget target,
         EnvironmentConfig config,
         string service,
         string revision,
+        TimeSpan timeout,
+        RolloutOptions options,
+        Action<HealthObservation>? onObservation = null,
+        CancellationToken ct = default)
+        => WaitAsync(probe => target.ObserveAsync(config, service, revision, probe), timeout, options, onObservation, ct);
+
+    /// <summary>
+    /// Polls <paramref name="observe"/> (one look, cancelled after <see cref="RolloutOptions.ProbeTimeout"/>)
+    /// until it has been healthy <see cref="RolloutOptions.RequiredSuccesses"/> times in a row,
+    /// fails, or <paramref name="timeout"/> passes. Cancelling <paramref name="ct"/> throws.
+    /// </summary>
+    public static async Task<GateResult> WaitAsync(
+        Func<CancellationToken, Task<HealthObservation>> observe,
         TimeSpan timeout,
         RolloutOptions options,
         Action<HealthObservation>? onObservation = null,
@@ -48,7 +61,7 @@ public static class HealthGate
         {
             while (true)
             {
-                var observation = await ObserveOnceAsync(target, config, service, revision, options, deadline.Token);
+                var observation = await ObserveOnceAsync(observe, options, deadline.Token);
                 last = observation;
                 onObservation?.Invoke(observation);
 
@@ -81,15 +94,66 @@ public static class HealthGate
         }
     }
 
+    /// <summary>
+    /// Watches a revision that is already healthy for <paramref name="duration"/> (a canary step's
+    /// pause, a blue-green delay). It must stay healthy: a failed observation, or
+    /// <see cref="RolloutOptions.RequiredSuccesses"/> unhealthy ones in a row, ends the watch with
+    /// that result. Returns a <see cref="GateOutcome.Healthy"/> result when the time is up.
+    /// Cancelling <paramref name="ct"/> throws.
+    /// </summary>
+    public static async Task<GateResult> WatchAsync(
+        Func<CancellationToken, Task<HealthObservation>> observe,
+        TimeSpan duration,
+        RolloutOptions options,
+        Action<HealthObservation>? onObservation = null,
+        CancellationToken ct = default)
+    {
+        var until = DateTimeOffset.UtcNow + duration;
+        var tolerated = Math.Max(1, options.RequiredSuccesses);
+        var unhealthy = 0;
+        HealthObservation? last = null;
+
+        while (true)
+        {
+            var left = until - DateTimeOffset.UtcNow;
+            if (left <= TimeSpan.Zero)
+            {
+                return new GateResult(GateOutcome.Healthy, last?.Detail);
+            }
+
+            await Task.Delay(left < options.PollInterval ? left : options.PollInterval, ct);
+            var observation = await ObserveOnceAsync(observe, options, ct);
+            last = observation;
+            onObservation?.Invoke(observation);
+
+            switch (observation.State)
+            {
+                case HealthState.Failed:
+                    return new GateResult(GateOutcome.Failed, observation.Detail);
+                case HealthState.RevertedByPlatform:
+                    return new GateResult(GateOutcome.RevertedByPlatform, observation.Detail, observation.Revision);
+                case HealthState.Healthy:
+                    unhealthy = 0;
+                    break;
+                default:
+                    if (++unhealthy >= tolerated)
+                    {
+                        return new GateResult(GateOutcome.Failed, $"stopped being healthy: {observation.Detail ?? "no detail"}");
+                    }
+
+                    break;
+            }
+        }
+    }
+
     private static async Task<HealthObservation> ObserveOnceAsync(
-        IRolloutTarget target, EnvironmentConfig config, string service, string revision,
-        RolloutOptions options, CancellationToken deadline)
+        Func<CancellationToken, Task<HealthObservation>> observe, RolloutOptions options, CancellationToken deadline)
     {
         using var probe = CancellationTokenSource.CreateLinkedTokenSource(deadline);
         probe.CancelAfter(options.ProbeTimeout);
         try
         {
-            return await target.ObserveAsync(config, service, revision, probe.Token);
+            return await observe(probe.Token);
         }
         catch (OperationCanceledException) when (!deadline.IsCancellationRequested)
         {

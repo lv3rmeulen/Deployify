@@ -51,7 +51,8 @@ public sealed class EcsTaskDefinitionGenerator
                 Cpu = ecsConfig.DefaultCpu,
                 Memory = ecsConfig.DefaultMemory,
                 IsProjectService = resource.IsProject,
-                Dependencies = resource.References?.Select(r => r.Name).ToList() ?? []
+                Dependencies = resource.References?.Select(r => r.Name).ToList() ?? [],
+                Rollout = RolloutStrategies.For(config, name)
             };
 
             svc.Image = ServiceImage.For(name, resource, config);

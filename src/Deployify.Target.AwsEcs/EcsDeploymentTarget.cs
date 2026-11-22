@@ -33,7 +33,8 @@ namespace Deployify.Target.AwsEcs;
 /// </summary>
 public sealed class EcsDeploymentTarget(
     IPublisher publisher,
-    ILogger<EcsDeploymentTarget> logger) : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget, IResourceLifecycle, IServiceLogSource
+    ILogger<EcsDeploymentTarget> logger)
+    : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget, IRolloutStrategyTarget, IResourceLifecycle, IServiceLogSource
 {
     private readonly EcsTaskDefinitionGenerator _generator = new();
 
@@ -62,6 +63,7 @@ public sealed class EcsDeploymentTarget(
         foreach (var svc in services ?? Enumerable.Empty<EcsService>())
         {
             client.ServicePorts[svc.Name] = [.. svc.PortMappings.Select(p => (p.Name, p.ContainerPort))];
+            client.ServiceStrategies[svc.Name] = svc.Rollout;
         }
 
         return client;
@@ -400,7 +402,10 @@ public sealed class EcsDeploymentTarget(
     {
         var cfg = GetConfig(config);
         var status = await ClientFor(cfg).DescribeServiceAsync(service, ct);
-        return EcsRolloutHealth.Evaluate(status, revision, cfg.DeploymentCircuitBreaker);
+        // ECS's canary, linear and blue-green deployments roll back by themselves too.
+        var platformRollsBack = cfg.DeploymentCircuitBreaker ||
+                                status?.Strategy is { } strategy && !strategy.Equals("ROLLING", StringComparison.OrdinalIgnoreCase);
+        return EcsRolloutHealth.Evaluate(status, revision, platformRollsBack);
     }
 
     public async Task<string?> RestoreAsync(EnvironmentConfig config, ServiceSnapshot snapshot, CancellationToken ct = default)
@@ -434,6 +439,19 @@ public sealed class EcsDeploymentTarget(
 
     public Task<bool> HasNativeRollbackAsync(EnvironmentConfig config, CancellationToken ct = default)
         => Task.FromResult(GetConfig(config).DeploymentCircuitBreaker);
+
+    // ── Canary and blue-green: ECS's own deployment strategies ────────────────
+
+    public RolloutStrategyMode StrategyMode => RolloutStrategyMode.Native;
+
+    public async Task<string?> GetStrategyUnsupportedReasonAsync(
+        AspireManifest manifest, EnvironmentConfig config, string service, RolloutStrategy strategy, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var svc = (await _generator.GenerateAsync(manifest, config, cfg, ct)).FirstOrDefault(s => s.Name == service);
+        var serviceConnect = cfg.ServiceConnectNamespace is not null && svc is { PortMappings.Count: > 0 };
+        return EcsStrategies.UnsupportedReason(strategy, serviceConnect);
+    }
 
     private const string DesiredCountKey = "desiredCount";
     private const string SsmVersionsKey = "ssmVersions";

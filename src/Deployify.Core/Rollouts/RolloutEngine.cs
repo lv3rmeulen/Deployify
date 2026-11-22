@@ -41,6 +41,16 @@ public sealed class RolloutEngine
         var (target, rollout, manifest, config, options) =
             (request.Target, request.Rollout, request.Manifest, request.Config, request.Options);
 
+        // Strategies are checked before the lock is taken or anything changes.
+        var strategyErrors = await RolloutStrategyCheck.CheckAsync(target, manifest, config, healthGate: true, ct);
+        if (strategyErrors.Count > 0)
+        {
+            throw new InvalidOperationException(string.Join(" ", strategyErrors));
+        }
+
+        var strategyMode = target.GetCapability<IRolloutStrategyTarget>()?.StrategyMode;
+        var shifter = strategyMode == RolloutStrategyMode.Driven ? target.GetCapability<ITrafficShiftingTarget>() : null;
+
         var explanations = await target.ExplainAsync(manifest, config, ct);
         var waves = RolloutPlanner.Waves(
             explanations.Select(e => e.Name), await target.GetDependenciesAsync(manifest, config, ct));
@@ -80,15 +90,35 @@ public sealed class RolloutEngine
                 Report(RolloutProgressKind.Info, null, $"Wave {i + 1}/{waves.Count}: {string.Join(", ", wave)}");
 
                 var deployed = new List<ServiceRolloutRecord>();
+                var progressive = new List<(ServiceRolloutRecord Service, RolloutStrategy Strategy)>();
                 foreach (var name in wave)
                 {
                     var svc = record.Service(name);
+                    var strategy = RolloutStrategies.For(config, name);
                     svc.Snapshot = await rollout.CaptureAsync(manifest, config, name, ct);
                     svc.State = ServiceRolloutState.Deploying;
                     touched.Add(svc);
                     await journal.LogAsync(name, svc.Snapshot.Existed
                         ? $"previous revision: {svc.Snapshot.Revision ?? "(unknown)"}"
                         : "new service");
+
+                    if (strategy.IsProgressive)
+                    {
+                        svc.Strategy = strategy.Describe();
+                        if (shifter is not null && svc.Snapshot.Existed)
+                        {
+                            // Run after this wave's other services are healthy, one at a time.
+                            progressive.Add((svc, strategy));
+                            continue;
+                        }
+
+                        if (shifter is not null)
+                        {
+                            var note = $"new service: deployed directly, {RolloutStrategyCheck.Name(strategy.Kind)} applies from its next deploy";
+                            await journal.LogAsync(name, note);
+                            Report(RolloutProgressKind.Info, name, note);
+                        }
+                    }
 
                     var applied = await rollout.ApplyServiceAsync(manifest, config, request.OutputDirectory, name, ct);
                     svc.Revision = applied.Revision;
@@ -109,6 +139,13 @@ public sealed class RolloutEngine
 
                 if (failure is not null)
                 {
+                    foreach (var (waiting, _) in progressive)
+                    {
+                        // Captured but never started: nothing changed, nothing to restore.
+                        touched.Remove(waiting);
+                        waiting.State = ServiceRolloutState.Pending;
+                    }
+
                     break;
                 }
 
@@ -118,9 +155,17 @@ public sealed class RolloutEngine
                     await journal.SaveAsync();
                     Report(RolloutProgressKind.Info, svc.Name, "waiting for health");
 
+                    // A strategy the platform runs itself takes its pauses on top of the health timeout.
+                    var timeout = options.HealthTimeout;
+                    if (strategyMode == RolloutStrategyMode.Native && RolloutStrategies.For(config, svc.Name) is { IsProgressive: true } native)
+                    {
+                        timeout += native.WaitTime;
+                        Report(RolloutProgressKind.Info, svc.Name, $"{native.Describe()}, run by {target.DisplayName}");
+                    }
+
                     string? lastDetail = null;
                     var gate = await HealthGate.WaitAsync(rollout, config, svc.Name, svc.Revision!,
-                        options.HealthTimeout, options,
+                        timeout, options,
                         obs =>
                         {
                             if (obs.Detail is { } d && d != lastDetail)
@@ -158,6 +203,19 @@ public sealed class RolloutEngine
                     Report(RolloutProgressKind.Error, svc.Name, failure);
                     break;
                 }
+
+                foreach (var (svc, strategy) in progressive)
+                {
+                    if (failure is not null)
+                    {
+                        // Captured but never started: nothing changed, nothing to restore.
+                        touched.Remove(svc);
+                        svc.State = ServiceRolloutState.Pending;
+                        continue;
+                    }
+
+                    failure = await ProgressAsync(svc, strategy);
+                }
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -169,6 +227,167 @@ public sealed class RolloutEngine
         {
             failure = ex.Message;
             Report(RolloutProgressKind.Error, null, ex.Message);
+        }
+
+        async Task<string?> ProgressAsync(ServiceRolloutRecord svc, RolloutStrategy strategy)
+        {
+            var name = svc.Name;
+            var kind = RolloutStrategyCheck.Name(strategy.Kind);
+            Report(RolloutProgressKind.Info, name, $"{strategy.Describe()}: starting the new version next to {svc.Snapshot!.Revision}");
+
+            var started = await shifter!.StartCandidateAsync(manifest, config, request.OutputDirectory, name, strategy, svc.Snapshot, ct);
+            if (!started.Success || started.Revision is null)
+            {
+                return await FailAsync(svc, $"{kind} candidate failed to start: {started.Error ?? "the target reported no revision"}");
+            }
+
+            svc.Candidate = started.Revision;
+            svc.Revision = started.Revision;
+            svc.PreviewUrl = started.PreviewUrl;
+            svc.TrafficPercent = 0;
+            await journal.LogAsync(name, $"candidate {started.Revision} started" +
+                                         (started.PreviewUrl is { } url ? $", preview at {url}" : ""));
+            Report(RolloutProgressKind.Info, name, $"candidate {started.Revision} started");
+            if (started.PreviewUrl is { } preview)
+            {
+                Report(RolloutProgressKind.Info, name, $"preview: {preview}");
+            }
+
+            svc.State = ServiceRolloutState.Verifying;
+            if (await GateCandidateAsync(svc, "waiting for the candidate to become healthy") is { } notHealthy)
+            {
+                return notHealthy;
+            }
+
+            if (strategy.Kind == RolloutStrategyKind.Canary)
+            {
+                for (var i = 0; i < strategy.Steps.Count; i++)
+                {
+                    var step = strategy.Steps[i];
+                    var share = shifter.Precision == TrafficPrecision.Fixed && i > 0 && svc.TrafficPercent is { } fixedShare
+                        ? fixedShare
+                        : await shifter.ShiftTrafficAsync(config, name, started.Revision, step.Weight, ct);
+                    svc.TrafficPercent = share;
+                    var message = $"step {i + 1}/{strategy.Steps.Count}: {share}% of the traffic" +
+                                  (share != step.Weight ? $" (asked for {step.Weight}%)" : "") +
+                                  $" for {Durations.Format(step.Pause)}";
+                    await journal.LogAsync(name, message);
+                    Report(RolloutProgressKind.Info, name, message);
+
+                    if ((await GateCandidateAsync(svc, null) ?? await WatchCandidateAsync(svc, step.Pause)) is { } failed)
+                    {
+                        return failed;
+                    }
+                }
+            }
+            else
+            {
+                if (strategy.PreviewPause > TimeSpan.Zero)
+                {
+                    var message = $"previewing for {Durations.Format(strategy.PreviewPause)} before the switch";
+                    await journal.LogAsync(name, message);
+                    Report(RolloutProgressKind.Info, name, message);
+                    if (await WatchCandidateAsync(svc, strategy.PreviewPause) is { } failed)
+                    {
+                        return failed;
+                    }
+                }
+
+                svc.TrafficPercent = await shifter.ShiftTrafficAsync(config, name, started.Revision, 100, ct);
+                var switched = $"switched {svc.TrafficPercent}% of the traffic to the candidate; keeping the old version for " +
+                               Durations.Format(strategy.ScaleDownDelay);
+                await journal.LogAsync(name, switched);
+                Report(RolloutProgressKind.Info, name, switched);
+                if ((await GateCandidateAsync(svc, null) ?? await WatchCandidateAsync(svc, strategy.ScaleDownDelay)) is { } failed2)
+                {
+                    return failed2;
+                }
+            }
+
+            Report(RolloutProgressKind.Info, name, "promoting the candidate");
+            var promoted = await shifter.PromoteAsync(manifest, config, request.OutputDirectory, name, started.Revision, ct);
+            await journal.LogAsync(name, $"promoted {started.Revision}" + (promoted is not null && promoted != started.Revision ? $" as {promoted}" : ""));
+            if (promoted is not null)
+            {
+                svc.Revision = promoted;
+                var gate = await HealthGate.WaitAsync(rollout, config, name, promoted, options.HealthTimeout, options, ct: ct);
+                if (gate.Outcome != GateOutcome.Healthy)
+                {
+                    return await FailAsync(svc, $"promoted revision {promoted} did not become healthy: {gate.Detail}");
+                }
+            }
+
+            svc.TrafficPercent = 100;
+            svc.State = ServiceRolloutState.Healthy;
+            svc.Detail = null;
+            await journal.LogAsync(name, "healthy");
+            Report(RolloutProgressKind.Success, name, $"healthy ({kind} complete)");
+
+            try
+            {
+                await shifter.FinishAsync(config, name, started.Revision, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                var warning = $"{name}: clean-up after the {kind} rollout failed: {ex.Message}";
+                warnings.Add(warning);
+                Report(RolloutProgressKind.Warning, name, warning);
+                await journal.LogAsync(name, warning);
+            }
+
+            return null;
+        }
+
+        async Task<string?> GateCandidateAsync(ServiceRolloutRecord svc, string? waiting)
+        {
+            await journal.SaveAsync();
+            if (waiting is not null)
+            {
+                Report(RolloutProgressKind.Info, svc.Name, waiting);
+            }
+
+            string? lastDetail = null;
+            var gate = await HealthGate.WaitAsync(
+                probe => shifter!.ObserveCandidateAsync(config, svc.Name, svc.Candidate!, probe),
+                options.HealthTimeout, options,
+                obs =>
+                {
+                    if (obs.Detail is { } d && d != lastDetail)
+                    {
+                        lastDetail = d;
+                        Report(RolloutProgressKind.Info, svc.Name, d);
+                    }
+                },
+                ct);
+            return gate.Outcome == GateOutcome.Healthy
+                ? null
+                : await FailAsync(svc, gate.Outcome == GateOutcome.TimedOut
+                    ? $"candidate {gate.Detail}"
+                    : $"candidate unhealthy: {gate.Detail}");
+        }
+
+        async Task<string?> WatchCandidateAsync(ServiceRolloutRecord svc, TimeSpan duration)
+        {
+            if (duration <= TimeSpan.Zero)
+            {
+                return null;
+            }
+
+            var watch = await HealthGate.WatchAsync(
+                probe => shifter!.ObserveCandidateAsync(config, svc.Name, svc.Candidate!, probe), duration, options, ct: ct);
+            return watch.Outcome == GateOutcome.Healthy
+                ? null
+                : await FailAsync(svc, $"candidate unhealthy at {svc.TrafficPercent ?? 0}% of the traffic: {watch.Detail}");
+        }
+
+        async Task<string> FailAsync(ServiceRolloutRecord svc, string detail)
+        {
+            svc.State = ServiceRolloutState.Failed;
+            svc.Detail = detail;
+            var message = $"{svc.Name}: {detail}";
+            await journal.LogAsync(svc.Name, message);
+            Report(RolloutProgressKind.Error, svc.Name, detail);
+            return message;
         }
 
         if (failure is null)

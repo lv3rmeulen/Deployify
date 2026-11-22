@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -336,6 +337,60 @@ public sealed class AcaCliClient(AcaTargetConfig config, ILogger logger, IProces
         {
             throw new InvalidOperationException(
                 $"Failed to copy revision '{fromRevision}' of '{appName}': {output.Trim()}");
+        }
+    }
+
+    // ── Canary and blue-green ────────────────────────────────────────────────
+
+    /// <summary>Sets the ingress traffic split (<c>az containerapp ingress traffic set --revision-weight</c>).</summary>
+    public async Task SetTrafficAsync(string appName, IReadOnlyDictionary<string, int> weights, CancellationToken ct = default)
+    {
+        var (exit, output) = await RunAsync(BuildArgs(
+        [
+            "containerapp", "ingress", "traffic", "set", "--name", appName, "--resource-group", config.ResourceGroup,
+            "--revision-weight", .. weights.Select(w => $"{w.Key}={w.Value.ToString(CultureInfo.InvariantCulture)}"),
+            "--output", "none"
+        ]), ct);
+        if (exit != 0)
+        {
+            throw new InvalidOperationException($"Failed to set the traffic of '{appName}': {output.Trim()}");
+        }
+    }
+
+    /// <summary>Gives <paramref name="revision"/> a label, which makes it reachable at <c>{app}---{label}.…</c>.</summary>
+    public async Task AddLabelAsync(string appName, string label, string revision, CancellationToken ct = default)
+    {
+        var (exit, output) = await RunAsync(BuildArgs(
+            "containerapp", "revision", "label", "add", "--name", appName, "--resource-group", config.ResourceGroup,
+            "--label", label, "--revision", revision, "--no-prompt", "--yes", "--output", "none"), ct);
+        if (exit != 0)
+        {
+            throw new InvalidOperationException($"Failed to label revision '{revision}' of '{appName}': {output.Trim()}");
+        }
+    }
+
+    /// <summary>Removes a label; a label that isn't there is not an error.</summary>
+    public async Task RemoveLabelAsync(string appName, string label, CancellationToken ct = default)
+    {
+        var (exit, output) = await RunAsync(BuildArgs(
+            "containerapp", "revision", "label", "remove", "--name", appName, "--resource-group", config.ResourceGroup,
+            "--label", label, "--output", "none"), ct);
+        if (exit != 0 && !output.Contains("not found", StringComparison.OrdinalIgnoreCase) &&
+            !output.Contains("does not exist", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"Failed to remove label '{label}' of '{appName}': {output.Trim()}");
+        }
+    }
+
+    /// <summary>Deactivates a revision: it stops running but can still be copied or activated again.</summary>
+    public async Task DeactivateRevisionAsync(string appName, string revision, CancellationToken ct = default)
+    {
+        var (exit, output) = await RunAsync(BuildArgs(
+            "containerapp", "revision", "deactivate", "--name", appName, "--resource-group", config.ResourceGroup,
+            "--revision", revision, "--output", "none"), ct);
+        if (exit != 0)
+        {
+            throw new InvalidOperationException($"Failed to deactivate revision '{revision}' of '{appName}': {output.Trim()}");
         }
     }
 

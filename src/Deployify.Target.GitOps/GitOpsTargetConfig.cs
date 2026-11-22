@@ -97,4 +97,7 @@ public sealed class FluxTargetConfig
 
     /// <summary>Delete objects that are no longer in the repository.</summary>
     public bool Prune { get; set; } = true;
+
+    /// <summary>Flagger, for services with a canary or blue-green rollout strategy.</summary>
+    public FlaggerConfig Flagger { get; set; } = new();
 }

@@ -106,6 +106,19 @@ public sealed class DeploymentRunner(DeploymentSession session)
             return Failed(summary);
         }
 
+        // ── Rollout strategies ─────────────────────────────────────────────────
+        // A canary or blue-green that can't run stops the deploy before anything is published.
+        var strategyErrors = await RolloutStrategyCheck.CheckAsync(target, manifest, config, options.HealthGate, ct);
+        if (strategyErrors.Count > 0)
+        {
+            foreach (var error in strategyErrors)
+            {
+                Reporter.Error(error);
+            }
+
+            return Failed(string.Join(" ", strategyErrors));
+        }
+
         // ── Digest check ───────────────────────────────────────────────────────
         var publishes = options.Publish && manifest.Resources.Values.Any(r => r.IsBuiltImage);
         if (options.RequireDigest && !publishes && ImagePromotion.Unpinned(manifest, config) is { Count: > 0 } unpinned)

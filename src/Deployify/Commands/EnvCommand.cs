@@ -13,6 +13,7 @@ using Deployify.Core.Services;
 using Deployify.Core.State;
 using Deployify.Target.AwsEcs;
 using Deployify.Target.AzureContainerApps;
+using Deployify.Target.CloudRun;
 using Deployify.Target.Compose;
 using Deployify.Target.GitOps;
 using Deployify.Target.Helm;
@@ -665,6 +666,8 @@ public static class EnvCommand
                 ("ovhcloud", new OvhCloudTargetConfig { Endpoint = "ovh-eu" })),
             // Deploys to this machine until iis.host is set.
             DeploymentTargetType.Names.Iis => Sections(("iis", new IisTargetConfig())),
+            // Set cloudrun.projectId before applying.
+            DeploymentTargetType.Names.CloudRun => Sections(("cloudrun", new CloudRunTargetConfig())),
             _ => []
         };
 
@@ -712,7 +715,8 @@ public static class EnvCommand
         [DeploymentTargetType.Names.ArgoCd] = ("gitops", "repoUrl", "-"),
         [DeploymentTargetType.Names.Flux] = ("gitops", "repoUrl", "-"),
         [DeploymentTargetType.Names.OvhCloud] = ("ovhcloud", "clusterId", "-"),
-        [DeploymentTargetType.Names.Iis] = ("iis", "host", "localhost")
+        [DeploymentTargetType.Names.Iis] = ("iis", "host", "localhost"),
+        [DeploymentTargetType.Names.CloudRun] = ("cloudrun", "region", "-")
     };
 
     internal static string GetDisplayAddress(EnvironmentConfig cfg)

@@ -203,7 +203,7 @@ public sealed class JobGenerator(ILogger<JobGenerator> logger)
                 {
                     Name = job.Name,
                     Count = job.Count,
-                    Update = UpdateStrategy(nc.AutoRevert),
+                    Update = UpdateStrategy(nc.AutoRevert, RolloutStrategies.For(config, job.Name), job.Count),
                     Networks = job.Ports.Count > 0
                         ?
                         [
@@ -215,23 +215,50 @@ public sealed class JobGenerator(ILogger<JobGenerator> logger)
                         ]
                         : null,
                     // Registered at group level so the check addresses the host port directly.
-                    Services = nc.RegisterServices && job.Ports.Count > 0 ? [Service(job, nc)] : null,
+                    Services = nc.RegisterServices && job.Ports.Count > 0
+                        ? [Service(job, nc, RolloutStrategies.For(config, job.Name).IsProgressive)]
+                        : null,
                     Tasks = tasks
                 }
             ]
         };
     }
 
-    /// <summary>The rolling update every Deployify job uses.</summary>
-    public static NomadUpdateStrategy UpdateStrategy(bool autoRevert) => new()
+    /// <summary>
+    /// The update block every Deployify job uses: a rolling update, or for canary and blue-green
+    /// the canaries Deployify promotes itself (see <see cref="CanaryCount"/>).
+    /// </summary>
+    public static NomadUpdateStrategy UpdateStrategy(bool autoRevert, RolloutStrategy? strategy = null, int count = 1) => new()
     {
         MinHealthyTime = NomadDuration.Parse("30s"),
         HealthyDeadline = NomadDuration.Parse("10m"),
         ProgressDeadline = NomadDuration.Parse("15m"),
-        AutoRevert = autoRevert
+        AutoRevert = autoRevert,
+        Canary = strategy is { IsProgressive: true } ? CanaryCount(strategy, count) : null,
+        AutoPromote = strategy is { IsProgressive: true } ? false : null
     };
 
-    private static NomadService Service(NomadJob job, NomadTargetConfig nc)
+    /// <summary>Tag a canary allocation registers its service with, until it is promoted.</summary>
+    public const string CanaryTag = "deployify-canary";
+
+    /// <summary>
+    /// Canaries for a strategy: blue-green starts a full second set; a canary starts enough
+    /// allocations for its first step's weight next to the <paramref name="count"/> running ones
+    /// (c / (count + c), at least one). Nomad can't change the number later, so later steps only wait.
+    /// </summary>
+    public static int CanaryCount(RolloutStrategy strategy, int count)
+    {
+        count = Math.Max(1, count);
+        if (strategy.Kind == RolloutStrategyKind.BlueGreen)
+        {
+            return count;
+        }
+
+        var weight = strategy.Steps.Count > 0 ? strategy.Steps[0].Weight : RolloutStrategy.DefaultCanaryWeight;
+        return Math.Max(1, (int)Math.Ceiling(count * weight / (double)(100 - weight) - 1e-9));
+    }
+
+    private static NomadService Service(NomadJob job, NomadTargetConfig nc, bool canaryTags = false)
     {
         var servicePort = job.Ports.FirstOrDefault(p => p.IsHttp) ?? job.Ports[0];
         var checkType = !servicePort.IsHttp ? "tcp" : nc.HealthCheckType.ToLowerInvariant();
@@ -240,6 +267,7 @@ public sealed class JobGenerator(ILogger<JobGenerator> logger)
             Name = job.Name,
             PortLabel = servicePort.Label,
             Provider = nc.ServiceProvider,
+            CanaryTags = canaryTags ? [CanaryTag] : null,
             Checks = checkType == "none"
                 ? null
                 :

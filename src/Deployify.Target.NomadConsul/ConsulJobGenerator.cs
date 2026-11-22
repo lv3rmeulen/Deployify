@@ -234,7 +234,7 @@ public sealed class ConsulJobGenerator(ILogger<ConsulJobGenerator> logger)
         {
             Name = job.Name,
             Count = job.Count,
-            Update = JobGenerator.UpdateStrategy(cfg.AutoRevert),
+            Update = JobGenerator.UpdateStrategy(cfg.AutoRevert, RolloutStrategies.For(config, job.Name), job.Count),
             // Bridge mode is required for Connect.
             Networks =
             [
@@ -247,12 +247,14 @@ public sealed class ConsulJobGenerator(ILogger<ConsulJobGenerator> logger)
                 }
             ],
             // Consul service + Connect sidecar (one per service).
-            Services = job.Ports.Count > 0 || job.Upstreams.Count > 0 ? [Service(job, cfg)] : null,
+            Services = job.Ports.Count > 0 || job.Upstreams.Count > 0
+                ? [Service(job, cfg, RolloutStrategies.For(config, job.Name).IsProgressive)]
+                : null,
             Tasks = tasks
         };
     }
 
-    private static NomadService Service(ConsulJob job, NomadConsulTargetConfig cfg)
+    private static NomadService Service(ConsulJob job, NomadConsulTargetConfig cfg, bool canaryTags = false)
     {
         NomadServiceCheck? check = null;
         if (cfg.RegisterServices && job.Ports.Count > 0)
@@ -282,6 +284,7 @@ public sealed class ConsulJobGenerator(ILogger<ConsulJobGenerator> logger)
             // Connect proxies to the container port, so register the number itself.
             PortLabel = job.Ports.Count > 0 ? job.Ports[0].ContainerPort.ToString(CultureInfo.InvariantCulture) : null,
             Checks = check is null ? null : [check],
+            CanaryTags = canaryTags ? [JobGenerator.CanaryTag] : null,
             Connect = new NomadConsulConnect
             {
                 SidecarService = new NomadSidecarService

@@ -82,7 +82,7 @@ public sealed class InitCommandSnapshotTests : IDisposable
 
     public static TheoryData<string> Targets => new(
         "Nomad", "Kubernetes", "Compose", "AwsEcs", "AzureContainerApps", "NomadConsul",
-        "Helm", "ArgoCd", "Flux", "OvhCloud", "Iis");
+        "Helm", "ArgoCd", "Flux", "OvhCloud", "Iis", "CloudRun");
 
     /// <summary>Every flag set to a value other than its default, so each one shows up in the snapshot.</summary>
     private const string AllFlags =
@@ -105,6 +105,7 @@ public sealed class InitCommandSnapshotTests : IDisposable
         "--ecs-security-groups sg-1 --ecs-execution-role arn:aws:iam::1:role/exec " +
         "--aca-subscription sub-1 --aca-resource-group shop-rg --aca-location westeurope " +
         "--aca-environment shop-env --aca-acr shop.azurecr.io " +
+        "--cloudrun-project shop-prod --cloudrun-region europe-west1 --cloudrun-service-account run@shop-prod.iam.gserviceaccount.com " +
         "--nc-nomad-address http://nc-nomad:4646 --nc-nomad-token env:NC_NOMAD --nc-nomad-namespace mesh " +
         "--nc-datacenter eu2 --nc-consul-address http://consul:8500 --nc-consul-token env:NC_CONSUL " +
         "--nc-ingress-gateway";
@@ -151,7 +152,7 @@ public sealed class InitCommandSnapshotTests : IDisposable
     private static readonly string[] s_choices =
     [
         "Nomad", "Kubernetes", "Compose", "AwsEcs", "AzureContainerApps", "NomadConsul",
-        "Helm", "ArgoCd", "Flux", "OvhCloud", "Iis"
+        "Helm", "ArgoCd", "Flux", "OvhCloud", "Iis", "CloudRun"
     ];
 
     [Theory]
@@ -244,6 +245,12 @@ public sealed class InitCommandSnapshotTests : IDisposable
                 Text("shop.azurecr.io");
                 break;
 
+            case "CloudRun":
+                Text("shop-prod");
+                Text("europe-west1");
+                Text("run@shop-prod.iam.gserviceaccount.com");
+                break;
+
             case "NomadConsul":
                 Text("http://nc-nomad:4646");
                 Text("mesh");
@@ -292,6 +299,7 @@ public sealed class InitCommandSnapshotTests : IDisposable
             "Compose" => 2,
             "AwsEcs" => 6,
             "AzureContainerApps" => 5,
+            "CloudRun" => 3,
             "NomadConsul" => 7,
             _ => 0
         };

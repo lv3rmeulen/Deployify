@@ -168,3 +168,5 @@ Each site's folder holds a `deployify.json` marker naming its service and enviro
 and `apply --prune` only remove sites with that marker: the site, its application pool, its
 settings in `applicationHost.config`, and its folder with every release and its saved settings. Sites you created by hand,
 IIS itself and the Hosting Bundle are never touched.
+
+Only the `Rolling` strategy is available: there's no traffic splitting on one host. See [canary and blue-green rollouts](/Deployify/guides/rollout-strategies/).

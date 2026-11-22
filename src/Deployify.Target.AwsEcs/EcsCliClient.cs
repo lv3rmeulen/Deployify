@@ -594,10 +594,49 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger, IProces
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
-    private string[] CircuitBreakerArgs()
-        => config.DeploymentCircuitBreaker
-            ? ["--deployment-configuration", "deploymentCircuitBreaker={enable=true,rollback=true}"]
-            : [];
+    /// <summary>The rollout strategy of each service being deployed; services not listed keep the one they have.</summary>
+    public Dictionary<string, Deployify.Core.Models.RolloutStrategy> ServiceStrategies { get; } = [];
+
+    /// <summary>
+    /// <c>--deployment-configuration</c> for a service: ECS's own canary, linear or blue-green
+    /// strategy, or a rolling update with the circuit breaker (which ECS only allows for rolling).
+    /// A service going back to rolling gets <c>strategy=ROLLING</c>. A service whose strategy
+    /// isn't known (a restore) keeps the strategy it has.
+    /// </summary>
+    private async Task<string[]> DeploymentConfigurationArgsAsync(string serviceName, bool exists, CancellationToken ct)
+    {
+        string? live = null;
+        if (exists)
+        {
+            try
+            {
+                live = (await DescribeServiceAsync(serviceName, ct))?.Strategy;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogDebug("Could not read the deployment strategy of {Service}: {Message}", serviceName, ex.Message);
+            }
+        }
+
+        var liveIsRolling = live is null || live.Equals("ROLLING", StringComparison.OrdinalIgnoreCase);
+        if (!ServiceStrategies.TryGetValue(serviceName, out var desired))
+        {
+            return liveIsRolling ? CircuitBreakerArgs([]) : [];
+        }
+
+        if (desired.IsProgressive)
+        {
+            return ["--deployment-configuration", EcsStrategies.Shorthand(desired)];
+        }
+
+        return CircuitBreakerArgs(liveIsRolling ? [] : ["strategy=ROLLING"]);
+    }
+
+    private string[] CircuitBreakerArgs(string[] before)
+    {
+        string[] parts = config.DeploymentCircuitBreaker ? [.. before, "deploymentCircuitBreaker={enable=true,rollback=true}"] : before;
+        return parts.Length == 0 ? [] : ["--deployment-configuration", string.Join(',', parts)];
+    }
 
     private async Task<string> CreateServiceAsync(
         string serviceName, string taskDefinitionArn, int desiredCount, CancellationToken ct)
@@ -615,7 +654,7 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger, IProces
             "--launch-type", launchType,
             "--network-configuration", networkConfig,
             .. await ServiceConnectArgsAsync(serviceName, ct),
-            .. CircuitBreakerArgs(),
+            .. await DeploymentConfigurationArgsAsync(serviceName, exists: false, ct),
             "--tags", .. OwnershipTagArgs(),
             "--output", "json"
         ]);
@@ -641,7 +680,7 @@ public sealed class EcsCliClient(EcsTargetConfig config, ILogger logger, IProces
             "--task-definition", taskDefinitionArn,
             "--desired-count", desiredCount.ToString(CultureInfo.InvariantCulture),
             .. await ServiceConnectArgsAsync(serviceName, ct),
-            .. CircuitBreakerArgs(),
+            .. await DeploymentConfigurationArgsAsync(serviceName, exists: true, ct),
             "--output", "json"
         ]);
 

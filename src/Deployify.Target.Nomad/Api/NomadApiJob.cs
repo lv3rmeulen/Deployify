@@ -36,6 +36,12 @@ public sealed class NomadUpdateStrategy
     public required long HealthyDeadline { get; init; }
     public required long ProgressDeadline { get; init; }
     public required bool AutoRevert { get; init; }
+
+    /// <summary>Allocations of a new version started next to the old ones; set for canary and blue-green.</summary>
+    public int? Canary { get; init; }
+
+    /// <summary>Promote canaries without being asked. Always false when <see cref="Canary"/> is set: Deployify promotes.</summary>
+    public bool? AutoPromote { get; init; }
 }
 
 public sealed class NomadNetwork
@@ -60,6 +66,9 @@ public sealed class NomadService
     public string? Provider { get; init; }
     public List<NomadServiceCheck>? Checks { get; init; }
     public NomadConsulConnect? Connect { get; init; }
+
+    /// <summary>Tags of the service while its allocation is an unpromoted canary, so routers can leave it out.</summary>
+    public List<string>? CanaryTags { get; init; }
 }
 
 public sealed class NomadServiceCheck

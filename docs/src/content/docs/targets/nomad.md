@@ -48,3 +48,5 @@ Notes:
   the job is sent to Nomad. If `registryPassword` is empty, `DEPLOYIFY_REGISTRY_PASSWORD` is used.
 - **Ownership.** Generated jobs carry `meta { deployify-managed = "true" }`; `plan` only ever
   proposes deleting jobs with that marker.
+
+Canary and blue-green use Nomad's own canaries, which Deployify promotes once they are healthy. Unpromoted canaries register with the `deployify-canary` tag. See [canary and blue-green rollouts](/Deployify/guides/rollout-strategies/).

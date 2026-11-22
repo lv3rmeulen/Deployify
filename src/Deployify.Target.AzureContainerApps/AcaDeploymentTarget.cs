@@ -30,7 +30,8 @@ namespace Deployify.Target.AzureContainerApps;
 /// </summary>
 public sealed class AcaDeploymentTarget(
     IPublisher publisher,
-    ILogger<AcaDeploymentTarget> logger) : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget, IResourceLifecycle, IServiceLogSource
+    ILogger<AcaDeploymentTarget> logger)
+    : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget, ITrafficShiftingTarget, IResourceLifecycle, IServiceLogSource
 {
     private readonly AcaManifestGenerator _generator = new();
 
@@ -212,9 +213,9 @@ public sealed class AcaDeploymentTarget(
 
     private async Task<DeploymentResult> ApplyOneAsync(
         AcaApp app, EnvironmentConfig config, AcaTargetConfig cfg, AcaCliClient client, string outputDirectory,
-        CancellationToken ct)
+        CancellationToken ct, string? specPathOverride = null)
     {
-        var specPath = Path.Combine(outputDirectory, $"{app.Name}.containerapp.json");
+        var specPath = specPathOverride ?? Path.Combine(outputDirectory, $"{app.Name}.containerapp.json");
         if (!File.Exists(specPath))
         {
             return new DeploymentResult
@@ -457,6 +458,23 @@ public sealed class AcaDeploymentTarget(
         var cfg = GetConfig(config);
         var secretsRestored = await RestoreKeyVaultVersionsAsync(config, cfg, snapshot, ct);
 
+        // During (or right after) a canary or blue-green the old revision still runs: send all
+        // traffic back to it and stop the newer one, instead of copying it into a new revision.
+        if (app.MultipleRevisions && app.LatestRevision is { } newer && newer != previous &&
+            await client.GetRevisionAsync(service, previous, ct) is { Active: true })
+        {
+            await client.SetTrafficAsync(service, new Dictionary<string, int> { [previous] = 100 }, ct);
+            await client.RemoveLabelAsync(service, CandidateLabel, ct);
+            await client.DeactivateRevisionAsync(service, newer, ct);
+            if (secretsRestored && !await client.RestartRevisionAsync(service, previous, ct))
+            {
+                logger.LogWarning("Secrets of {Name} were restored but revision {Revision} could not be restarted.", service, previous);
+            }
+
+            logger.LogInformation("Sent all traffic of {Name} back to {Previous} and deactivated {Newer}.", service, previous, newer);
+            return previous;
+        }
+
         if (app.LatestRevision == previous)
         {
             // The rollout never made a new revision; restart it if its secrets went back.
@@ -478,6 +496,170 @@ public sealed class AcaDeploymentTarget(
 
     public Task<bool> HasNativeRollbackAsync(EnvironmentConfig config, CancellationToken ct = default)
         => Task.FromResult(false);
+
+    // ── Canary and blue-green: revision traffic splits ────────────────────────
+
+    /// <summary>Label that makes a candidate reachable at <c>{app}---candidate.…</c>.</summary>
+    internal const string CandidateLabel = "candidate";
+
+    /// <summary>The revision each running candidate shares the traffic with, from its snapshot.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _stableRevision = new();
+
+    public RolloutStrategyMode StrategyMode => RolloutStrategyMode.Driven;
+
+    public TrafficPrecision Precision => TrafficPrecision.Exact;
+
+    public async Task<string?> GetStrategyUnsupportedReasonAsync(
+        AspireManifest manifest, EnvironmentConfig config, string service, RolloutStrategy strategy, CancellationToken ct = default)
+    {
+        var app = (await _generator.GenerateAsync(manifest, config, GetConfig(config), ct)).FirstOrDefault(a => a.Name == service);
+        return app is not null && (app.IngressType == AcaIngressType.None || !app.Ports.Any(p => p.IsHttp))
+            ? "Container Apps splits traffic at the app's HTTP ingress, and this app has none (no HTTP binding, or ingressType is None)."
+            : null;
+    }
+
+    /// <summary>
+    /// Deploys the new spec with the traffic pinned to the running revision, so the new revision
+    /// starts without traffic, and labels it so it can be tried at <c>{app}---candidate.…</c>.
+    /// </summary>
+    public async Task<AppliedRevision> StartCandidateAsync(
+        AspireManifest manifest, EnvironmentConfig config, string outputDirectory, string service, RolloutStrategy strategy,
+        ServiceSnapshot before, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var app = (await _generator.GenerateAsync(manifest, config, cfg, ct)).FirstOrDefault(a => a.Name == service);
+        var specPath = Path.Combine(outputDirectory, $"{service}.containerapp.json");
+        if (app is null || before.Revision is not { } stable || !File.Exists(specPath))
+        {
+            return new AppliedRevision
+            {
+                ServiceName = service, Success = false,
+                Error = app is null ? "not a Container App in this manifest" : $"App spec not found: {specPath}. Run 'deployify plan' first."
+            };
+        }
+
+        var client = Client(cfg);
+        var candidateSpec = await WriteCandidateSpecAsync(specPath, service, stable, ct);
+        DeploymentResult result;
+        try
+        {
+            result = await ApplyOneAsync(app, config, cfg, client, outputDirectory, ct, candidateSpec);
+        }
+        finally
+        {
+            File.Delete(candidateSpec);
+        }
+
+        if (!result.Success)
+        {
+            return new AppliedRevision { ServiceName = service, Success = false, Error = result.Error };
+        }
+
+        var status = await client.GetAppAsync(service, ct);
+        if (status?.LatestRevision is not { } candidate)
+        {
+            return new AppliedRevision { ServiceName = service, Success = false, Error = "Azure reported no revision after the deploy" };
+        }
+
+        _stableRevision[service] = stable;
+        string? url = null;
+        if (candidate != stable)
+        {
+            try
+            {
+                await client.AddLabelAsync(service, CandidateLabel, candidate, ct);
+                url = LabelUrl(status.Fqdn, service, CandidateLabel);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning("Could not label revision {Revision} of {Name} ({Message}); it has no preview address.",
+                    candidate, service, ex.Message);
+            }
+        }
+
+        return new AppliedRevision { ServiceName = service, Success = true, Revision = candidate, PreviewUrl = url };
+    }
+
+    /// <summary><c>api.happy-sea.westeurope.azurecontainerapps.io</c> → <c>https://api---candidate.happy-sea.…</c>.</summary>
+    internal static string? LabelUrl(string? fqdn, string app, string label)
+        => fqdn is null || !fqdn.StartsWith(app + ".", StringComparison.OrdinalIgnoreCase)
+            ? null
+            : $"https://{app}---{label}{fqdn[app.Length..]}";
+
+    /// <summary>A temp copy of the app spec whose traffic all goes to <paramref name="stable"/>.</summary>
+    internal static async Task<string> WriteCandidateSpecAsync(string specPath, string service, string stable, CancellationToken ct)
+    {
+        var root = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(specPath, ct))!.AsObject();
+        var configuration = root["properties"]?["configuration"]?.AsObject()
+                            ?? throw new InvalidOperationException($"{specPath} has no properties.configuration.");
+        var ingress = configuration["ingress"]?.AsObject()
+                      ?? throw new InvalidOperationException($"{specPath} has no ingress to split traffic at.");
+        configuration["activeRevisionsMode"] = "Multiple";
+        ingress["traffic"] = new System.Text.Json.Nodes.JsonArray(
+            new System.Text.Json.Nodes.JsonObject { ["revisionName"] = stable, ["weight"] = 100 });
+
+        var path = Path.Combine(Path.GetTempPath(), $"deployify-{service}-{Guid.NewGuid():N}.containerapp.json");
+        await File.WriteAllTextAsync(path, root.ToJsonString(), new System.Text.UTF8Encoding(false), ct);
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+
+        return path;
+    }
+
+    public async Task<HealthObservation> ObserveCandidateAsync(
+        EnvironmentConfig config, string service, string candidate, CancellationToken ct = default)
+    {
+        var client = Client(GetConfig(config));
+        var app = await client.GetAppAsync(service, ct);
+        var rev = app is null ? null : await client.GetRevisionAsync(service, candidate, ct);
+        return AcaRolloutHealth.EvaluateCandidate(app, rev, candidate);
+    }
+
+    public async Task<int> ShiftTrafficAsync(
+        EnvironmentConfig config, string service, string candidate, int percent, CancellationToken ct = default)
+    {
+        if (!_stableRevision.TryGetValue(service, out var stable) || stable == candidate)
+        {
+            return percent; // no new revision: nothing to split
+        }
+
+        var weights = percent >= 100
+            ? new Dictionary<string, int> { [candidate] = 100, [stable] = 0 }
+            : new Dictionary<string, int> { [stable] = 100 - percent, [candidate] = percent };
+        await Client(GetConfig(config)).SetTrafficAsync(service, weights, ct);
+        return Math.Min(percent, 100);
+    }
+
+    /// <summary>Applies the generated spec, which sends all traffic to the latest revision: the candidate.</summary>
+    public async Task<string?> PromoteAsync(
+        AspireManifest manifest, EnvironmentConfig config, string outputDirectory, string service, string candidate,
+        CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var app = (await _generator.GenerateAsync(manifest, config, cfg, ct)).FirstOrDefault(a => a.Name == service)
+                  ?? throw new InvalidOperationException($"'{service}' is not a Container App in this manifest.");
+        var client = Client(cfg);
+        var result = await ApplyOneAsync(app, config, cfg, client, outputDirectory, ct);
+        if (!result.Success)
+        {
+            throw new InvalidOperationException(result.Error ?? "the deploy failed");
+        }
+
+        return (await client.GetAppAsync(service, ct))?.LatestRevision ?? candidate;
+    }
+
+    /// <summary>Removes the preview label and deactivates the revision that ran before.</summary>
+    public async Task FinishAsync(EnvironmentConfig config, string service, string candidate, CancellationToken ct = default)
+    {
+        var client = Client(GetConfig(config));
+        await client.RemoveLabelAsync(service, CandidateLabel, ct);
+        if (_stableRevision.TryRemove(service, out var stable) && stable != candidate)
+        {
+            await client.DeactivateRevisionAsync(service, stable, ct);
+        }
+    }
 
     // ── Publish ───────────────────────────────────────────────────────────────
 

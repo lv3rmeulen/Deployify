@@ -85,6 +85,18 @@ public sealed class ServiceRolloutRecord
     /// <summary>The revision the service went back to, by a restore or by the platform itself.</summary>
     public string? RestoredRevision { get; set; }
 
+    /// <summary>The strategy the service was rolled out with, as described by <c>RolloutStrategy.Describe</c>. Null for rolling.</summary>
+    public string? Strategy { get; set; }
+
+    /// <summary>For a canary or blue-green rollout: the new revision started next to the old one.</summary>
+    public string? Candidate { get; set; }
+
+    /// <summary>The share of the traffic the candidate got last, in percent.</summary>
+    public int? TrafficPercent { get; set; }
+
+    /// <summary>Where the candidate could be tried out, when the platform gave an address.</summary>
+    public string? PreviewUrl { get; set; }
+
     public string? Detail { get; set; }
 }
 

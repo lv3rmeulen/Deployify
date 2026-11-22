@@ -72,3 +72,13 @@ it), and the pods are restarted when only those values changed.
 **Destroy** and `apply --prune` delete the service's Application or Kustomization and wait while the
 controller removes what it deployed (including the namespace), then remove the folder and push. With
 `register` off only the folder is removed; delete the object where it is managed.
+
+Canary and blue-green are run by a controller in the cluster: Argo Rollouts with Argo CD, Flagger
+with Flux. Deployify commits a `Rollout` or a Flagger `Canary` next to the service's manifests. For
+canary weights with Flagger, set the provider that routes the traffic:
+
+```json
+"flux": { "flagger": { "provider": "nginx", "interval": "1m", "threshold": 2 } }
+```
+
+See [canary and blue-green rollouts](/Deployify/guides/rollout-strategies/).

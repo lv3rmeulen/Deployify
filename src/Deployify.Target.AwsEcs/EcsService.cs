@@ -39,6 +39,9 @@ public sealed class EcsService
     /// <summary>Path of the generated task definition JSON file.</summary>
     public string? TaskDefinitionPath { get; set; }
 
+    /// <summary>The service's rollout strategy, run by ECS itself (see <see cref="EcsStrategies"/>).</summary>
+    public Deployify.Core.Models.RolloutStrategy Rollout { get; set; } = Deployify.Core.Models.RolloutStrategy.Rolling;
+
     // ── Dapr ──────────────────────────────────────────────────────────────────
     public bool DaprEnabled { get; set; }
     public string? DaprAppId { get; set; }

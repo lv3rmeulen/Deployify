@@ -125,7 +125,11 @@ internal sealed record JsonRolloutService(
     JsonServiceSnapshot? Before,
     string? Revision,
     string? RestoredRevision,
-    string? Detail);
+    string? Detail,
+    string? Strategy = null,
+    string? Candidate = null,
+    int? TrafficPercent = null,
+    string? PreviewUrl = null);
 
 internal sealed record JsonServiceSnapshot(bool Existed, string? Revision);
 

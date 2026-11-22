@@ -101,16 +101,27 @@ public static class StatusCommand
             AnsiConsole.MarkupLine($"State: {StateMarkup(record.State)}" +
                                    (record.Reason is null ? "" : $" — {Markup.Escape(record.Reason)}"));
 
+            var progressive = record.Services.Any(s => s.Strategy is not null);
             var services = new Table().AddColumns("Service", "State", "Before", "Deployed", "Restored", "Detail");
+            if (progressive)
+            {
+                services.AddColumn("Strategy");
+            }
+
             foreach (var s in record.Services)
             {
-                services.AddRow(
+                string[] cells =
+                [
                     Markup.Escape(s.Name),
                     Markup.Escape(s.State.ToString()),
                     Markup.Escape(s.Snapshot is null ? "" : s.Snapshot.Existed ? s.Snapshot.Revision ?? "?" : "(new)"),
                     Markup.Escape(s.Revision ?? ""),
                     Markup.Escape(s.RestoredRevision ?? ""),
-                    Markup.Escape(s.Detail ?? ""));
+                    Markup.Escape(s.Detail ?? "")
+                ];
+                services.AddRow(progressive
+                    ? [.. cells, Markup.Escape(s.Strategy is null ? "" : $"{s.Strategy}{(s.TrafficPercent is { } p ? $" (at {p}%)" : "")}")]
+                    : cells);
             }
 
             AnsiConsole.Write(services);
@@ -139,7 +150,11 @@ public static class StatusCommand
             s.Snapshot is null ? null : new JsonServiceSnapshot(s.Snapshot.Existed, s.Snapshot.Revision),
             s.Revision,
             s.RestoredRevision,
-            s.Detail))],
+            s.Detail,
+            s.Strategy,
+            s.Candidate,
+            s.TrafficPercent,
+            s.PreviewUrl))],
         [.. r.Events.Select(e => new JsonRolloutEvent(e.At, e.Service, e.Message))],
         journalPath);
 

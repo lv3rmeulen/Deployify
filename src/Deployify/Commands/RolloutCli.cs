@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.CommandLine;
 using System.Linq;
 using System.Threading;
@@ -76,6 +77,55 @@ internal static class RolloutCli
         }
 
         return rollout;
+    }
+
+    /// <summary>
+    /// Checks the environment's rollout strategies before anything is published or deployed, and
+    /// prints each problem. True when they stop the deploy.
+    /// </summary>
+    public static async Task<bool> StrategiesBlockAsync(
+        ParseResult parseResult, IDeploymentTarget target, AspireManifest manifest, EnvironmentConfig config, CancellationToken ct)
+    {
+        var errors = await RolloutStrategyCheck.CheckAsync(target, manifest, config, !parseResult.GetValue(NoHealthGate), ct);
+        foreach (var error in errors)
+        {
+            AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {error}");
+        }
+
+        return errors.Count > 0;
+    }
+
+    /// <summary>One dim line per service that doesn't use a rolling update, e.g. <c>api: canary 10% 5m → 100%</c>.</summary>
+    public static async Task PrintStrategiesAsync(
+        IDeploymentTarget target, AspireManifest manifest, EnvironmentConfig config, CancellationToken ct)
+    {
+        IReadOnlyList<ServiceExplanation> services;
+        try
+        {
+            services = await target.ExplainAsync(manifest, config, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return; // plan reports what it can't generate
+        }
+
+        foreach (var name in services.Select(s => s.Name))
+        {
+            RolloutStrategy strategy;
+            try
+            {
+                strategy = RolloutStrategies.For(config, name);
+            }
+            catch (FormatException)
+            {
+                continue; // reported by the strategy check
+            }
+
+            if (strategy.IsProgressive)
+            {
+                AnsiConsole.MarkupLineInterpolated($"[dim]Rollout: {name}: {strategy.Describe()}[/]");
+            }
+        }
     }
 
     public static RolloutOptions ReadOptions(ParseResult parseResult) => new()

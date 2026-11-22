@@ -24,7 +24,8 @@ namespace Deployify.Target.GitOps;
 /// registers each folder with the controller; the controller applies them to the cluster.
 /// Everything except the controller's own objects and status is shared by Argo CD and Flux.
 /// </summary>
-public abstract class GitOpsDeploymentTarget : IDeploymentTarget, ISecretStoreProvider, IResourceLifecycle, IServiceLogSource
+public abstract class GitOpsDeploymentTarget
+    : IDeploymentTarget, ISecretStoreProvider, IResourceLifecycle, IServiceLogSource, IRolloutStrategyTarget
 {
     private readonly IPublisher _publisher;
     private readonly KubernetesManifestGenerator _generator = new();
@@ -92,6 +93,26 @@ public abstract class GitOpsDeploymentTarget : IDeploymentTarget, ISecretStorePr
 
     /// <summary>Reads the per-service object's status for <paramref name="commit"/>.</summary>
     protected abstract HealthObservation Evaluate(string? json, string commit);
+
+    /// <summary>Why the controller's progressive delivery can't run <paramref name="strategy"/> for <paramref name="svc"/>, or null.</summary>
+    protected abstract string? StrategyUnsupportedReason(KubernetesServiceManifest svc, RolloutStrategy strategy, EnvironmentConfig config);
+
+    /// <summary>A service's files for a canary or blue-green strategy: the progressive-delivery controller's object added.</summary>
+    protected abstract IReadOnlyList<(string FileName, string Content)> WithStrategy(
+        KubernetesServiceManifest svc, RolloutStrategy strategy, EnvironmentConfig config,
+        IReadOnlyList<(string FileName, string Content)> files);
+
+    // ── Canary and blue-green: committed for a controller in the cluster ──────
+
+    /// <summary>Argo Rollouts or Flagger in the cluster moves the traffic; Deployify only commits their objects.</summary>
+    public RolloutStrategyMode StrategyMode => RolloutStrategyMode.Native;
+
+    public async Task<string?> GetStrategyUnsupportedReasonAsync(
+        AspireManifest manifest, EnvironmentConfig config, string service, RolloutStrategy strategy, CancellationToken ct = default)
+    {
+        var svc = (await GenerateServicesAsync(manifest, config, ct)).FirstOrDefault(s => s.ServiceName == service);
+        return svc is null ? null : StrategyUnsupportedReason(svc, strategy, config);
+    }
 
     /// <summary>Asks the controller to look at the repository now rather than at its next poll. Best effort.</summary>
     protected abstract Task RefreshAsync(
@@ -204,7 +225,10 @@ public abstract class GitOpsDeploymentTarget : IDeploymentTarget, ISecretStorePr
         var repoPath = RepoPath(config);
         return await GitOpsTree.WriteAsync(
             services, svc => RenderServiceRegistration(svc, config, repoPath), RenderEnvironmentRegistration(config),
-            GitOpsTree.TreeDirectory(outputDirectory), ct);
+            GitOpsTree.TreeDirectory(outputDirectory), ct,
+            (svc, files) => RolloutStrategies.For(config, svc.ServiceName) is { IsProgressive: true } strategy
+                ? WithStrategy(svc, strategy, config, files)
+                : files);
     }
 
     // ── Secrets ───────────────────────────────────────────────────────────────
@@ -497,7 +521,9 @@ public abstract class GitOpsDeploymentTarget : IDeploymentTarget, ISecretStorePr
     {
         var controller = Controller(config);
         var ns = RegistrationNamespace(config);
-        var timeout = TimeSpan.FromSeconds(Math.Max(1, GetGitOpsConfig(config).WaitTimeoutSeconds));
+        // Canary pauses and blue-green delays run on top of the wait.
+        var timeout = TimeSpan.FromSeconds(Math.Max(1, GetGitOpsConfig(config).WaitTimeoutSeconds)) +
+                      services.Select(s => RolloutStrategies.For(config, s.ServiceName).WaitTime).DefaultIfEmpty(TimeSpan.Zero).Max();
         var clock = Stopwatch.StartNew();
         var done = new Dictionary<string, DeploymentResult>(StringComparer.Ordinal);
         var last = new Dictionary<string, string?>(StringComparer.Ordinal);

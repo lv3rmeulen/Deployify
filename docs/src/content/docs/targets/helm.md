@@ -61,3 +61,5 @@ snapshot is the release revision, and a rollback is `helm rollback` to it, which
 ConfigMap and an inline Secret; an out-of-band Secret is restored from memory within the same run.
 A release the rollout created is uninstalled. **Destroy** and `apply --prune` run `helm uninstall`,
 then delete the labeled namespace.
+
+Canary works as on the Kubernetes target, with promotion as a normal `helm upgrade`. Blue-green isn't offered on Helm; see [canary and blue-green rollouts](/Deployify/guides/rollout-strategies/).

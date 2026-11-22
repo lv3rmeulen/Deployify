@@ -63,7 +63,8 @@ public sealed class AcaManifestGenerator
                 Memory = acaConfig.DefaultMemory,
                 IsProjectService = resource.IsProject,
                 Dependencies = resource.References?.Select(r => r.Name).ToList() ?? [],
-                IngressType = acaConfig.IngressType
+                IngressType = acaConfig.IngressType,
+                Rollout = RolloutStrategies.For(config, name)
             };
 
             app.Image = ServiceImage.For(name, resource, config);
@@ -344,7 +345,7 @@ public sealed class AcaManifestGenerator
         var httpPort = app.Ports.FirstOrDefault(p => p.IsHttp);
         if (app.IngressType != AcaIngressType.None && httpPort is not null)
         {
-            config["ingress"] = new Dictionary<string, object>
+            var ingress = new Dictionary<string, object>
             {
                 ["external"] = app.IngressType == AcaIngressType.External && httpPort.IsExternal,
                 ["targetPort"] = httpPort.ContainerPort,
@@ -352,6 +353,17 @@ public sealed class AcaManifestGenerator
                 // Internal calls use plain http://<app>; only external traffic is forced to HTTPS.
                 ["allowInsecure"] = !(app.IngressType == AcaIngressType.External && httpPort.IsExternal)
             };
+
+            // Canary and blue-green keep the old revision running next to the new one; once a
+            // rollout is done, all traffic goes to the latest revision again.
+            // Single is the default, but written out so an app that ran a canary before goes back to it.
+            config["activeRevisionsMode"] = app.Rollout.IsProgressive ? "Multiple" : "Single";
+            if (app.Rollout.IsProgressive)
+            {
+                ingress["traffic"] = new[] { new Dictionary<string, object> { ["latestRevision"] = true, ["weight"] = 100 } };
+            }
+
+            config["ingress"] = ingress;
         }
 
         // ACR registry credential

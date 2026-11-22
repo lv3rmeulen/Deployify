@@ -62,3 +62,5 @@ reaches the repository.
 
 To get the same deployment as Helm charts instead (to install them yourself, or hand them to
 another team), run `deployify generate --target helm` on a Kubernetes environment: see below.
+
+Canary and blue-green work without a service mesh: a canary is a second Deployment weighted by its number of pods, and blue-green switches the Service's selector to a full-size preview. See [canary and blue-green rollouts](/Deployify/guides/rollout-strategies/).

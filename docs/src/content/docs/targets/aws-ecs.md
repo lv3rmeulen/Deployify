@@ -42,3 +42,5 @@ Generates ECS task definition JSON files and registers/updates services via the 
 Init flags: `--ecs-region`, `--ecs-cluster`, `--ecs-profile`, `--ecs-subnets`, `--ecs-security-groups`, `--ecs-execution-role`
 
 Requires the [AWS CLI](https://aws.amazon.com/cli/) on `PATH`.
+
+Canary, linear and blue-green deployments are ECS's own (`deploymentConfiguration.strategy`); canary and linear need Service Connect. See [canary and blue-green rollouts](/Deployify/guides/rollout-strategies/).

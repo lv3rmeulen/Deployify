@@ -6,6 +6,7 @@ using System.Linq;
 using Deployify.Commands.Json;
 using Deployify.Core.Deployments;
 using Deployify.Core.Models;
+using Deployify.Core.Rollouts;
 using Spectre.Console;
 
 namespace Deployify.Commands;
@@ -84,12 +85,22 @@ public static class PlanCommand
                 AnsiConsole.MarkupLine("[dim]No changes. Everything is up to date.[/]");
             }
 
+            await RolloutCli.PrintStrategiesAsync(target, manifest, config, ct);
+
             // Plan is the pre-flight check: fail when apply would refuse.
             var blocked = PlanOutput.AuditBlocks(resolved, strict);
+            var strategyErrors = await RolloutStrategyCheck.CheckAsync(target, manifest, config, healthGate: true, ct);
+            foreach (var error in strategyErrors)
+            {
+                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {error}");
+            }
+
             if (json is not null)
             {
-                json.Result = ToJson(plan, resolved, strict, blocked);
+                json.Result = ToJson(plan, resolved, strict, blocked, strategyErrors);
             }
+
+            blocked |= strategyErrors.Count > 0;
 
             return blocked ? 1 : 0;
         }));
@@ -98,7 +109,8 @@ public static class PlanCommand
     }
 
     /// <summary>The <c>result</c> of <c>plan --output json</c>.</summary>
-    internal static JsonPlan ToJson(PlanResult plan, ResolvedContext resolved, bool strict, bool blocked) => new(
+    internal static JsonPlan ToJson(
+        PlanResult plan, ResolvedContext resolved, bool strict, bool blocked, IReadOnlyList<string>? strategyErrors = null) => new(
         Create: plan.ToCreate,
         Update: plan.ToUpdate,
         Delete: plan.ToDelete,
@@ -108,8 +120,10 @@ public static class PlanCommand
         UpToDate: plan.IsUpToDate,
         // Compose removes a project's orphaned containers on every 'up' (see StateCli.PrintLeftInPlace).
         DeletesOnApply: resolved.Config.Prune || resolved.TargetType == DeploymentTargetType.Compose,
-        Blocked: blocked,
-        BlockedReason: blocked ? resolved.ManifestAudit.BlockedSummary(strict) : null,
+        Blocked: blocked || strategyErrors is { Count: > 0 },
+        BlockedReason: blocked
+            ? resolved.ManifestAudit.BlockedSummary(strict)
+            : strategyErrors is { Count: > 0 } ? string.Join(" ", strategyErrors) : null,
         ManifestFindings: [.. resolved.ManifestAudit.Diagnostics.Select(d => new JsonManifestFinding(
             d.Resource, d.Type, d.Severity switch
             {

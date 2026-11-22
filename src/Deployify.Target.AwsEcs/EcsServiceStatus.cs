@@ -12,6 +12,9 @@ public sealed record EcsServiceStatus(
     int DesiredCount,
     IReadOnlyList<EcsDeploymentStatus> Deployments)
 {
+    /// <summary>The service's deployment strategy (ROLLING, BLUE_GREEN, CANARY, LINEAR); null when ECS doesn't say.</summary>
+    public string? Strategy { get; init; }
+
     /// <summary>
     /// Parses a describe-services response. Returns null when the service doesn't exist
     /// (ECS answers with an empty <c>services</c> list and a MISSING failure).
@@ -42,7 +45,12 @@ public sealed record EcsServiceStatus(
             }
         }
 
-        return new EcsServiceStatus(Str(s, "status") ?? "", Str(s, "taskDefinition"), Num(s, "desiredCount"), deployments);
+        return new EcsServiceStatus(Str(s, "status") ?? "", Str(s, "taskDefinition"), Num(s, "desiredCount"), deployments)
+        {
+            Strategy = s.TryGetProperty("deploymentConfiguration", out var dc) && dc.ValueKind == JsonValueKind.Object
+                ? Str(dc, "strategy")
+                : null
+        };
     }
 
     private static string? Str(JsonElement e, string name)

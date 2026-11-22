@@ -205,6 +205,13 @@ public sealed class EnvironmentConfig
     /// </summary>
     public StateBackendConfig? State { get; set; }
 
+    /// <summary>
+    /// How services are rolled out: Rolling (the platform's own update, the default), Canary or
+    /// BlueGreen. Null means Rolling. A service's <see cref="ServiceOverride.Rollout"/> replaces it
+    /// for that service. See <see cref="RolloutStrategies"/>.
+    /// </summary>
+    public RolloutConfig? Rollout { get; set; }
+
     /// <summary>When true, <c>deployify destroy</c> refuses to run against this environment.</summary>
     public bool Protected { get; set; }
 
@@ -327,6 +334,9 @@ public sealed class ServiceOverride
     public string? ImageTag { get; set; }
     public int? Count { get; set; }
     public Dictionary<string, string> Env { get; set; } = [];
+
+    /// <summary>This service's rollout strategy, replacing the environment's <c>rollout</c> section as a whole.</summary>
+    public RolloutConfig? Rollout { get; set; }
 
     /// <summary>
     /// Artifact download URL written by <c>deployify package</c>.

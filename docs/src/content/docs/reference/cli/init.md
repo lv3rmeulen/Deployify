@@ -78,6 +78,9 @@ deployify init [options]
 | `--aca-location` | Azure region. | `eastus` |
 | `--aca-environment` | Container Apps environment name. | `deployify-env` |
 | `--aca-acr` | Azure Container Registry login server. |  |
+| `--cloudrun-project` | Google Cloud project ID. |  |
+| `--cloudrun-region` | Cloud Run region. | `us-central1` |
+| `--cloudrun-service-account` | Service account the services run as (blank: the default compute service account). |  |
 | `--nc-nomad-address` | Nomad address (Consul mesh target). | `http://localhost:4646` |
 | `--nc-nomad-token` | Nomad ACL token as env:NAME (Consul mesh target). Default: NOMAD_TOKEN at run time. |  |
 | `--nc-nomad-namespace` | Nomad namespace (Consul mesh target). | `default` |

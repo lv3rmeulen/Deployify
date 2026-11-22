@@ -126,6 +126,13 @@ public sealed class NomadRollout(ILogger logger)
     {
         var job = snapshot.ServiceName;
 
+        // Canaries waiting for promotion are stopped first, so they take no more traffic.
+        foreach (var waiting in (await client.GetDeploymentsAsync(job, ct)).Where(d => d.AwaitingPromotion && d.Id is not null))
+        {
+            await client.FailDeploymentAsync(waiting.Id!, ct);
+            logger.LogInformation("Stopped the canaries of {Job} (version {Version}).", job, waiting.JobVersion);
+        }
+
         // Secrets first, so the reverted allocations render the old values.
         await RestoreVariablesAsync(client, @namespace, snapshot, ct);
 
@@ -155,7 +162,95 @@ public sealed class NomadRollout(ILogger logger)
         await client.RevertJobAsync(job, previous, ct);
         var reverted = await CurrentVersionAsync(client, job, ct);
         logger.LogInformation("Reverted {Job} to version {Previous} (now version {Reverted}).", job, previous, reverted);
+
+        // A job that uses canaries rolls its revert out as canaries too; the old version is known
+        // good, so it is promoted as soon as its canaries are healthy (see ObserveAsync).
+        _promoteWhenHealthy[$"{@namespace}/{job}"] = ParseVersion(reverted);
         return reverted;
+    }
+
+    /// <summary>Restored versions to promote once their canaries are healthy, keyed by namespace/job.</summary>
+    private readonly ConcurrentDictionary<string, long> _promoteWhenHealthy = new();
+
+    /// <summary>
+    /// <see cref="ObserveAsync(NomadClient, string, string, bool, CancellationToken)"/>, and for a
+    /// version this rollout restored whose canaries wait for promotion: promotes it once they are healthy.
+    /// </summary>
+    public async Task<HealthObservation> ObserveAsync(
+        NomadClient client, string @namespace, string job, string revision, bool autoRevert, CancellationToken ct)
+    {
+        var key = $"{@namespace}/{job}";
+        if (_promoteWhenHealthy.TryGetValue(key, out var restored) && restored == ParseVersion(revision))
+        {
+            var ours = (await client.GetDeploymentsAsync(job, ct)).FirstOrDefault(d => d.JobVersion == restored);
+            if (ours is { AwaitingPromotion: true, Id: { } id } && ours.HealthyAllocs >= ours.DesiredCanaries)
+            {
+                await client.PromoteDeploymentAsync(id, ct);
+                _promoteWhenHealthy.TryRemove(key, out _);
+                logger.LogInformation("Promoted restored version {Version} of {Job}.", restored, job);
+                return HealthObservation.Progressing("promoted the restored version");
+            }
+        }
+
+        return await ObserveAsync(client, job, revision, autoRevert, ct);
+    }
+
+    // ── Canary and blue-green ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// The canaries of job version <paramref name="revision"/>: healthy once all of them are,
+    /// while they wait for promotion.
+    /// </summary>
+    public static async Task<HealthObservation> ObserveCanariesAsync(
+        NomadClient client, string job, string revision, bool autoRevert, CancellationToken ct)
+    {
+        var info = await client.GetJobAsync(job, ct);
+        var deployments = await client.GetDeploymentsAsync(job, ct);
+        return EvaluateCanaries(info, deployments, ParseVersion(revision), autoRevert);
+    }
+
+    public static HealthObservation EvaluateCanaries(
+        NomadJobInfo? job, IReadOnlyList<NomadDeploymentInfo> deployments, long version, bool autoRevert)
+    {
+        var ours = deployments.FirstOrDefault(d => d.JobVersion == version);
+        if (ours is null || ours.DesiredCanaries == 0 || ours.Status != "running")
+        {
+            // Not a canary deployment (anymore): judged like any other.
+            return Evaluate(job, deployments, version, autoRevert);
+        }
+
+        var detail = $"{Math.Min(ours.HealthyAllocs, ours.DesiredCanaries)}/{ours.DesiredCanaries} canary allocation(s) healthy" +
+                     (ours.UnhealthyAllocs > 0 ? $", {ours.UnhealthyAllocs} unhealthy" : "");
+        if (ours.UnhealthyAllocs > 0)
+        {
+            return HealthObservation.Failed(detail);
+        }
+
+        return ours.HealthyAllocs >= ours.DesiredCanaries
+            ? HealthObservation.Healthy(detail)
+            : HealthObservation.Progressing(detail);
+    }
+
+    /// <summary>The share of the job's allocations that are canaries of <paramref name="revision"/>, in percent.</summary>
+    public static async Task<int> CanaryShareAsync(NomadClient client, string job, string revision, CancellationToken ct)
+    {
+        var ours = (await client.GetDeploymentsAsync(job, ct)).FirstOrDefault(d => d.JobVersion == ParseVersion(revision))
+                   ?? throw new InvalidOperationException($"Nomad has no deployment of version {revision} of {job}.");
+        var total = ours.DesiredTotal + ours.DesiredCanaries;
+        return total == 0 ? 0 : (int)Math.Round(100.0 * ours.DesiredCanaries / total, MidpointRounding.AwayFromZero);
+    }
+
+    /// <summary>Promotes the canaries of <paramref name="revision"/>; Nomad then replaces the old allocations.</summary>
+    public async Task PromoteAsync(NomadClient client, string job, string revision, CancellationToken ct)
+    {
+        var ours = (await client.GetDeploymentsAsync(job, ct)).FirstOrDefault(d => d.JobVersion == ParseVersion(revision));
+        if (ours is not { AwaitingPromotion: true, Id: { } id })
+        {
+            return; // already promoted, or Nomad placed no canaries
+        }
+
+        await client.PromoteDeploymentAsync(id, ct);
+        logger.LogInformation("Promoted the canaries of {Job} (version {Version}).", job, revision);
     }
 
     private async Task RestoreVariablesAsync(

@@ -39,7 +39,13 @@ public enum SecretBackendType
     /// AWS Secrets Manager. On ECS, each service's secret env vars are one JSON secret; task
     /// definitions reference a key of it by ARN, pinned to the version they were deployed with.
     /// </summary>
-    SecretsManager
+    SecretsManager,
+
+    /// <summary>
+    /// Google Secret Manager. On Cloud Run, each secret env var is a secret that the revision
+    /// references, pinned to the version it was deployed with.
+    /// </summary>
+    GcpSecretManager
 }
 
 /// <summary>
@@ -55,6 +61,9 @@ public sealed class SecretsConfig
 
     /// <summary>Settings for <see cref="SecretBackendType.KeyVault"/>.</summary>
     public KeyVaultConfig KeyVault { get; set; } = new();
+
+    /// <summary>Settings for <see cref="SecretBackendType.GcpSecretManager"/>. Null uses the defaults.</summary>
+    public GcpSecretManagerConfig? GcpSecretManager { get; set; }
 
     /// <summary>
     /// Where each secret was last written, keyed by <c>{service}/{key}</c>. Updated by apply.
@@ -168,6 +177,19 @@ public sealed class KeyVaultConfig
 
         return $"https://{VaultName}.vault.azure.net";
     }
+}
+
+/// <summary>Settings for the Google Secret Manager backend.</summary>
+public sealed class GcpSecretManagerConfig
+{
+    /// <summary>Project that holds the secrets. Defaults to the Cloud Run target's project.</summary>
+    public string? ProjectId { get; set; }
+
+    /// <summary>
+    /// Prefix for secret names, so several environments can share a project. Defaults to
+    /// <c>deployify-{environment name}</c>.
+    /// </summary>
+    public string? SecretPrefix { get; set; }
 }
 
 /// <summary>How Kubernetes pods authenticate to Key Vault through the CSI driver.</summary>

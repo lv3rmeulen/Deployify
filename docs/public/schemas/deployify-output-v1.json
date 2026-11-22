@@ -903,6 +903,22 @@
               },
               "detail": {
                 "$ref": "#/$defs/nullableString"
+              },
+              "strategy": {
+                "$ref": "#/$defs/nullableString",
+                "description": "For a canary or blue-green rollout: the strategy as configured, e.g. \"canary 10% 5m → 100%\". Null or left out for a rolling update."
+              },
+              "candidate": {
+                "$ref": "#/$defs/nullableString",
+                "description": "For a canary or blue-green rollout: the new revision started next to the old one."
+              },
+              "trafficPercent": {
+                "type": ["integer", "null"],
+                "description": "The share of the traffic the candidate got last, in percent."
+              },
+              "previewUrl": {
+                "$ref": "#/$defs/nullableString",
+                "description": "Where the candidate could be tried out before it got traffic, when the platform gives an address."
               }
             }
           }

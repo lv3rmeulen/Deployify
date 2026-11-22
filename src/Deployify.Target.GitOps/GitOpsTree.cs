@@ -41,7 +41,8 @@ public static class GitOpsTree
         Func<KubernetesServiceManifest, string> serviceRegistration,
         string? environmentRegistration,
         string treeDirectory,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        Func<KubernetesServiceManifest, IReadOnlyList<(string FileName, string Content)>, IReadOnlyList<(string FileName, string Content)>>? adjust = null)
     {
         var inline = services.Where(s => s.WritesSecretManifest).Select(s => s.ServiceName).ToList();
         if (inline.Count > 0)
@@ -62,7 +63,8 @@ public static class GitOpsTree
             var dir = Path.Combine(treeDirectory, svc.ServiceName);
             Directory.CreateDirectory(dir);
             var files = new List<string>();
-            foreach (var (name, content) in KubernetesManifestGenerator.Render(svc))
+            var rendered = KubernetesManifestGenerator.Render(svc);
+            foreach (var (name, content) in adjust is null ? rendered : adjust(svc, rendered))
             {
                 files.Add(await KubernetesManifestGenerator.WriteAsync(dir, name, content, ct));
             }

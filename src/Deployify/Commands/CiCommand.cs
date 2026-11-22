@@ -134,6 +134,12 @@ public static class CiCommand
                 return 1;
             }
 
+            // A canary or blue-green that can't run stops the run before anything is published.
+            if (!doSkipApply && await RolloutCli.StrategiesBlockAsync(parseResult, target, manifest, config, ct))
+            {
+                return 1;
+            }
+
             // The tag is settled before generate, so the artifacts and the plan use it.
             var publishReason = doSkipApply ? "--skip-apply"
                 : doNoPublish ? "--no-publish"

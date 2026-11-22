@@ -23,7 +23,8 @@ namespace Deployify.Target.Helm;
 /// <c>{namespacePrefix}-{service}</c>. Cluster and manifest settings come from
 /// targetConfig["kubernetes"]; secrets are synced exactly as the Kubernetes target does.
 /// </summary>
-public sealed class HelmDeploymentTarget : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget, IResourceLifecycle, IServiceLogSource
+public sealed class HelmDeploymentTarget : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget, ITrafficShiftingTarget, IResourceLifecycle,
+    IServiceLogSource
 {
     private readonly IPublisher _publisher;
     private readonly ILogger _logger;
@@ -36,6 +37,8 @@ public sealed class HelmDeploymentTarget : IDeploymentTarget, ISecretStoreProvid
     /// backends, namespaces, health and the destroy bookkeeping.
     /// </summary>
     internal KubernetesDeploymentTarget Kubernetes { get; }
+
+    private readonly KubernetesTrafficShifter _shifter;
 
     /// <summary>A service's out-of-band Secret before the rollout; in memory only, never journaled.</summary>
     private readonly ConcurrentDictionary<string, IReadOnlyDictionary<string, SensitiveValue>> _secretBefore = new();
@@ -54,6 +57,7 @@ public sealed class HelmDeploymentTarget : IDeploymentTarget, ISecretStoreProvid
         {
             Processes = processes
         };
+        _shifter = new KubernetesTrafficShifter(_logger);
     }
 
     public DeploymentTargetType TargetType => DeploymentTargetType.Helm;
@@ -443,6 +447,9 @@ public sealed class HelmDeploymentTarget : IDeploymentTarget, ISecretStoreProvid
             : KubernetesManifestGenerator.NamespaceFor(KubernetesDeploymentTarget.GetConfig(config), service);
         var helm = Helm(config);
 
+        // A canary from this or an earlier run goes first; it isn't part of the release.
+        await KubernetesTrafficShifter.RemoveCandidatesAsync(Kubectl(config), ns, service, ct);
+
         if (_secretBefore.TryGetValue($"{ns}/{service}", out var secret))
         {
             var kubectl = Kubectl(config);
@@ -469,6 +476,71 @@ public sealed class HelmDeploymentTarget : IDeploymentTarget, ISecretStoreProvid
 
         return await GenerationAsync(config, ns, service, ct);
     }
+
+    // ── Canary ────────────────────────────────────────────────────────────────
+    // The canary Deployment is applied with kubectl next to the release and deleted after the
+    // promotion, which is a normal helm upgrade. Blue-green isn't offered: helm upgrade would put
+    // the Service's selector back on the release's pods while they are still being replaced.
+
+    public RolloutStrategyMode StrategyMode => RolloutStrategyMode.Driven;
+
+    public TrafficPrecision Precision => TrafficPrecision.Instances;
+
+    public Task<string?> GetStrategyUnsupportedReasonAsync(
+        AspireManifest manifest, EnvironmentConfig config, string service, RolloutStrategy strategy, CancellationToken ct = default)
+        => Task.FromResult(strategy.Kind == RolloutStrategyKind.BlueGreen
+            ? "helm upgrade resets the Service's selector while the release's pods are still being replaced, so the " +
+              "switch wouldn't be all at once. Use Canary, or the Kubernetes target for blue-green."
+            : null);
+
+    public async Task<AppliedRevision> StartCandidateAsync(
+        AspireManifest manifest, EnvironmentConfig config, string outputDirectory, string service, RolloutStrategy strategy,
+        ServiceSnapshot before, CancellationToken ct = default)
+    {
+        var svc = await FindServiceAsync(manifest, config, service, ct);
+        await RequireToolsAsync(ct);
+        var kubectl = Kubectl(config);
+        try
+        {
+            return await _shifter.StartAsync(kubectl, svc, strategy, c => Kubernetes.SyncSecretsAsync(svc, config, kubectl, c), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new AppliedRevision { ServiceName = service, Success = false, Error = ex.Message };
+        }
+    }
+
+    public Task<HealthObservation> ObserveCandidateAsync(EnvironmentConfig config, string service, string candidate, CancellationToken ct = default)
+        => KubernetesTrafficShifter.ObserveAsync(Kubectl(config), NamespaceOf(config, service), candidate, ct);
+
+    public Task<int> ShiftTrafficAsync(EnvironmentConfig config, string service, string candidate, int percent, CancellationToken ct = default)
+        => _shifter.ShiftAsync(Kubectl(config), NamespaceOf(config, service), service, candidate, percent, ct);
+
+    /// <summary>A normal <c>helm upgrade</c> of the release; returns the Deployment generation to watch.</summary>
+    public async Task<string?> PromoteAsync(
+        AspireManifest manifest, EnvironmentConfig config, string outputDirectory, string service, string candidate,
+        CancellationToken ct = default)
+    {
+        var svc = await FindServiceAsync(manifest, config, service, ct);
+        if (await InstallAsync(svc, config, outputDirectory, ct) is { } error)
+        {
+            throw new InvalidOperationException(error);
+        }
+
+        var kubectl = Kubectl(config);
+        if (_shifter.TakeRestart(svc.Namespace, service) && !await kubectl.RolloutRestartAsync(service, svc.Namespace, ct))
+        {
+            _logger.LogWarning("Secrets of {Name} changed but its pods could not be restarted.", service);
+        }
+
+        return await GenerationAsync(config, svc.Namespace, service, ct);
+    }
+
+    public Task FinishAsync(EnvironmentConfig config, string service, string candidate, CancellationToken ct = default)
+        => _shifter.FinishAsync(Kubectl(config), NamespaceOf(config, service), service, ct);
+
+    private static string NamespaceOf(EnvironmentConfig config, string service)
+        => KubernetesManifestGenerator.NamespaceFor(KubernetesDeploymentTarget.GetConfig(config), service);
 
     private async Task<string> GenerationAsync(EnvironmentConfig config, string ns, string service, CancellationToken ct)
     {

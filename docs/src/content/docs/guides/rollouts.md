@@ -3,7 +3,7 @@ title: "Health-gated rollouts and rollback"
 description: "How apply deploys in waves, gates on health, and rolls back."
 ---
 
-On every target (**AWS ECS**, **Nomad**, **Nomad + Consul**, **Kubernetes**, **Azure Container Apps**, **Docker Compose** and **IIS**), `apply` and `ci` deploy services in
+On every target (**AWS ECS**, **Nomad**, **Nomad + Consul**, **Kubernetes**, **Azure Container Apps**, **Google Cloud Run**, **Docker Compose** and **IIS**), `apply` and `ci` deploy services in
 dependency order, one wave at a time, and wait for each wave to become healthy before moving on.
 If a service fails, doesn't become healthy within the timeout, or the run is canceled with
 Ctrl+C, every service the rollout touched is put back on the revision it ran before, in reverse
@@ -15,6 +15,10 @@ deployify apply --auto-approve --no-rollback          # gate on health, leave a 
 deployify apply --auto-approve --no-health-gate       # old behavior: deploy and return
 deployify apply --auto-approve --rollback-timeout 600 # budget for the whole rollback (default 900)
 ```
+
+Services are replaced with each platform's rolling update unless they use a
+[canary or blue-green strategy](/Deployify/guides/rollout-strategies/), which the same health gate
+runs step by step.
 
 Exit codes: `0` healthy, `1` failed (nothing rolled back), `2` failed and rolled back,
 `3` failed and the rollback did not complete — check the services listed in the output.
@@ -68,6 +72,12 @@ that version's value back as the newest version, since apps reference secrets wi
 Other app-level settings outside the revision template (ingress, secret definitions) are not
 rolled back. Without probes, Container Apps can only report whether
 containers start, so add probes to get a meaningful gate.
+
+On Google Cloud Run, a deploy is identified by the service's generation until Cloud Run names the
+new revision; it is healthy once Cloud Run has picked up the change, the new revision is ready and
+it has all the traffic. Rolling back sends all traffic back to the revision that served before,
+which Cloud Run keeps along with the secret versions it was deployed with. A service the rollout
+created is deleted.
 
 On Docker Compose, a revision is the image ID (`sha256:…`) the service's containers run, so a
 rollback works even with a `latest` tag as long as the old image is still in the local image store

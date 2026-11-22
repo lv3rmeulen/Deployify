@@ -166,6 +166,25 @@ Override image tag, replica count, or environment variables per service:
 }
 ```
 
+A service's `rollout` replaces the environment's [rollout strategy](#rollout-strategy) for that
+service.
+
+## Rollout strategy
+
+How services are replaced: `Rolling` (the platform's rolling update, the default), `Canary` or
+`BlueGreen`. See [canary and blue-green rollouts](/Deployify/guides/rollout-strategies/) for what
+each target does with them.
+
+```json
+"rollout": {
+  "strategy": "Canary",
+  "canary": { "steps": [ { "weight": 10, "pause": "5m" }, { "weight": 50, "pause": "10m" } ] }
+},
+"serviceOverrides": {
+  "web": { "rollout": { "strategy": "BlueGreen", "blueGreen": { "previewPause": "10m", "scaleDownDelay": "5m" } } }
+}
+```
+
 ## SBOMs
 
 `sbom` turns on SBOM generation at publish and attaches each SBOM to the pushed image as a

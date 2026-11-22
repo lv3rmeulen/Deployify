@@ -88,6 +88,12 @@ public static class ApplyCommand
                 return 1;
             }
 
+            // A canary or blue-green that can't run stops the apply before anything changes.
+            if (await RolloutCli.StrategiesBlockAsync(parseResult, target, manifest, config, ct))
+            {
+                return 1;
+            }
+
             // PlanAsync writes artifacts to disk AND diffs against the live cluster.
             // If the cluster is unreachable during dry-run we still want to exit 0
             // because the artifact generation phase completed successfully.

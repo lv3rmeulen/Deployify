@@ -56,6 +56,15 @@ public sealed class FluxDeploymentTarget : GitOpsDeploymentTarget
 
     protected override HealthObservation Evaluate(string? json, string commit) => FluxManifests.Evaluate(json, commit);
 
+    /// <summary>Flagger, which must be installed in the cluster.</summary>
+    protected override string? StrategyUnsupportedReason(KubernetesServiceManifest svc, RolloutStrategy strategy, EnvironmentConfig config)
+        => ProgressiveDelivery.FlaggerUnsupportedReason(svc, strategy, GetFluxConfig(config).Flagger);
+
+    protected override IReadOnlyList<(string FileName, string Content)> WithStrategy(
+        KubernetesServiceManifest svc, RolloutStrategy strategy, EnvironmentConfig config,
+        IReadOnlyList<(string FileName, string Content)> files)
+        => ProgressiveDelivery.Flagger(svc, strategy, GetFluxConfig(config).Flagger, files);
+
     /// <summary>Asks source-controller to fetch the new commit, then each Kustomization to apply it.</summary>
     protected override async Task RefreshAsync(
         ControllerClient client, EnvironmentConfig config, IReadOnlyList<string> registrationNames, CancellationToken ct)

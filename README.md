@@ -1,6 +1,6 @@
 # Deployify
 
-Deploy .NET Aspire AppHost projects to any platform — Nomad, Kubernetes (with `kubectl`, Helm, or GitOps through Argo CD or Flux), OVHcloud Managed Kubernetes, Docker Compose, AWS ECS, Azure Container Apps, Nomad + Consul Connect, IIS on Windows Server, and DigitalOcean App Platform (as a plugin).
+Deploy .NET Aspire AppHost projects to any platform — Nomad, Kubernetes (with `kubectl`, Helm, or GitOps through Argo CD or Flux), OVHcloud Managed Kubernetes, Docker Compose, AWS ECS, Azure Container Apps, Google Cloud Run, Nomad + Consul Connect, IIS on Windows Server, and DigitalOcean App Platform (as a plugin).
 
 ---
 
@@ -11,6 +11,7 @@ Deploy .NET Aspire AppHost projects to any platform — Nomad, Kubernetes (with 
 - For the Helm target: `helm` 3 and `kubectl`; the helm-diff plugin for `plan` and `diff`
 - For the Argo CD and Flux targets: `git` with access to the config repository, `kubectl`, and the controller installed in the cluster
 - For the OVHcloud target: `kubectl`, and OVHcloud API credentials (an API application or a service account)
+- For the Cloud Run target: the Google Cloud CLI (`gcloud`), signed in with access to the project
 - For the IIS target: PowerShell 7 (or Windows PowerShell on Windows), and a Windows Server with IIS and the ASP.NET Core Hosting Bundle
 - For the DigitalOcean target: the `Deployify.Target.DigitalOcean` plugin and a DigitalOcean API token in `DIGITALOCEAN_ACCESS_TOKEN`
 
@@ -56,7 +57,7 @@ deployify ci --skip-validate
 | | |
 |---|---|
 | [Your first deployment](https://lv3rmeulen.github.io/Deployify/getting-started/first-deployment/) | Deploy the `hello-aspire` sample to Docker Compose in five minutes |
-| [Deployment targets](https://lv3rmeulen.github.io/Deployify/targets/compose/) | Compose, Kubernetes, Helm, Argo CD / Flux, OVHcloud, Nomad, Nomad + Consul, AWS ECS, Azure Container Apps, IIS, and DigitalOcean App Platform as a plugin |
+| [Deployment targets](https://lv3rmeulen.github.io/Deployify/targets/compose/) | Compose, Kubernetes, Helm, Argo CD / Flux, OVHcloud, Nomad, Nomad + Consul, AWS ECS, Azure Container Apps, Google Cloud Run, IIS, and DigitalOcean App Platform as a plugin |
 | [Health-gated rollouts](https://lv3rmeulen.github.io/Deployify/guides/rollouts/) | Wave-by-wave deploys with automatic rollback |
 | [Reading logs](https://lv3rmeulen.github.io/Deployify/guides/logs/) | `deployify logs <service>`: one command for a service's output on every target |
 | [Parameters and secrets](https://lv3rmeulen.github.io/Deployify/guides/parameters-and-secrets/) | Aspire parameters, secret backends (Vault, Key Vault, SSM, Secrets Manager) |

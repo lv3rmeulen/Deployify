@@ -279,6 +279,58 @@ public sealed class KubectlRunner(KubernetesTargetConfig config, ILogger logger,
         }
     }
 
+    // ── Canary and blue-green ────────────────────────────────────────────────
+
+    /// <summary>Applies a manifest given as text (YAML or JSON), sent on stdin.</summary>
+    public async Task ApplyTextAsync(string manifest, CancellationToken ct = default)
+    {
+        var result = await _runner.RunAsync(new ProcessSpec("kubectl", [.. _contextArgs, "apply", "-f", "-"]) { Stdin = manifest }, ct);
+        if (!result.Ok)
+        {
+            throw new InvalidOperationException($"kubectl apply failed: {result.Stderr.Trim()}");
+        }
+    }
+
+    /// <summary>Applies the given files of a service's artifact directory, the namespace first.</summary>
+    public async Task<(bool Ok, string Output)> ApplyFilesAsync(IReadOnlyList<string> paths, CancellationToken ct = default)
+    {
+        var output = new StringBuilder();
+        foreach (var path in paths.OrderBy(p => Path.GetFileName(p) == "namespace.yaml" ? 0 : 1))
+        {
+            var result = await RunAsync(ct, "apply", "-f", path);
+            if (result.ExitCode != 0)
+            {
+                return (false, result.Stderr);
+            }
+
+            output.Append(result.Stdout);
+        }
+
+        return (true, output.ToString());
+    }
+
+    /// <summary>A JSON merge patch (<c>kubectl patch --type merge</c>).</summary>
+    public async Task PatchAsync(string kind, string namespaceName, string name, string mergePatch, CancellationToken ct = default)
+    {
+        var result = await RunAsync(ct, "patch", kind, name, "-n", namespaceName, "--type", "merge", "-p", mergePatch);
+        if (!result.Ok)
+        {
+            throw new InvalidOperationException($"kubectl could not patch {kind} {namespaceName}/{name}: {result.Stderr.Trim()}");
+        }
+    }
+
+    /// <summary>One object as JSON, or null when it doesn't exist. Throws when the cluster can't be asked.</summary>
+    public async Task<string?> GetJsonAsync(string kind, string namespaceName, string name, CancellationToken ct = default)
+    {
+        var result = await RunAsync(ct, "get", kind, name, "-n", namespaceName, "-o", "json", "--ignore-not-found");
+        if (!result.Ok)
+        {
+            throw new InvalidOperationException($"kubectl could not read {kind} {namespaceName}/{name}: {result.Stderr.Trim()}");
+        }
+
+        return string.IsNullOrWhiteSpace(result.Stdout) ? null : result.Stdout;
+    }
+
     /// <summary>Names of the objects of one kind matching a label selector.</summary>
     public async Task<IReadOnlyList<string>> ListNamesAsync(
         string kind, string namespaceName, string selector, CancellationToken ct = default)

@@ -13,6 +13,24 @@ Each release can have these sections: **Added**, **Changed**, **Deprecated**, **
 
 ### Added
 
+- Canary and blue-green rollout strategies (`rollout` in an environment or a service override):
+  the new version runs next to the old one, gets a growing share of the traffic step by step
+  (canary) or all of it at once after a preview (blue-green), and any failure sends all traffic
+  back. Deployify runs the steps on Kubernetes and OVHcloud (weighted by pods, no mesh needed),
+  Helm (canary), Nomad and Nomad + Consul (Nomad canaries), Azure Container Apps and Cloud Run
+  (exact revision traffic splits, with a preview address). On AWS ECS they map to ECS's own
+  `CANARY`, `LINEAR` and `BLUE_GREEN` deployments; on Argo CD and Flux, Deployify commits an
+  Argo Rollouts `Rollout` or a Flagger `Canary`. `plan`, `apply`, `ci` and `aspire deploy` refuse
+  a strategy the target can't run, before anything changes. `status --output json` adds
+  `strategy`, `candidate`, `trafficPercent` and `previewUrl` to rollout services.
+- Google Cloud Run target (`CloudRun`): each HTTP service becomes a Cloud Run service from a
+  generated Knative spec, applied with `gcloud run services replace`, with health-gated rollouts,
+  rollback by revision traffic, canary and blue-green, plan and diff, prune and destroy, and logs
+  from Cloud Logging. Init flags `--cloudrun-project`, `--cloudrun-region` and
+  `--cloudrun-service-account`.
+- `GcpSecretManager` secret backend (Cloud Run): secret env vars live in Google Secret Manager,
+  and each revision is pinned to the secret versions it was deployed with.
+
 - GitHub Action (`uses: lv3rmeulen/Deployify@v1`): installs Deployify, posts the plan as a pull
   request comment (updated in place, with each service's diff), and deploys with `deployify ci`
   on a push to the default branch. The action's tag picks the Deployify version.

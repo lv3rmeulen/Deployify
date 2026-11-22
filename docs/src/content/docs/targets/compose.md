@@ -25,3 +25,5 @@ Init flags: `--compose-project`, `--compose-restart`
 `generateHealthChecks` is off by default: the images `dotnet publish` produces contain neither
 `curl` nor `wget`, so a generated health check would mark every service unhealthy. Turn it on
 only when your images include a tool the check can use.
+
+Only the `Rolling` strategy is available: there's no traffic splitting on one host. See [canary and blue-green rollouts](/Deployify/guides/rollout-strategies/).

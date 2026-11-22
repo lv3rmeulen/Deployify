@@ -24,7 +24,7 @@ namespace Deployify.Target.OvhCloud;
 /// fetched from the API, so neither the Control Panel nor a hand-copied kubeconfig is needed.
 /// Manifest settings come from targetConfig["kubernetes"], OVHcloud ones from targetConfig["ovhcloud"].
 /// </summary>
-public sealed class OvhCloudDeploymentTarget : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget, IResourceLifecycle, IServiceLogSource
+public sealed class OvhCloudDeploymentTarget : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget, ITrafficShiftingTarget, IResourceLifecycle, IServiceLogSource
 {
     private readonly ILogger _logger;
     private readonly HttpMessageHandler? _apiHandler;
@@ -345,6 +345,37 @@ public sealed class OvhCloudDeploymentTarget : IDeploymentTarget, ISecretStorePr
 
     public async Task CompleteAsync(AspireManifest manifest, EnvironmentConfig config, string outputDirectory, CancellationToken ct = default)
         => await ((IRolloutTarget)Kubernetes).CompleteAsync(manifest, await ConnectAsync(config, ct), outputDirectory, ct);
+
+    // ── Canary and blue-green: the Kubernetes target's, on the connected cluster ──
+
+    public RolloutStrategyMode StrategyMode => Kubernetes.StrategyMode;
+
+    public TrafficPrecision Precision => Kubernetes.Precision;
+
+    public Task<string?> GetStrategyUnsupportedReasonAsync(
+        AspireManifest manifest, EnvironmentConfig config, string service, RolloutStrategy strategy, CancellationToken ct = default)
+        => Kubernetes.GetStrategyUnsupportedReasonAsync(manifest, config, service, strategy, ct);
+
+    public async Task<AppliedRevision> StartCandidateAsync(
+        AspireManifest manifest, EnvironmentConfig config, string outputDirectory, string service, RolloutStrategy strategy,
+        ServiceSnapshot before, CancellationToken ct = default)
+        => await Kubernetes.StartCandidateAsync(manifest, await ConnectAsync(config, ct), outputDirectory, service, strategy, before, ct);
+
+    public async Task<HealthObservation> ObserveCandidateAsync(
+        EnvironmentConfig config, string service, string candidate, CancellationToken ct = default)
+        => await Kubernetes.ObserveCandidateAsync(await ConnectAsync(config, ct), service, candidate, ct);
+
+    public async Task<int> ShiftTrafficAsync(
+        EnvironmentConfig config, string service, string candidate, int percent, CancellationToken ct = default)
+        => await Kubernetes.ShiftTrafficAsync(await ConnectAsync(config, ct), service, candidate, percent, ct);
+
+    public async Task<string?> PromoteAsync(
+        AspireManifest manifest, EnvironmentConfig config, string outputDirectory, string service, string candidate,
+        CancellationToken ct = default)
+        => await Kubernetes.PromoteAsync(manifest, await ConnectAsync(config, ct), outputDirectory, service, candidate, ct);
+
+    public async Task FinishAsync(EnvironmentConfig config, string service, string candidate, CancellationToken ct = default)
+        => await Kubernetes.FinishAsync(await ConnectAsync(config, ct), service, candidate, ct);
 
     // ── Lifecycle (destroy / prune) ───────────────────────────────────────────
 

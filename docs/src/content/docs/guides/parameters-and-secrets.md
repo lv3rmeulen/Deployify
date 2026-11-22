@@ -94,6 +94,7 @@ platform at run time.
 | `Ssm` | AwsEcs | SSM parameter names (as with `Inline`) | SecureStrings under `<secretsPrefix>/_parameters/` |
 | `SecretsManager` | AwsEcs | Secrets Manager ARNs with a JSON key, pinned to a version by `apply` | Secret `<secretsPrefix>/_parameters` (one JSON document) |
 | `KeyVault` | AzureContainerApps, Kubernetes | ACA: `keyVaultUrl` references. Kubernetes: a `SecretProviderClass` and `secretKeyRef`s | Key Vault secrets `<prefix>-parameters-*`, tagged |
+| `GcpSecretManager` | CloudRun | Secret Manager `secretKeyRef`s, pinned to a version by `apply` | Secret `<prefix>-generated` (one JSON document) |
 
 **Kubernetes Secrets.** A value that is exactly one secret becomes a `secretKeyRef`. A value that embeds one, such as
 a connection string, uses Kubernetes dependent variables: the secret is loaded into

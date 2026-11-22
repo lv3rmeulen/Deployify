@@ -4,6 +4,7 @@ using Deployify.Plugins;
 using Deployify.Core.Services;
 using Deployify.Target.AwsEcs;
 using Deployify.Target.AzureContainerApps;
+using Deployify.Target.CloudRun;
 using Deployify.Target.Compose;
 using Deployify.Target.GitOps;
 using Deployify.Target.Helm;
@@ -44,6 +45,7 @@ public static class DeployifyServiceCollectionExtensions
             .AddSingleton<IDeploymentTarget, FluxDeploymentTarget>()
             .AddSingleton<IDeploymentTarget, OvhCloudDeploymentTarget>()
             .AddSingleton<IDeploymentTarget, IisDeploymentTarget>()
+            .AddSingleton<IDeploymentTarget, CloudRunDeploymentTarget>()
             .AddSingleton(_ => new PluginCatalog())
             .AddSingleton(sp => new PluginTargetSource(
                 sp.GetRequiredService<PluginCatalog>(), sp.GetService<ILoggerFactory>(), sp.GetService<PluginHostOptions>()))

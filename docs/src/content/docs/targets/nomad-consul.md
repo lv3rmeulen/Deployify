@@ -30,3 +30,5 @@ Init flags: `--nc-nomad-address`, `--nc-nomad-token`, `--nc-nomad-namespace`, `-
 With `enableIngressGateway`, one extra job (named `ingressGatewayName`) runs a Consul ingress
 gateway with a TCP listener for every HTTP endpoint marked external in the AppHost.
 `healthCheckType` works as for the `Nomad` target (`tcp` by default).
+
+Canary and blue-green use Nomad's own canaries, as on the Nomad target; see [canary and blue-green rollouts](/Deployify/guides/rollout-strategies/).

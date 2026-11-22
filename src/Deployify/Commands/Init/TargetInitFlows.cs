@@ -26,6 +26,7 @@ internal sealed class TargetInitFlows
             new ComposeInitFlow(),
             new AwsEcsInitFlow(),
             new AzureContainerAppsInitFlow(),
+            new CloudRunInitFlow(),
             new NomadConsulInitFlow()
         ];
     }
@@ -45,7 +46,8 @@ internal sealed class TargetInitFlows
         DeploymentTargetType.ArgoCd,
         DeploymentTargetType.Flux,
         DeploymentTargetType.OvhCloud,
-        DeploymentTargetType.Iis
+        DeploymentTargetType.Iis,
+        DeploymentTargetType.CloudRun
     ];
 
     /// <summary>Every flow's flags, each listed once.</summary>

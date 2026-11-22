@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Deployify.Core.Expressions;
+using Deployify.Core.Models;
 
 namespace Deployify.Target.AzureContainerApps;
 
@@ -38,6 +39,12 @@ public sealed class AcaApp
     public bool IsProjectService { get; set; }
 
     public AcaIngressType IngressType { get; set; } = AcaIngressType.External;
+
+    /// <summary>
+    /// The service's rollout strategy. Canary and blue-green run the app in multiple-revision mode,
+    /// so the old and the new revision can share the traffic.
+    /// </summary>
+    public RolloutStrategy Rollout { get; set; } = RolloutStrategy.Rolling;
 
     /// <summary>Path of the generated bicep/json app spec file.</summary>
     public string? SpecFilePath { get; set; }

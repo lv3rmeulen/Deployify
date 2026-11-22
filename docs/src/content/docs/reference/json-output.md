@@ -225,7 +225,11 @@ and events, and `rollouts` is `null`:
         "before": { "existed": true, "revision": "arn:aws:ecs:…:task-definition/api:6" },
         "revision": "arn:aws:ecs:…:task-definition/api:7",
         "restoredRevision": "arn:aws:ecs:…:task-definition/api:6",
-        "detail": "2 of 2 tasks unhealthy"
+        "detail": "2 of 2 tasks unhealthy",
+        "strategy": null,
+        "candidate": null,
+        "trafficPercent": null,
+        "previewUrl": null
       }
     ],
     "events": [

@@ -95,6 +95,12 @@ public sealed class AppliedRevision
     public string? Revision { get; init; }
 
     public string? Error { get; init; }
+
+    /// <summary>
+    /// Where the new revision can be tried out before it gets traffic (a revision tag URL, a
+    /// preview Service), for canary and blue-green candidates. Null when the platform has none.
+    /// </summary>
+    public string? PreviewUrl { get; init; }
 }
 
 public enum HealthState

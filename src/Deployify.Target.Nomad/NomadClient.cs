@@ -183,7 +183,8 @@ public sealed class NomadClient : IDisposable
         var result = new List<NomadDeploymentInfo>();
         foreach (var d in doc.RootElement.EnumerateArray())
         {
-            int desired = 0, healthy = 0, unhealthy = 0;
+            int desired = 0, healthy = 0, unhealthy = 0, canaries = 0;
+            var promoted = true;
             if (d.TryGetProperty("TaskGroups", out var groups) && groups.ValueKind == JsonValueKind.Object)
             {
                 foreach (var g in groups.EnumerateObject())
@@ -191,6 +192,12 @@ public sealed class NomadClient : IDisposable
                     desired += Int(g.Value, "DesiredTotal");
                     healthy += Int(g.Value, "HealthyAllocs");
                     unhealthy += Int(g.Value, "UnhealthyAllocs");
+                    var groupCanaries = Int(g.Value, "DesiredCanaries");
+                    canaries += groupCanaries;
+                    if (groupCanaries > 0 && !(g.Value.TryGetProperty("Promoted", out var p) && p.ValueKind == JsonValueKind.True))
+                    {
+                        promoted = false;
+                    }
                 }
             }
 
@@ -199,13 +206,37 @@ public sealed class NomadClient : IDisposable
                 d.TryGetProperty("Status", out var st) ? st.GetString() ?? "" : "",
                 d.TryGetProperty("StatusDescription", out var sd) ? sd.GetString() : null,
                 desired, healthy, unhealthy,
-                d.TryGetProperty("CreateIndex", out var ci) && ci.ValueKind == JsonValueKind.Number ? ci.GetInt64() : 0));
+                d.TryGetProperty("CreateIndex", out var ci) && ci.ValueKind == JsonValueKind.Number ? ci.GetInt64() : 0)
+            {
+                Id = d.TryGetProperty("ID", out var id) ? id.GetString() : null,
+                DesiredCanaries = canaries,
+                Promoted = canaries == 0 || promoted
+            });
         }
 
         return [.. result.OrderByDescending(r => r.JobVersion).ThenByDescending(r => r.CreateIndex)];
 
         static int Int(JsonElement e, string name)
             => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt32() : 0;
+    }
+
+    /// <summary>Promotes every canary of a deployment (POST /v1/deployment/promote/:id).</summary>
+    public async Task PromoteDeploymentAsync(string deploymentId, CancellationToken ct = default)
+    {
+        var resp = await _http.PostAsJsonAsync($"v1/deployment/promote/{Uri.EscapeDataString(deploymentId)}?{Ns}",
+            new { DeploymentID = deploymentId, All = true }, ct);
+        await EnsureSuccessAsync(resp, $"promote deployment {deploymentId}", ct);
+    }
+
+    /// <summary>
+    /// Marks a deployment failed (POST /v1/deployment/fail/:id), which stops its canaries and, with
+    /// auto_revert, makes Nomad go back to the last stable version.
+    /// </summary>
+    public async Task FailDeploymentAsync(string deploymentId, CancellationToken ct = default)
+    {
+        var resp = await _http.PostAsJsonAsync($"v1/deployment/fail/{Uri.EscapeDataString(deploymentId)}?{Ns}",
+            new { DeploymentID = deploymentId }, ct);
+        await EnsureSuccessAsync(resp, $"fail deployment {deploymentId}", ct);
     }
 
     /// <summary>
@@ -461,4 +492,16 @@ public sealed record NomadDeploymentInfo(
     int DesiredTotal,
     int HealthyAllocs,
     int UnhealthyAllocs,
-    long CreateIndex);
+    long CreateIndex)
+{
+    public string? Id { get; init; }
+
+    /// <summary>Canaries the deployment places next to the old allocations (0 for a rolling update).</summary>
+    public int DesiredCanaries { get; init; }
+
+    /// <summary>False while the deployment's canaries wait for promotion.</summary>
+    public bool Promoted { get; init; } = true;
+
+    /// <summary>Canaries placed and waiting for <c>promote</c>.</summary>
+    public bool AwaitingPromotion => Status == "running" && DesiredCanaries > 0 && !Promoted;
+}

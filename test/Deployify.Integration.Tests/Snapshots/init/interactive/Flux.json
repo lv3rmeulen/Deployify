@@ -79,7 +79,12 @@
           "CreateSource": true,
           "Interval": "1m",
           "Timeout": "5m",
-          "Prune": true
+          "Prune": true,
+          "Flagger": {
+            "Provider": "kubernetes",
+            "Interval": "1m",
+            "Threshold": 2
+          }
         }
       },
       "Protected": false,

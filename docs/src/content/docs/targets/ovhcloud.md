@@ -97,3 +97,5 @@ ingress-nginx, which gets an OVHcloud Load Balancer for its `LoadBalancer` Servi
 
 **Destroy** and `apply --prune` remove the service namespaces, as on Kubernetes. The cluster and its
 node pools are never touched.
+
+Canary and blue-green work as on the Kubernetes target; see [canary and blue-green rollouts](/Deployify/guides/rollout-strategies/).

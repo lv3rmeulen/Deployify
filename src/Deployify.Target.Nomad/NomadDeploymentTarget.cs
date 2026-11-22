@@ -23,7 +23,8 @@ public sealed class NomadDeploymentTarget(
     JobGenerator jobGenerator,
     IPublisher publisher,
     ILogger<NomadDeploymentTarget> logger,
-    ILoggerFactory loggerFactory) : IDeploymentTarget, IRolloutTarget, IResourceLifecycle, IResourceSourceProvider, IServiceLogSource
+    ILoggerFactory loggerFactory) : IDeploymentTarget, IRolloutTarget, ITrafficShiftingTarget, IResourceLifecycle, IResourceSourceProvider,
+        IServiceLogSource
 {
     private readonly NomadRollout _rollout = new(logger);
 
@@ -241,7 +242,7 @@ public sealed class NomadDeploymentTarget(
     {
         var cfg = GetConfig(config);
         using var client = BuildClient(cfg);
-        return await NomadRollout.ObserveAsync(client, service, revision, cfg.AutoRevert, ct);
+        return await _rollout.ObserveAsync(client, cfg.Namespace, service, revision, cfg.AutoRevert, ct);
     }
 
     public async Task<string?> RestoreAsync(EnvironmentConfig config, ServiceSnapshot snapshot, CancellationToken ct = default)
@@ -253,6 +254,52 @@ public sealed class NomadDeploymentTarget(
 
     public Task<bool> HasNativeRollbackAsync(EnvironmentConfig config, CancellationToken ct = default)
         => Task.FromResult(GetConfig(config).AutoRevert);
+
+    // ── Canary and blue-green: Nomad's own canaries, promoted by Deployify ────
+
+    public RolloutStrategyMode StrategyMode => RolloutStrategyMode.Driven;
+
+    /// <summary>The canary count is in the job's update block, so the share is fixed for the whole rollout.</summary>
+    public TrafficPrecision Precision => TrafficPrecision.Fixed;
+
+    public Task<string?> GetStrategyUnsupportedReasonAsync(
+        AspireManifest manifest, EnvironmentConfig config, string service, RolloutStrategy strategy, CancellationToken ct = default)
+        => Task.FromResult<string?>(null);
+
+    /// <summary>Submits the job, whose update block asks for canaries; Nomad starts them next to the running allocations.</summary>
+    public Task<AppliedRevision> StartCandidateAsync(
+        AspireManifest manifest, EnvironmentConfig config, string outputDirectory, string service, RolloutStrategy strategy,
+        ServiceSnapshot before, CancellationToken ct = default)
+        => ApplyServiceAsync(manifest, config, outputDirectory, service, ct);
+
+    public async Task<HealthObservation> ObserveCandidateAsync(
+        EnvironmentConfig config, string service, string candidate, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        using var client = BuildClient(GetConfig(config));
+        return await NomadRollout.ObserveCanariesAsync(client, service, candidate, cfg.AutoRevert, ct);
+    }
+
+    /// <summary>Changes nothing: Nomad's canary count is fixed. Returns the canaries' share of the allocations.</summary>
+    public async Task<int> ShiftTrafficAsync(
+        EnvironmentConfig config, string service, string candidate, int percent, CancellationToken ct = default)
+    {
+        using var client = BuildClient(GetConfig(config));
+        return await NomadRollout.CanaryShareAsync(client, service, candidate, ct);
+    }
+
+    public async Task<string?> PromoteAsync(
+        AspireManifest manifest, EnvironmentConfig config, string outputDirectory, string service, string candidate,
+        CancellationToken ct = default)
+    {
+        using var client = BuildClient(GetConfig(config));
+        await _rollout.PromoteAsync(client, service, candidate, ct);
+        return candidate;
+    }
+
+    /// <summary>Nothing to clean up: Nomad stops the old allocations itself once the canaries are promoted.</summary>
+    public Task FinishAsync(EnvironmentConfig config, string service, string candidate, CancellationToken ct = default)
+        => Task.CompletedTask;
 
     // ── Lifecycle (destroy / prune) ───────────────────────────────────────────
 

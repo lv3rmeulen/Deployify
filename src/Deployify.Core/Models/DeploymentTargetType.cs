@@ -37,9 +37,12 @@ public readonly partial struct DeploymentTargetType : IEquatable<DeploymentTarge
     /// <summary>IIS on Windows Server: each project published to a folder and hosted as an IIS site.</summary>
     public static readonly DeploymentTargetType Iis = new(Names.Iis);
 
+    /// <summary>Google Cloud Run: each service a Cloud Run service, rolled out as revisions.</summary>
+    public static readonly DeploymentTargetType CloudRun = new(Names.CloudRun);
+
     /// <summary>The targets that ship with Deployify, in the order they are offered.</summary>
     public static IReadOnlyList<DeploymentTargetType> BuiltIn { get; } =
-        [Nomad, Kubernetes, Compose, AwsEcs, AzureContainerApps, NomadConsul, Helm, ArgoCd, Flux, OvhCloud, Iis];
+        [Nomad, Kubernetes, Compose, AwsEcs, AzureContainerApps, NomadConsul, Helm, ArgoCd, Flux, OvhCloud, Iis, CloudRun];
 
     /// <summary>
     /// The built-in IDs as constants, for <c>switch</c> over <see cref="Value"/> and for attributes.
@@ -57,6 +60,7 @@ public readonly partial struct DeploymentTargetType : IEquatable<DeploymentTarge
         public const string Flux = "Flux";
         public const string OvhCloud = "OvhCloud";
         public const string Iis = "Iis";
+        public const string CloudRun = "CloudRun";
     }
 
     private readonly string? _value;

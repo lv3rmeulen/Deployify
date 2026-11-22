@@ -209,6 +209,7 @@ public sealed record DeploymentSession(
                 DeploymentTargetType.Names.ArgoCd or DeploymentTargetType.Names.Flux => "gitops",
                 DeploymentTargetType.Names.OvhCloud => "ovhcloud",
                 DeploymentTargetType.Names.Iis => "iis",
+                DeploymentTargetType.Names.CloudRun => "cloudrun",
                 _ => Config.Target.ToString().ToLower()
             };
             if (!Config.TargetConfig.TryGetValue(key, out var raw) ||
@@ -237,6 +238,8 @@ public sealed record DeploymentSession(
                     el.TryGetProperty("clusterId", out var k) || el.TryGetProperty("ClusterId", out k) ? k.GetString() ?? "-" : "-",
                 DeploymentTargetType.Names.Iis =>
                     el.TryGetProperty("host", out var h) || el.TryGetProperty("Host", out h) ? h.GetString() ?? "localhost" : "localhost",
+                DeploymentTargetType.Names.CloudRun =>
+                    el.TryGetProperty("region", out var cr) || el.TryGetProperty("Region", out cr) ? cr.GetString() ?? "-" : "-",
                 _ => "-"
             };
         }

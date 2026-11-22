@@ -20,8 +20,10 @@ public static class ArgoCdManifests
     /// Application delete what it deployed, which is how destroy and prune remove a service.
     /// </summary>
     public static string Application(
-        KubernetesServiceManifest svc, GitOpsTargetConfig gitops, ArgoCdTargetConfig argo, string repoPath)
+        KubernetesServiceManifest svc, GitOpsTargetConfig gitops, ArgoCdTargetConfig argo, string repoPath,
+        Deployify.Core.Models.RolloutStrategy? strategy = null)
     {
+        var progressive = strategy is { IsProgressive: true };
         var q = (Func<string?, string>)KubernetesManifestGenerator.QuoteYaml;
         var sb = new StringBuilder();
         sb.Append($"""
@@ -62,6 +64,13 @@ public static class ArgoCdManifests
                   - PruneLast=true
 
             """);
+        if (progressive)
+        {
+            // Argo Rollouts scales the Deployment and edits Service selectors; self-heal must leave them.
+            sb.Append("      - RespectIgnoreDifferences=true\n");
+            sb.Append(ProgressiveDelivery.ArgoCdIgnoreDifferences(svc, strategy!));
+        }
+
         return sb.ToString();
     }
 

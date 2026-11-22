@@ -33,6 +33,7 @@ export default defineConfig({
 					items: [
 						'guides/deploying',
 						'guides/rollouts',
+						'guides/rollout-strategies',
 						'guides/prune-and-destroy',
 						'guides/logs',
 						'guides/parameters-and-secrets',
@@ -60,6 +61,7 @@ export default defineConfig({
 						'targets/nomad-consul',
 						'targets/aws-ecs',
 						'targets/azure-container-apps',
+						'targets/cloud-run',
 						'targets/digitalocean',
 						'targets/iis',
 						'targets/plugins',

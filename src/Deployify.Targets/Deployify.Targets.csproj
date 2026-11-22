@@ -26,6 +26,7 @@
     <ProjectReference Include="..\Deployify.Target.GitOps\Deployify.Target.GitOps.csproj" />
     <ProjectReference Include="..\Deployify.Target.OvhCloud\Deployify.Target.OvhCloud.csproj" />
     <ProjectReference Include="..\Deployify.Target.Iis\Deployify.Target.Iis.csproj" />
+    <ProjectReference Include="..\Deployify.Target.CloudRun\Deployify.Target.CloudRun.csproj" />
   </ItemGroup>
 
 </Project>

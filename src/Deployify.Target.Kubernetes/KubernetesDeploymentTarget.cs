@@ -21,9 +21,14 @@ namespace Deployify.Target.Kubernetes;
 public sealed class KubernetesDeploymentTarget(
     IPublisher publisher,
     ILogger<KubernetesDeploymentTarget> logger)
-    : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget, IResourceLifecycle, IResourceSourceProvider, IServiceLogSource
+    : IDeploymentTarget, ISecretStoreProvider, IRolloutTarget, ITrafficShiftingTarget, IResourceLifecycle, IResourceSourceProvider,
+        IServiceLogSource
 {
     private readonly KubernetesManifestGenerator _generator = new();
+    private readonly KubernetesTrafficShifter _shifter = new(logger);
+
+    /// <summary>A blue-green's Service file, held back at promotion and applied by <see cref="FinishAsync"/>.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _serviceFileAfterSwitch = new();
 
     /// <summary>
     /// A service's ConfigMap and Secret as they were before the rollout, kept in memory only so
@@ -728,6 +733,8 @@ public sealed class KubernetesDeploymentTarget(
         var service = snapshot.ServiceName;
         var ns = snapshot.Data.TryGetValue(NamespaceKey, out var n) ? n : KubernetesManifestGenerator.NamespaceFor(cfg, service);
 
+        // Traffic back to the service's own pods first, then any canary or preview goes.
+        await KubernetesTrafficShifter.RemoveCandidatesAsync(kubectl, ns, service, ct);
         await RestoreConfigAsync(kubectl, ns, snapshot, ct);
 
         var json = await kubectl.GetDeploymentJsonAsync(service, ns, ct);
@@ -895,6 +902,114 @@ public sealed class KubernetesDeploymentTarget(
 
     public async Task<string?> GetUnavailableReasonAsync(EnvironmentConfig config, CancellationToken ct = default)
         => await KubectlAvailableAsync(ct) ? null : "kubectl is not installed (the API fallback can't watch rollouts)";
+
+    // ── Canary and blue-green ─────────────────────────────────────────────────
+
+    public RolloutStrategyMode StrategyMode => RolloutStrategyMode.Driven;
+
+    /// <summary>A canary's share follows from its number of pods; see <see cref="KubernetesTrafficShifter"/>.</summary>
+    public TrafficPrecision Precision => TrafficPrecision.Instances;
+
+    public Task<string?> GetStrategyUnsupportedReasonAsync(
+        AspireManifest manifest, EnvironmentConfig config, string service, RolloutStrategy strategy, CancellationToken ct = default)
+        => Task.FromResult<string?>(null);
+
+    public async Task<AppliedRevision> StartCandidateAsync(
+        AspireManifest manifest, EnvironmentConfig config, string outputDirectory, string service, RolloutStrategy strategy,
+        ServiceSnapshot before, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var svc = await FindServiceAsync(manifest, config, cfg, service, ct);
+        var kubectl = await RequireKubectlAsync(cfg, ct);
+        try
+        {
+            return await _shifter.StartAsync(kubectl, svc, strategy, c => SyncSecretsAsync(svc, config, kubectl, c), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new AppliedRevision { ServiceName = service, Success = false, Error = ex.Message };
+        }
+    }
+
+    public async Task<HealthObservation> ObserveCandidateAsync(
+        EnvironmentConfig config, string service, string candidate, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        return await KubernetesTrafficShifter.ObserveAsync(
+            await RequireKubectlAsync(cfg, ct), KubernetesManifestGenerator.NamespaceFor(cfg, service), candidate, ct);
+    }
+
+    public async Task<int> ShiftTrafficAsync(
+        EnvironmentConfig config, string service, string candidate, int percent, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        return await _shifter.ShiftAsync(
+            await RequireKubectlAsync(cfg, ct), KubernetesManifestGenerator.NamespaceFor(cfg, service), service, candidate, percent, ct);
+    }
+
+    /// <summary>
+    /// Applies the service's generated manifests, so its own Deployment rolls out the new version.
+    /// For blue-green the Service is left on the preview's pods until <see cref="FinishAsync"/>, so
+    /// no request reaches a half-updated Deployment.
+    /// </summary>
+    public async Task<string?> PromoteAsync(
+        AspireManifest manifest, EnvironmentConfig config, string outputDirectory, string service, string candidate,
+        CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var kubectl = await RequireKubectlAsync(cfg, ct);
+        var ns = KubernetesManifestGenerator.NamespaceFor(cfg, service);
+        var svcDir = Path.Combine(outputDirectory, service);
+        if (!Directory.Exists(svcDir))
+        {
+            throw new InvalidOperationException($"Artifact directory not found: {svcDir}. Run 'deployify plan' first.");
+        }
+
+        var serviceFile = Path.Combine(svcDir, "service.yaml");
+        var files = Directory.GetFiles(svcDir, "*.yaml", SearchOption.AllDirectories)
+            .Where(f => !KubernetesTrafficShifter.IsPreview(service, candidate) || f != serviceFile)
+            .ToList();
+        var (ok, output) = await kubectl.ApplyFilesAsync(files, ct);
+        if (!ok)
+        {
+            throw new InvalidOperationException(output.Trim());
+        }
+
+        if (KubernetesTrafficShifter.IsPreview(service, candidate) && File.Exists(serviceFile))
+        {
+            _serviceFileAfterSwitch[$"{ns}/{service}"] = serviceFile;
+        }
+
+        if (_shifter.TakeRestart(ns, service) && !await kubectl.RolloutRestartAsync(service, ns, ct))
+        {
+            logger.LogWarning("Secrets of {Name} changed but its pods could not be restarted.", service);
+        }
+
+        var json = await kubectl.GetDeploymentJsonAsync(service, ns, ct)
+                   ?? throw new InvalidOperationException($"Deployment {ns}/{service} is missing after apply.");
+        return KubernetesDeploymentStatus.Parse(json).Generation.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// Points traffic back at the service's own pods, now on the new version: for blue-green by
+    /// applying the generated Service (which also brings any port change), then deletes the candidate.
+    /// </summary>
+    public async Task FinishAsync(EnvironmentConfig config, string service, string candidate, CancellationToken ct = default)
+    {
+        var cfg = GetConfig(config);
+        var kubectl = await RequireKubectlAsync(cfg, ct);
+        var ns = KubernetesManifestGenerator.NamespaceFor(cfg, service);
+        if (_serviceFileAfterSwitch.TryRemove($"{ns}/{service}", out var serviceFile))
+        {
+            var (ok, output) = await kubectl.ApplyFilesAsync([serviceFile], ct);
+            if (!ok)
+            {
+                throw new InvalidOperationException($"the Service could not be switched back: {output.Trim()}");
+            }
+        }
+
+        await _shifter.FinishAsync(kubectl, ns, service, ct);
+    }
 
     private async Task<DeploymentResult> ApplyViaApiAsync(
         KubernetesServiceManifest svc, IEnumerable<string> files, KubernetesTargetConfig kubernetesConfig,

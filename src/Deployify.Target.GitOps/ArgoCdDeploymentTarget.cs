@@ -43,7 +43,17 @@ public sealed class ArgoCdDeploymentTarget : GitOpsDeploymentTarget
     protected override string RegistrationNamespace(EnvironmentConfig config) => GetArgoCdConfig(config).Namespace;
 
     protected override string RenderServiceRegistration(KubernetesServiceManifest svc, EnvironmentConfig config, string repoPath)
-        => ArgoCdManifests.Application(svc, GetGitOpsConfig(config), GetArgoCdConfig(config), repoPath);
+        => ArgoCdManifests.Application(svc, GetGitOpsConfig(config), GetArgoCdConfig(config), repoPath,
+            RolloutStrategies.For(config, svc.ServiceName));
+
+    /// <summary>Argo Rollouts, which must be installed in the cluster.</summary>
+    protected override string? StrategyUnsupportedReason(KubernetesServiceManifest svc, RolloutStrategy strategy, EnvironmentConfig config)
+        => ProgressiveDelivery.ArgoRolloutsUnsupportedReason(svc, strategy);
+
+    protected override IReadOnlyList<(string FileName, string Content)> WithStrategy(
+        KubernetesServiceManifest svc, RolloutStrategy strategy, EnvironmentConfig config,
+        IReadOnlyList<(string FileName, string Content)> files)
+        => ProgressiveDelivery.ArgoRollouts(svc, strategy, files);
 
     /// <summary>Argo CD reads the repository itself (with credentials configured in Argo CD); nothing is shared.</summary>
     protected override string? RenderEnvironmentRegistration(EnvironmentConfig config) => null;

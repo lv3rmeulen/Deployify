@@ -114,6 +114,12 @@
     Container Apps environment name.
 --aca-acr : String
     Azure Container Registry login server.
+--cloudrun-project : String
+    Google Cloud project ID.
+--cloudrun-region : String = us-central1
+    Cloud Run region.
+--cloudrun-service-account : String
+    Service account the services run as (blank: the default compute service account).
 --nc-nomad-address : String = http://localhost:4646
     Nomad address (Consul mesh target).
 --nc-nomad-token : String
