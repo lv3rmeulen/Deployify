@@ -3,7 +3,7 @@ title: deployify dashboard
 description: "Serve the environment's deployed resources to the Aspire dashboard (a standalone resource service)."
 sidebar:
   label: dashboard
-  order: 18
+  order: 19
 ---
 
 :::note

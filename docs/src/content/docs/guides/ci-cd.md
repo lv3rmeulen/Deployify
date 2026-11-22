@@ -62,6 +62,9 @@ or from `git rev-parse HEAD` when the working tree has no uncommitted changes.
 The commit tag applies only to runs that publish. `--skip-apply` and `--no-publish` use the
 configured tag, so a drift check compares with what is deployed. After a `ci` deploy, run
 the drift check with the same tag: `deployify ci --skip-apply --fail-on-changes --image-tag "$GITHUB_SHA"`.
+To check on a schedule whether environments still match their last deploy, and get alerts when
+they don't, use [`deployify drift`](/Deployify/guides/drift-alerts/) instead: it compares with
+what was deployed, not with the checked-out commit.
 
 The publish step builds projects and Dockerfile-based resources, then regenerates the
 artifacts so the apply step deploys each image by the digest it was just pushed with. See

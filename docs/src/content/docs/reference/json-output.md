@@ -1,9 +1,9 @@
 ---
 title: "JSON output (--output json)"
-description: "The machine-readable output of plan, diff, status, explain, promote and history, and its schema."
+description: "The machine-readable output of plan, diff, drift, status, explain, promote and history, and its schema."
 ---
 
-`plan`, `diff`, `status`, `explain`, `promote` and `history` take `--output json` (or `-o json`). The
+`plan`, `diff`, `drift`, `status`, `explain`, `promote` and `history` take `--output json` (or `-o json`). The
 command then writes exactly one JSON document to stdout, and everything it would normally print
 (the tables, warnings, progress and logs) to stderr. A pipeline can parse stdout and still
 show the human-readable output in its log:
@@ -158,6 +158,68 @@ and on top of that Deployify replaces every secret parameter value it resolved d
 with `****`, as is and base64-encoded, in `oldValue`, `newValue` and `reason`. A secret
 Deployify never resolved (one a service reads from somewhere else) can't be recognized, so
 treat the values like the rest of your CI log.
+
+## drift
+
+`environments` has one entry per environment checked: the active one, `--env`, or with `--all`
+every environment in `deployify-state.json` that isn't abstract. With `--all` the envelope's
+`environment` and `target` are `null`; each entry has its own.
+
+```json
+"result": {
+  "drifted": true,
+  "environments": [
+    {
+      "environment": "prod",
+      "target": { "id": "AwsEcs", "name": "AWS ECS" },
+      "status": "drifted",
+      "checkedAt": "2026-11-22T09:00:04.118+00:00",
+      "reason": null,
+      "deployed": {
+        "releaseId": "8c1f0a2b9d3e",
+        "at": "2026-11-20T14:02:11.204+00:00",
+        "tag": "4f2c9e1a7b3d4f2c9e1a7b3d4f2c9e1a7b3d4f2c",
+        "commit": "4f2c9e1a7b3d4f2c9e1a7b3d4f2c9e1a7b3d4f2c",
+        "actor": "lv3rmeulen",
+        "runUrl": "https://github.com/acme/shop/actions/runs/123"
+      },
+      "entries": [
+        { "service": "redis", "kind": "missing", "field": null, "live": null, "deployed": null, "reason": null },
+        { "service": "worker", "kind": "changed", "field": "desired_count", "live": "5", "deployed": "2", "reason": null }
+      ],
+      "ignored": 0,
+      "fingerprint": "3f9a0c1d2e4b5a69",
+      "alert": {
+        "event": "drifted",
+        "deliveries": [ { "channel": "slack", "type": "slack", "ok": true, "error": null } ]
+      }
+    },
+    {
+      "environment": "staging",
+      "target": { "id": "AwsEcs", "name": "AWS ECS" },
+      "status": "inSync",
+      "checkedAt": "2026-11-22T09:00:06.950+00:00",
+      "reason": null,
+      "deployed": { "releaseId": "77d0e4c1a2b3", "at": "2026-11-21T10:40:00.000+00:00", "tag": "…", "commit": "…", "actor": "lv3rmeulen", "runUrl": null },
+      "entries": [],
+      "ignored": 0,
+      "fingerprint": "",
+      "alert": null
+    }
+  ]
+}
+```
+
+| Property | |
+|---|---|
+| `drifted` | `true` when any environment drifted; the exit code is then `2`. |
+| `status` | `inSync`, `drifted`, `unknown` (nothing drifted that could be checked, but some services couldn't be compared), `error` (the check couldn't run; `reason` says why), `notDeployed` (no successful deploy recorded yet) or `skipped` (a deploy holds the lock, or `drift.enabled` is `false`). Can grow. |
+| `deployed` | The deploy the live state was compared with. `releaseId` is `null` when the release history is off. |
+| `entries[].kind` | `missing` (deployed, gone from the target), `extra` (on the target, not deployed), `changed` or `unknown`. Ordered in that order. |
+| `entries[].live`, `entries[].deployed` | What `diff` calls `oldValue` and `newValue`, with the same per-target meaning and the same masking of secrets. |
+| `ignored` | Differences left out by `drift.ignore`. |
+| `fingerprint` | The same for the same differences; empty when nothing drifted. |
+| `alert` | The alert the check called for and where it was delivered; `null` when none was due, and with `--no-notify`. `event` is `drifted`, `changed`, `reminder`, `resolved` or `failing`. `deliveries` is empty when `drift.notify` has no channels. |
 
 ## explain
 

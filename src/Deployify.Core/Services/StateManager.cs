@@ -128,6 +128,26 @@ public sealed class StateManager(SecretRegistry? secrets = null) : IStateManager
         return file;
     }
 
+    /// <summary>
+    /// An environment's effective settings (bases already merged in) as the state file spells them,
+    /// without <c>extends</c> and <c>abstract</c>. Drift checks keep this with each deploy.
+    /// </summary>
+    public static JsonObject SerializeEnvironment(EnvironmentConfig config) => Serialize(config);
+
+    /// <summary>Reads settings written by <see cref="SerializeEnvironment"/>.</summary>
+    public static EnvironmentConfig DeserializeEnvironment(JsonObject node, string what)
+    {
+        try
+        {
+            return node.Deserialize<EnvironmentConfig>(s_jsonOptions)
+                   ?? throw new StateFormatException($"{what} has no environment settings.");
+        }
+        catch (Exception ex) when (ex is JsonException or ArgumentException)
+        {
+            throw new StateFormatException($"{what} has environment settings this Deployify can't read: {ex.Message}", ex);
+        }
+    }
+
     private static JsonObject Serialize(EnvironmentConfig config)
         => EnvironmentInheritance.WithoutMetadata(JsonSerializer.SerializeToNode(config, s_jsonOptions)!.AsObject());
 

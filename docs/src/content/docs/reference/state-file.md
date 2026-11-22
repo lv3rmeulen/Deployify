@@ -204,3 +204,26 @@ signed cosign attestation. It needs syft and cosign installed. See
 ```json
 "signing": { "enabled": true, "key": "awskms:///alias/deployify-signing" }
 ```
+
+## Drift checks
+
+`drift` says whether [`deployify drift`](/Deployify/guides/drift-alerts/) checks the environment
+and where its alerts go. Without it the environment is still checked, without alerts. Webhook
+URLs are secrets, so read them from environment variables with `env:`.
+
+```json
+"drift": {
+  "notify": [ { "type": "Slack", "url": "env:SLACK_DRIFT_WEBHOOK" } ],
+  "remindAfterHours": 24,
+  "ignore": [ "*:desired_count" ]
+}
+```
+
+| Key | Default | |
+|---|---|---|
+| `enabled` | `true` | `false` leaves the environment out of `drift --all`. |
+| `notify` | `[]` | Channels: `type` (`Slack`, `Teams` or `Webhook`), `url`, optional `name`, and for `Webhook` optional `headers`. |
+| `remindAfterHours` | none | Alert again about an unchanged drift after this many hours. |
+| `notifyOnResolve` | `true` | Alert when the environment matches its deploy again. |
+| `notifyOnError` | `true` | Alert when the check can't tell. |
+| `ignore` | `[]` | `service`, `service:field` or `*:field` differences that never count as drift. |

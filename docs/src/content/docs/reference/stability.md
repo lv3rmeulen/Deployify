@@ -51,7 +51,7 @@ current behavior.
 
 ### JSON output
 
-The documents `plan`, `diff`, `status`, `explain` and `promote` write with `--output json`,
+The documents `plan`, `diff`, `drift`, `status`, `explain`, `promote` and `history` write with `--output json`,
 as described in [JSON output](/Deployify/reference/json-output/) and its published schema
 (`schemaVersion` 1):
 
@@ -62,6 +62,10 @@ as described in [JSON output](/Deployify/reference/json-output/) and its publish
 A minor release can add properties, and new values for rollout `operation` and `state`, so
 consumers must ignore properties they don't know. Message texts and `explain`'s `details` keys
 aren't covered.
+
+The JSON a [drift alert webhook](/Deployify/guides/drift-alerts/#channels) receives is covered
+the same way: its properties keep their names and meaning, and new ones may be added. The text
+of Slack and Teams messages isn't covered.
 
 ### What Deployify creates on a platform
 
@@ -81,7 +85,7 @@ recommendation. Such changes are listed in the changelog, and `plan` shows them 
 
 The files Deployify writes for itself, locally or in a remote backend: `deployify-state.json`,
 `inventory.json`, `images.json`, `parameters.json` (and `deployify-parameters.json`),
-`lock.json`, the rollout journals and the release records.
+`lock.json`, the rollout journals, the release records, `deployed.json` and `drift.json`.
 
 - **Every 1.x release reads every file an earlier 1.x release wrote**, and files from the
   1.0.0 alphas, and upgrades them to its own format the next time it saves them.

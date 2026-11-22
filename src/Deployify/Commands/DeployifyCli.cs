@@ -25,6 +25,7 @@ public static class DeployifyCli
             ExplainCommand.Build(),
             GraphCommand.Build(),
             DiffCommand.Build(),
+            DriftCommand.Build(),
             StatusCommand.Build(),
             HistoryCommand.Build(),
             LogsCommand.Build(),

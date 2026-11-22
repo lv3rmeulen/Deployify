@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Deployify.Core.Drift;
 using Deployify.Core.Expressions;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Models;
@@ -166,15 +167,20 @@ public sealed record DeploymentSession(
         bool builtThisRun = false, string? commit = null, string? fromEnvironment = null, string? rolloutId = null,
         string? summary = null, CancellationToken ct = default)
     {
+        // A successful deploy is what drift checks compare the live state against, whether or not
+        // the history is kept.
+        var recordBaseline = kind == ReleaseKind.Deploy && outcome == ReleaseOutcome.Succeeded && manifest is not null;
+        var historyOff = ReleaseRecorder.IsDisabled(State);
+
         // History off: skip the commit lookup (git, or reading the history) too.
-        if (ReleaseRecorder.IsDisabled(State))
+        if (historyOff && !recordBaseline)
         {
             return;
         }
 
         var images = manifest is null ? [] : ReleaseRecorder.Images(manifest, Config);
         var tag = images.Count > 0 ? Config.ImageTag : null;
-        commit ??= images.Count == 0 ? null
+        commit ??= images.Count == 0 || historyOff ? null
             : builtThisRun ? await ReleaseRecorder.CommitBeingBuiltAsync(AppHostDirectory, ct)
             : await ReleaseRecorder.CommitOfTagAsync(State, tag, ct);
 
@@ -187,6 +193,31 @@ public sealed record DeploymentSession(
             RolloutId = string.IsNullOrEmpty(rolloutId) ? null : rolloutId,
             Summary = summary
         };
+
+        if (recordBaseline)
+        {
+            DeployedBaseline? baseline = null;
+            try
+            {
+                baseline = DeployedBaseline.From(record, manifest!, Config, TargetType.Value, releaseStored: !historyOff);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Like the history: what happened on the target stands, so this is only a warning.
+                Reporter.Warn($"Could not record what was deployed for drift checks: {ex.Message}");
+            }
+
+            if (baseline is not null)
+            {
+                await DeployedBaselineStore.SaveAsync(State, baseline, Reporter.Warn, ct);
+            }
+        }
+
+        if (historyOff)
+        {
+            return;
+        }
+
         await ReleaseRecorder.AppendAsync(State, record, Reporter.Warn, ct);
     }
 

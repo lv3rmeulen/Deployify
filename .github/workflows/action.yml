@@ -49,7 +49,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [plan, deploy]
+        mode: [plan, deploy, drift]
     env:
       # The sample's secret parameter. A test value: the sample protects nothing.
       Parameters__admin_key: ci-admin-key
@@ -82,12 +82,16 @@ jobs:
           setup-dotnet: 'false'
           # deploy: generate, validate and plan only; deploying is covered by samples.yml.
           deploy-args: --skip-apply
+          # drift: nothing is deployed in this job, so there's nothing to open an issue about.
+          issue: 'false'
 
       - name: Check the outputs
         env:
           MODE: ${{ steps.deployify.outputs.mode }}
           VERSION: ${{ steps.deployify.outputs.version }}
           PLAN_JSON: ${{ steps.deployify.outputs.plan-json }}
+          DRIFT_JSON: ${{ steps.deployify.outputs.drift-json }}
+          DRIFTED: ${{ steps.deployify.outputs.drifted }}
           UP_TO_DATE: ${{ steps.deployify.outputs.up-to-date }}
           EXPECTED_VERSION: ${{ steps.pack.outputs.version }}
         run: |
@@ -99,4 +103,10 @@ jobs:
             # Nothing is deployed in this job, so every service is new.
             jq -e '.result.create | index("api")' "$PLAN_JSON"
             test "$UP_TO_DATE" = false
+          fi
+          if [ "$MODE" = drift ]; then
+            jq -e '.command == "drift" and .success' "$DRIFT_JSON"
+            # Nothing was ever deployed from this job's state, so there is nothing to compare against.
+            jq -e '.result.environments | length > 0 and all(.status == "notDeployed")' "$DRIFT_JSON"
+            test "$DRIFTED" = false
           fi

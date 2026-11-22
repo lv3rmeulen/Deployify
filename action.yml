@@ -1,5 +1,5 @@
 name: Deployify
-description: Deploy .NET Aspire apps with Deployify. Comments the plan on pull requests and deploys on merge.
+description: Deploy .NET Aspire apps with Deployify. Comments the plan on pull requests, deploys on merge, and checks for drift on a schedule.
 author: lv3rmeulen
 branding:
   icon: upload-cloud
@@ -21,9 +21,9 @@ inputs:
     default: ''
   mode:
     description: >-
-      auto | plan | deploy. auto plans on pull_request (and comments the plan), deploys on a push
-      to the default branch or a workflow_dispatch run, and plans without deploying on a push to
-      any other branch.
+      auto | plan | deploy | drift. auto plans on pull_request (and comments the plan), deploys on
+      a push to the default branch or a workflow_dispatch run, plans without deploying on a push to
+      any other branch, and checks for drift on a schedule run.
     required: false
     default: auto
   project-path:
@@ -31,7 +31,9 @@ inputs:
     required: false
     default: ''
   env:
-    description: Deployify environment (for example prod). Empty uses the active environment.
+    description: >-
+      Deployify environment (for example prod). Empty uses the active environment, except in drift
+      mode, where it checks every environment (deployify drift --all).
     required: false
     default: ''
   target:
@@ -70,6 +72,27 @@ inputs:
     description: Extra arguments for `deployify ci`, space-separated.
     required: false
     default: ''
+  drift-args:
+    description: Extra arguments for `deployify drift`, space-separated.
+    required: false
+    default: ''
+  notify:
+    description: >-
+      drift mode: send the alerts configured under drift.notify in deployify-state.json. Set to
+      false to only report (the run then leaves the recorded result of the last check alone).
+    required: false
+    default: 'true'
+  issue:
+    description: >-
+      drift mode: open an issue (label deployify-drift) when an environment drifts, update it when
+      what drifted changes, and close it when the environment matches its deploy again. Needs
+      issues write.
+    required: false
+    default: 'true'
+  fail-on-drift:
+    description: "drift mode: fail the job when an environment drifted, so the run shows red and GitHub notifies."
+    required: false
+    default: 'true'
   setup-dotnet:
     description: >-
       Install the .NET SDK with actions/setup-dotnet, from global.json when the working directory
@@ -77,13 +100,13 @@ inputs:
     required: false
     default: 'true'
   github-token:
-    description: Token for posting the comment. Needs pull-requests write.
+    description: Token for posting the comment (needs pull-requests write) and the drift issue (needs issues write).
     required: false
     default: ${{ github.token }}
 
 outputs:
   mode:
-    description: 'What the action did: plan or deploy.'
+    description: 'What the action did: plan, deploy or drift.'
     value: ${{ steps.mode.outputs.mode }}
   plan-json:
     description: Path to the `deployify plan --output json` document (plan mode).
@@ -94,6 +117,15 @@ outputs:
   comment-url:
     description: URL of the plan comment, when one was posted.
     value: ${{ steps.report.outputs.comment-url }}
+  drift-json:
+    description: Path to the `deployify drift --output json` document (drift mode).
+    value: ${{ steps.drift.outputs.drift-json }}
+  drifted:
+    description: "'true' when at least one environment drifted (drift mode)."
+    value: ${{ steps.drift-report.outputs.drifted }}
+  drifted-environments:
+    description: Comma-separated names of the environments that drifted (drift mode).
+    value: ${{ steps.drift-report.outputs.drifted-environments }}
   version:
     description: The Deployify version that was installed.
     value: ${{ steps.install.outputs.version }}
@@ -194,3 +226,44 @@ runs:
         SKIP_VALIDATE: ${{ inputs.skip-validate }}
         EXTRA_ARGS: ${{ inputs.deploy-args }}
       run: bash "$GITHUB_ACTION_PATH/action/deploy.sh"
+
+    - name: Check for drift
+      id: drift
+      if: steps.mode.outputs.mode == 'drift'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PROJECT_PATH: ${{ inputs.project-path }}
+        DEPLOYIFY_ENV: ${{ inputs.env }}
+        TARGET: ${{ inputs.target }}
+        NOTIFY: ${{ inputs.notify }}
+        EXTRA_ARGS: ${{ inputs.drift-args }}
+      run: bash "$GITHUB_ACTION_PATH/action/drift.sh"
+
+    - name: Report drift
+      id: drift-report
+      if: always() && steps.drift.outputs.drift-json != ''
+      uses: actions/github-script@v9
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        DRIFT_JSON: ${{ steps.drift.outputs.drift-json }}
+        ISSUE: ${{ inputs.issue }}
+        PROJECT_PATH: ${{ inputs.project-path }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const report = require(require('path').join(process.env.ACTION_PATH, 'action', 'drift-issue.js'));
+          await report.run({ github, context, core });
+
+    - name: Fail on drift or a failed check
+      if: steps.mode.outputs.mode == 'drift' && steps.drift.outputs.exit-code != '0' && (steps.drift.outputs.exit-code != '2' || inputs.fail-on-drift == 'true')
+      shell: bash
+      env:
+        CODE: ${{ steps.drift.outputs.exit-code }}
+      run: |
+        if [ "$CODE" = 2 ]; then
+          echo "::error title=Deployify drift::An environment no longer matches its last deploy; see the job summary."
+        else
+          echo "::error title=Deployify drift::deployify drift exited with code $CODE; a check or an alert failed."
+        fi
+        exit "$CODE"

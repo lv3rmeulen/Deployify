@@ -150,7 +150,8 @@ Skip this if every environment uses a built-in target.
   lists any. Rotate values that were ever committed.
 - **`--strict`** in the pipeline, so a manifest resource Deployify can't deploy fails the run
   instead of a warning. See [ignored resources](/Deployify/reference/state-file/#ignored-resources).
-- **A drift check** after deploying:
-  `deployify ci --skip-apply --fail-on-changes --image-tag "$GITHUB_SHA"`.
+- **Scheduled drift checks** with alerts, so a change made by hand doesn't go unnoticed until
+  the next deploy undoes it: `deployify drift --all` on a schedule, with `drift.notify` set. See
+  [drift alerts](/Deployify/guides/drift-alerts/).
 - **The [known limitations](/Deployify/reference/known-limitations/)**, in case one applies to
   your app.

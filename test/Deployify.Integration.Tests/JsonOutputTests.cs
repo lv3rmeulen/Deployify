@@ -31,7 +31,7 @@ namespace Deployify.Integration.Tests;
 [Collection(nameof(ConsoleOutput))]
 public sealed class JsonOutputTests
 {
-    private static readonly string[] JsonCommands = ["plan", "diff", "status", "explain", "promote", "history"];
+    private static readonly string[] JsonCommands = ["plan", "diff", "drift", "status", "explain", "promote", "history"];
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 

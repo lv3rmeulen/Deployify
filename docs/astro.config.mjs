@@ -36,6 +36,7 @@ export default defineConfig({
 						'guides/rollout-strategies',
 						'guides/prune-and-destroy',
 						'guides/logs',
+						'guides/drift-alerts',
 						'guides/parameters-and-secrets',
 						'guides/publishing-images',
 						'guides/ci-cd',

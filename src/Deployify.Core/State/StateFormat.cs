@@ -44,6 +44,12 @@ public static class StateFormat
     /// <summary>{env}/releases/{time}-{id}.json, one release record each. 1: the first version; there is no version 0.</summary>
     public const int Releases = 1;
 
+    /// <summary>{env}/deployed.json, what the last successful deploy deployed (drift checks compare against it). 1: the first version.</summary>
+    public const int Deployed = 1;
+
+    /// <summary>{env}/drift.json, the result of the last drift check and the last alert sent. 1: the first version.</summary>
+    public const int DriftStatus = 1;
+
     /// <summary>Property name in the camelCase backend files.</summary>
     public const string VersionProperty = "formatVersion";
 

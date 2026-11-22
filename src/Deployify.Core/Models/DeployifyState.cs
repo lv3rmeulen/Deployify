@@ -232,6 +232,12 @@ public sealed class EnvironmentConfig
     /// <c>--require-signature</c> trusts. Off unless <see cref="SigningConfig.Enabled"/> is set.
     /// </summary>
     public SigningConfig Signing { get; set; } = new();
+
+    /// <summary>
+    /// Drift checks (<c>deployify drift</c>): whether this environment is checked and where alerts
+    /// go. Null checks it without sending alerts. See <see cref="DriftConfig"/>.
+    /// </summary>
+    public DriftConfig? Drift { get; set; }
 }
 
 /// <summary>

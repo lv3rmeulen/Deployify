@@ -14,14 +14,16 @@ Next to the configuration in `deployify-state.json` (which you commit), Deployif
 | `{prefix}/{env}/parameters.json` | generated parameter values (remote backends only; locally they are `deployify-parameters.json`) |
 | `{prefix}/{env}/rollouts/{id}.json` | rollout, prune and destroy journals (remote backends only; locally `.deployify/rollouts/`) |
 | `{prefix}/{env}/releases/{time}-{id}.json` | the [release history](#release-history): one record per publish, promote, deploy and rollback |
+| `{prefix}/{env}/deployed.json` | what the last successful deploy deployed (manifest, settings, image digests), which [drift checks](/Deployify/guides/drift-alerts/) compare the live state with |
+| `{prefix}/{env}/drift.json` | the result of the last drift check and the last alert sent, so a scheduled check alerts about changes rather than on every run |
 
 By default it all lives in `.deployify/state/` next to the state file, which is fine for one
 machine. Keep `.deployify/` and `deployify-parameters.json` out of git.
 
 ## Format versions
 
-`deployify-state.json` (`FormatVersion`), `inventory.json`, `images.json`, `parameters.json` and
-the release records (`formatVersion`) record the format they were written in. Files from the alphas have no version;
+`deployify-state.json` (`FormatVersion`), `inventory.json`, `images.json`, `parameters.json`,
+`deployed.json`, `drift.json` and the release records (`formatVersion`) record the format they were written in. Files from the alphas have no version;
 Deployify still reads them and writes them in the current format the next time it saves them.
 `deployify-state.json` is written in version 2 only when an environment
 [extends another](/Deployify/reference/state-file/#layered-environments); otherwise it stays at
@@ -78,6 +80,20 @@ why. `deployify history` lists them, newest first; `--output json` gives the sam
 
 With local state, the history is only on the machine that made the releases. Use a remote
 backend for a history that CI and your team share.
+
+## What was deployed
+
+Every successful deploy (`apply`, `ci`, `aspire deploy`) replaces `deployed.json` with what it
+deployed: the Aspire manifest after Deployify's additions, the environment's effective settings
+(bases merged in) and the images by digest, with the release record's id, tag, commit and actor.
+It is written whether or not the release history is on, and writing it never fails a deploy.
+`destroy` removes it. [Drift checks](/Deployify/guides/drift-alerts/) regenerate the artifacts
+from it, so they compare the live state with the last deploy rather than with the working tree.
+
+The settings are the ones in `deployify-state.json`, which is committed; parameter values aren't
+in it (generated ones stay in `parameters.json` or your secret backend). A large manifest makes
+a large object: Consul's default limit is 512 KB per value, and a Kubernetes Secret holds about
+1 MiB.
 
 ## Ownership
 

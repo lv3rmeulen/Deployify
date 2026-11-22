@@ -3,7 +3,7 @@ title: deployify history
 description: "Show who published, promoted and deployed which images, and when."
 sidebar:
   label: history
-  order: 16
+  order: 17
 ---
 
 :::note

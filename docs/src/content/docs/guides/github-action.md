@@ -88,9 +88,9 @@ version with the `version` input instead when you reference the action by commit
 |---|---|---|
 | `version` | the action's tag | Deployify version to install. `latest` for the newest release. |
 | `source` | | Extra NuGet source (feed URL or folder) to install Deployify from. |
-| `mode` | `auto` | `auto`, `plan` or `deploy`. `auto` plans on `pull_request`, deploys on a push to the default branch and on `workflow_dispatch`, and plans without deploying on a push to another branch. |
+| `mode` | `auto` | `auto`, `plan`, `deploy` or `drift`. `auto` plans on `pull_request`, deploys on a push to the default branch and on `workflow_dispatch`, plans without deploying on a push to another branch, and checks for drift on `schedule`. |
 | `project-path` | | Path to the AppHost `.csproj` or its directory. |
-| `env` | active environment | Deployify environment. |
+| `env` | active environment | Deployify environment. In `drift` mode, empty checks every environment. |
 | `target` | the environment's | Deployment target override. |
 | `working-directory` | `.` | Directory to run Deployify in. |
 | `comment` | `true` | Post the plan on the pull request. |
@@ -100,18 +100,57 @@ version with the `version` input instead when you reference the action by commit
 | `strict` | `false` | `--strict` for plan and deploy. |
 | `plan-args` | | Extra `plan` arguments, space-separated. |
 | `deploy-args` | | Extra `ci` arguments, space-separated, for example `--require-signature --prune`. |
+| `drift-args` | | Extra `drift` arguments, space-separated. |
+| `notify` | `true` | `drift`: send the alerts in `drift.notify`. `false` only reports. |
+| `issue` | `true` | `drift`: open an issue per drifted environment, and close it once the environment matches its deploy again. Needs `issues: write`. |
+| `fail-on-drift` | `true` | `drift`: fail the job when an environment drifted. A check or alert that failed always fails it. |
 | `setup-dotnet` | `true` | Install the .NET SDK (from `global.json` if there is one, otherwise 10.0.x). |
-| `github-token` | `github.token` | Token for the comment; needs `pull-requests: write`. |
+| `github-token` | `github.token` | Token for the comment (needs `pull-requests: write`) and the drift issues (needs `issues: write`). |
 
 ## Outputs
 
 | Output | |
 |---|---|
-| `mode` | `plan` or `deploy`. |
+| `mode` | `plan`, `deploy` or `drift`. |
 | `plan-json` | Path to the `deployify plan --output json` document. |
 | `up-to-date` | `true` when the plan has no changes. |
 | `comment-url` | The plan comment. |
+| `drift-json` | Path to the `deployify drift --output json` document. |
+| `drifted` | `true` when an environment drifted. |
+| `drifted-environments` | The environments that drifted, comma-separated. |
 | `version` | The Deployify version that ran. |
+
+## Drift checks
+
+On a `schedule`, the action runs [`deployify drift`](/Deployify/guides/drift-alerts/) against
+every environment (or the one in `env`), writes the result to the job summary and, for each
+environment that drifted, opens an issue labeled `deployify-drift` that lists what changed. When
+what drifted changes, the issue is updated with a comment; when the environment matches its
+deploy again, the issue is closed. A failed check opens no issue, but fails the job.
+
+```yaml
+# .github/workflows/drift.yml
+on:
+  schedule:
+    - cron: '17 * * * *'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: lv3rmeulen/Deployify@v1
+        env:
+          SLACK_DRIFT_WEBHOOK: ${{ secrets.SLACK_DRIFT_WEBHOOK }}
+```
+
+The job needs the same target, remote-state and parameter credentials as the deploy job, since
+the check reads the deployment state and asks the target for its live state. Alerts configured
+under `drift.notify` are sent as well; set `issue: false` to rely on those alone.
 
 ## Build once, promote
 

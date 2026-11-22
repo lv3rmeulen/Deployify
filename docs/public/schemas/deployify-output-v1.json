@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://lv3rmeulen.github.io/Deployify/schemas/deployify-output-v1.json",
   "title": "Deployify --output json, schema version 1",
-  "description": "The document plan, diff, status, explain, promote and history write to stdout with --output json. Within schema version 1, properties are only added: consumers must ignore properties they don't know.",
+  "description": "The document plan, diff, drift, status, explain, promote and history write to stdout with --output json. Within schema version 1, properties are only added: consumers must ignore properties they don't know.",
   "type": "object",
   "required": [
     "schemaVersion",
@@ -24,6 +24,7 @@
       "enum": [
         "plan",
         "diff",
+        "drift",
         "status",
         "explain",
         "promote",
@@ -50,7 +51,7 @@
         "string",
         "null"
       ],
-      "description": "The environment the command ran against (the --to environment for promote). Null when it failed before resolving one."
+      "description": "The environment the command ran against (the --to environment for promote). Null when it failed before resolving one, and for drift --all, which lists its environments in the result."
     },
     "target": {
       "oneOf": [
@@ -61,7 +62,7 @@
           "$ref": "#/$defs/target"
         }
       ],
-      "description": "The environment's deployment target. Null when the command failed before resolving one."
+      "description": "The environment's deployment target. Null when the command failed before resolving one, and for drift --all."
     },
     "diagnostics": {
       "type": "array",
@@ -115,6 +116,29 @@
               },
               {
                 "$ref": "#/$defs/diff"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "drift"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/$defs/drift"
               }
             ]
           }
@@ -441,6 +465,219 @@
               "reason": {
                 "$ref": "#/$defs/nullableString",
                 "description": "Why the service couldn't be compared; set when kind is unknown."
+              }
+            }
+          }
+        }
+      }
+    },
+    "drift": {
+      "type": "object",
+      "required": [
+        "drifted",
+        "environments"
+      ],
+      "description": "One entry per environment checked: the active one, --env, or every one with --all.",
+      "properties": {
+        "drifted": {
+          "type": "boolean",
+          "description": "True when at least one environment drifted (exit code 2)."
+        },
+        "environments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "environment",
+              "target",
+              "status",
+              "checkedAt",
+              "reason",
+              "deployed",
+              "entries",
+              "ignored",
+              "fingerprint",
+              "alert"
+            ],
+            "properties": {
+              "environment": {
+                "type": "string"
+              },
+              "target": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/$defs/target"
+                  }
+                ],
+                "description": "Null when the environment couldn't be resolved."
+              },
+              "status": {
+                "type": "string",
+                "description": "inSync, drifted, unknown (some services couldn't be compared), error (the check couldn't run), notDeployed (no successful deploy recorded yet) or skipped (a deploy holds the lock, or drift.enabled is false). Open-ended: a minor release can add statuses."
+              },
+              "checkedAt": {
+                "$ref": "#/$defs/timestamp"
+              },
+              "reason": {
+                "$ref": "#/$defs/nullableString",
+                "description": "Why the status is error, notDeployed or skipped."
+              },
+              "deployed": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/$defs/driftDeployed"
+                  }
+                ],
+                "description": "The deploy the live state was compared with. Null when there is none."
+              },
+              "entries": {
+                "type": "array",
+                "description": "Every difference not ignored by drift.ignore, ordered missing, extra, changed, unknown.",
+                "items": {
+                  "$ref": "#/$defs/driftEntry"
+                }
+              },
+              "ignored": {
+                "type": "integer",
+                "description": "Differences left out by drift.ignore."
+              },
+              "fingerprint": {
+                "type": "string",
+                "description": "Identifies what drifted; the same differences give the same fingerprint. Empty when nothing drifted."
+              },
+              "alert": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/$defs/driftAlert"
+                  }
+                ],
+                "description": "The alert this check called for. Null when none was due, or with --no-notify."
+              }
+            }
+          }
+        }
+      }
+    },
+    "driftDeployed": {
+      "type": "object",
+      "required": [
+        "releaseId",
+        "at",
+        "tag",
+        "commit",
+        "actor",
+        "runUrl"
+      ],
+      "properties": {
+        "releaseId": {
+          "$ref": "#/$defs/nullableString",
+          "description": "The deploy's release record (deployify history). Null when the history is off."
+        },
+        "at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "tag": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "commit": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "actor": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "runUrl": {
+          "$ref": "#/$defs/nullableString",
+          "description": "The CI run that deployed."
+        }
+      }
+    },
+    "driftEntry": {
+      "type": "object",
+      "required": [
+        "service",
+        "kind",
+        "field",
+        "live",
+        "deployed",
+        "reason"
+      ],
+      "properties": {
+        "service": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "missing",
+            "extra",
+            "changed",
+            "unknown"
+          ],
+          "description": "missing: deployed, no longer on the target. extra: on the target, not part of the deploy. changed: settings differ. unknown: the target couldn't compare it."
+        },
+        "field": {
+          "$ref": "#/$defs/nullableString",
+          "description": "What changed, when the target says, as in diff."
+        },
+        "live": {
+          "$ref": "#/$defs/nullableString",
+          "description": "The value on the target now, as the target reports it (diff's oldValue). For Kubernetes and Helm, null; the rendered diff is in deployed. Secrets are masked as ****."
+        },
+        "deployed": {
+          "$ref": "#/$defs/nullableString",
+          "description": "The value that was deployed, as the target reports it (diff's newValue). For Kubernetes and Helm, the rendered diff from live to deployed."
+        },
+        "reason": {
+          "$ref": "#/$defs/nullableString",
+          "description": "Why the service couldn't be compared; set when kind is unknown."
+        }
+      }
+    },
+    "driftAlert": {
+      "type": "object",
+      "required": [
+        "event",
+        "deliveries"
+      ],
+      "properties": {
+        "event": {
+          "type": "string",
+          "description": "drifted, changed, reminder, resolved or failing. Open-ended."
+        },
+        "deliveries": {
+          "type": "array",
+          "description": "One per channel in drift.notify; empty when none are configured.",
+          "items": {
+            "type": "object",
+            "required": [
+              "channel",
+              "type",
+              "ok",
+              "error"
+            ],
+            "properties": {
+              "channel": {
+                "type": "string",
+                "description": "The channel's name, or its type when it has none."
+              },
+              "type": {
+                "type": "string",
+                "description": "slack, teams or webhook."
+              },
+              "ok": {
+                "type": "boolean"
+              },
+              "error": {
+                "$ref": "#/$defs/nullableString",
+                "description": "Why the delivery failed. Never contains the webhook URL."
               }
             }
           }

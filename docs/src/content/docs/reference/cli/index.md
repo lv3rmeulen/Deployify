@@ -25,6 +25,7 @@ Generated from the command definitions by `tools/Deployify.DocGen`; don't edit b
 | [`explain`](./explain/) | Display a human-readable summary of all services. |
 | [`graph`](./graph/) | Display a dependency graph of all services. |
 | [`diff`](./diff/) | Show differences between local manifest and the running target. |
+| [`drift`](./drift/) | Check whether environments still match what was last deployed, and send alerts (drift.notify) when they don't. |
 | [`status`](./status/) | Show recent rollouts and how they ended. |
 | [`history`](./history/) | Show who published, promoted and deployed which images, and when. |
 | [`logs`](./logs/) | Show a deployed service's console output (stdout and stderr), on any target. |

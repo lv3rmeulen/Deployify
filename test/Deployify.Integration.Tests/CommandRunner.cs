@@ -45,6 +45,7 @@ internal static class CommandRunner
         LogsCommand.Build(),
         RollbackCommand.Build(),
         DestroyCommand.Build(),
+        DriftCommand.Build(),
         StateCommand.Build(),
     };
 }

@@ -1,6 +1,7 @@
 using System;
 using System.CommandLine;
 using System.Linq;
+using System.Threading;
 using Deployify.Core.Interfaces;
 using Deployify.Core.Lifecycle;
 using Deployify.Core.Rollouts;
@@ -175,6 +176,18 @@ public static class DestroyCommand
             if (result.Succeeded)
             {
                 AnsiConsole.MarkupLineInterpolated($"[green]Destroy complete.[/] {result.Deleted.Count} service(s) removed from [cyan]{envName}[/].");
+
+                // What was deployed is gone (or partly gone), so drift checks have nothing to compare
+                // against until the next deploy records a new baseline.
+                try
+                {
+                    await Core.Drift.DeployedBaselineStore.DeleteAsync(resolved.State, CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    AnsiConsole.MarkupLineInterpolated($"[yellow]![/] Could not clear the drift baseline: {ex.Message}");
+                }
+
                 AnsiConsole.MarkupLineInterpolated($"[dim]Journal: {result.JournalPath ?? ""}[/]");
                 return 0;
             }

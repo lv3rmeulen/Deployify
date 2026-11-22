@@ -183,3 +183,30 @@ internal sealed record JsonPromotedImage(
     int? AttestationsCopied,
     int? SignaturesCopied,
     bool? SignatureVerified);
+
+// ── drift ─────────────────────────────────────────────────────────────────────
+
+/// <summary>The <c>result</c> of <c>drift --output json</c>: one entry per environment checked.</summary>
+internal sealed record JsonDrift(bool Drifted, IReadOnlyList<JsonDriftEnvironment> Environments);
+
+internal sealed record JsonDriftEnvironment(
+    string Environment,
+    JsonTarget? Target,
+    string Status,
+    DateTimeOffset CheckedAt,
+    string? Reason,
+    JsonDriftDeployed? Deployed,
+    IReadOnlyList<JsonDriftEntry> Entries,
+    int Ignored,
+    string Fingerprint,
+    JsonDriftAlert? Alert);
+
+/// <summary>The deploy the live state was compared with.</summary>
+internal sealed record JsonDriftDeployed(string? ReleaseId, DateTimeOffset At, string? Tag, string? Commit, string? Actor, string? RunUrl);
+
+internal sealed record JsonDriftEntry(string Service, string Kind, string? Field, string? Live, string? Deployed, string? Reason);
+
+/// <summary>The alert the check led to, and where it was delivered.</summary>
+internal sealed record JsonDriftAlert(string Event, IReadOnlyList<JsonDriftDelivery> Deliveries);
+
+internal sealed record JsonDriftDelivery(string Channel, string Type, bool Ok, string? Error);

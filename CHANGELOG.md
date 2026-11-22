@@ -13,6 +13,31 @@ Each release can have these sections: **Added**, **Changed**, **Deprecated**, **
 
 ### Added
 
+- Drift alerts: `deployify drift` checks whether environments still match what was last
+  deployed to them and alerts when they don't. Every successful deploy (`apply`, `ci`,
+  `aspire deploy`) now records what it deployed (`{prefix}/{env}/deployed.json`: the manifest,
+  the environment's settings and the image digests), and the check regenerates the artifacts
+  from that and asks the target for the differences, so changes made by hand are reported and
+  undeployed changes in the AppHost or `deployify-state.json` are not. Services are reported
+  missing, extra, changed or not checked; exit code `2` means something drifted, `1` that a check
+  or alert failed. `--all` checks every environment, `--every 30m` keeps checking, `--no-notify`
+  only reports, and `--output json` (schema version 1 gains a `drift` document) gives the result
+  to scripts. A deploy that holds the lock is never reported as drift, and `destroy` clears the
+  baseline.
+- The `drift` section of an environment: alert channels (`Slack`, `Teams` Adaptive Cards, or a
+  `Webhook` that receives the whole alert as JSON), with URLs and headers read from environment
+  variables via `env:`; `remindAfterHours`, `notifyOnResolve`, `notifyOnError`; `ignore` for
+  expected differences (`worker`, `worker:desired_count`, `*:desired_count`); and `enabled: false`
+  to leave an environment out of `--all`. Alerts are sent when drift appears, changes or is
+  resolved, not on every check: the last result is kept in `{prefix}/{env}/drift.json`, and an
+  alert no channel accepted is tried again on the next check.
+- GitHub Action: `mode: drift` (what `auto` picks on a `schedule`) runs `deployify drift` on every
+  environment, writes the result to the job summary, opens an issue labeled `deployify-drift` per
+  drifted environment, updates it when what drifted changes and closes it when the environment
+  matches its deploy again. New inputs `notify`, `issue`, `fail-on-drift` and `drift-args`; new
+  outputs `drift-json`, `drifted` and `drifted-environments`.
+  See [drift alerts](https://lv3rmeulen.github.io/Deployify/guides/drift-alerts/).
+
 - Canary and blue-green rollout strategies (`rollout` in an environment or a service override):
   the new version runs next to the old one, gets a growing share of the traffic step by step
   (canary) or all of it at once after a preview (blue-green), and any failure sends all traffic
