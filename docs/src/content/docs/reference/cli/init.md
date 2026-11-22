@@ -23,7 +23,7 @@ deployify init [options]
 | `--project-path`, `-p` | Path to the Aspire AppHost .csproj or its directory. | current directory |
 | `--non-interactive` | Disable interactive prompts; fail on missing required values. | `false` |
 | `--env-name` | Environment name. | `local` |
-| `--target` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| ovhcloud \| compose \| awsecs \| azurecontainerapps \| nomadconsul \| iis, or the ID of a plugin target. |  |
+| `--target` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| ovhcloud \| compose \| awsecs \| azurecontainerapps \| nomadconsul \| iis \| cloudrun, or the ID of a plugin target. |  |
 | `--container-registry` | Container registry URL. |  |
 | `--image-tag` | Default image tag. | `latest` |
 | `--output-path` | Output folder for artifacts. | `deployify-output` |

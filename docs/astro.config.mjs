@@ -84,7 +84,7 @@ export default defineConfig({
 				{
 					label: 'Contributing',
 					collapsed: true,
-					items: ['contributing/project-structure', 'contributing/adding-a-target', 'contributing/docs'],
+					items: ['contributing/project-structure', 'contributing/adding-a-target', 'contributing/docs', 'contributing/release-checklist'],
 				},
 			],
 		}),

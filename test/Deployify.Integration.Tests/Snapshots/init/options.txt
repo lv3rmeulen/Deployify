@@ -5,7 +5,7 @@
 --env-name : String = local
     Environment name.
 --target : DeploymentTargetType?
-    Deployment target: nomad | kubernetes | helm | argocd | flux | ovhcloud | compose | awsecs | azurecontainerapps | nomadconsul | iis, or the ID of a plugin target.
+    Deployment target: nomad | kubernetes | helm | argocd | flux | ovhcloud | compose | awsecs | azurecontainerapps | nomadconsul | iis | cloudrun, or the ID of a plugin target.
 --container-registry : String
     Container registry URL.
 --image-tag : String = latest
