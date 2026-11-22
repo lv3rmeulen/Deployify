@@ -62,6 +62,7 @@ deployify ci --skip-validate
 | [Parameters and secrets](https://lv3rmeulen.github.io/Deployify/guides/parameters-and-secrets/) | Aspire parameters, secret backends (Vault, Key Vault, SSM, Secrets Manager) |
 | [Running from `aspire deploy`](https://lv3rmeulen.github.io/Deployify/guides/aspire-deploy/) | `builder.AddDeployify()` in your AppHost |
 | [CI/CD](https://lv3rmeulen.github.io/Deployify/guides/ci-cd/) | `deployify ci`, plan gates, GitHub Actions |
+| [GitHub Action](https://lv3rmeulen.github.io/Deployify/guides/github-action/) | Plan as a pull request comment, deploy on merge |
 | [Signing in from CI](https://lv3rmeulen.github.io/Deployify/guides/ci-cloud-sign-in/) | OIDC sign-in to AWS and Azure, no stored keys |
 | [State and locking](https://lv3rmeulen.github.io/Deployify/concepts/state/) | Inventory, ownership, the environment lock, remote state |
 | [Writing target plugins](https://lv3rmeulen.github.io/Deployify/extending/plugins/) | Add any platform as an out-of-process plugin |

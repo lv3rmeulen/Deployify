@@ -73,6 +73,9 @@ at a given width instead.
 
 ## Workflows
 
+On GitHub, the [Deployify action](/Deployify/guides/github-action/) does the install, the plan
+comment and the deploy for you. The steps below run the CLI directly.
+
 Deployify signs in to AWS and Azure through the `aws` and `az` CLIs. In a pipeline, sign those
 in with OIDC rather than storing access keys or client secrets: see
 [signing in to AWS and Azure from CI](/Deployify/guides/ci-cloud-sign-in/).

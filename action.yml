@@ -1,0 +1,196 @@
+name: Deployify
+description: Deploy .NET Aspire apps with Deployify. Comments the plan on pull requests and deploys on merge.
+author: lv3rmeulen
+branding:
+  icon: upload-cloud
+  color: blue
+
+inputs:
+  version:
+    description: >-
+      Deployify version to install (for example 1.2.0). Empty: the version matching the action's
+      tag (lv3rmeulen/Deployify@v1.2.0 installs 1.2.0, @v1 the newest 1.x), otherwise the newest
+      release.
+    required: false
+    default: ''
+  source:
+    description: >-
+      Extra NuGet source to install Deployify from (a feed URL or a folder of packages), searched
+      along with nuget.org.
+    required: false
+    default: ''
+  mode:
+    description: >-
+      auto | plan | deploy. auto plans on pull_request (and comments the plan), deploys on a push
+      to the default branch or a workflow_dispatch run, and plans without deploying on a push to
+      any other branch.
+    required: false
+    default: auto
+  project-path:
+    description: Path to the Aspire AppHost .csproj or its directory.
+    required: false
+    default: ''
+  env:
+    description: Deployify environment (for example prod). Empty uses the active environment.
+    required: false
+    default: ''
+  target:
+    description: Deployment target, overriding the environment's. Rarely needed.
+    required: false
+    default: ''
+  working-directory:
+    description: Directory to run Deployify in.
+    required: false
+    default: '.'
+  comment:
+    description: Post the plan as a pull request comment, updated in place on every push.
+    required: false
+    default: 'true'
+  diff:
+    description: Run `deployify diff` too and put each service's changes in the comment.
+    required: false
+    default: 'true'
+  image-tag:
+    description: Image tag for the deploy. Empty uses Deployify's default (the commit SHA).
+    required: false
+    default: ${{ github.sha }}
+  skip-validate:
+    description: Pass --skip-validate to the deploy.
+    required: false
+    default: 'false'
+  strict:
+    description: Pass --strict (fail on resources Deployify won't deploy).
+    required: false
+    default: 'false'
+  plan-args:
+    description: Extra arguments for `deployify plan`, space-separated.
+    required: false
+    default: ''
+  deploy-args:
+    description: Extra arguments for `deployify ci`, space-separated.
+    required: false
+    default: ''
+  setup-dotnet:
+    description: >-
+      Install the .NET SDK with actions/setup-dotnet, from global.json when the working directory
+      has one, otherwise 10.0.x. Set to false when the job already installs it.
+    required: false
+    default: 'true'
+  github-token:
+    description: Token for posting the comment. Needs pull-requests write.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  mode:
+    description: 'What the action did: plan or deploy.'
+    value: ${{ steps.mode.outputs.mode }}
+  plan-json:
+    description: Path to the `deployify plan --output json` document (plan mode).
+    value: ${{ steps.plan.outputs.plan-json }}
+  up-to-date:
+    description: "'true' when the plan has nothing to create, update, delete or check (plan mode)."
+    value: ${{ steps.report.outputs.up-to-date }}
+  comment-url:
+    description: URL of the plan comment, when one was posted.
+    value: ${{ steps.report.outputs.comment-url }}
+  version:
+    description: The Deployify version that was installed.
+    value: ${{ steps.install.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Choose mode
+      id: mode
+      shell: bash
+      env:
+        INPUT_MODE: ${{ inputs.mode }}
+        EVENT: ${{ github.event_name }}
+        REF: ${{ github.ref }}
+        DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      run: bash "$GITHUB_ACTION_PATH/action/mode.sh"
+
+    - name: Check for global.json
+      id: dotnet
+      if: inputs.setup-dotnet == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        if [ -f global.json ]; then echo "global-json=$PWD/global.json" >> "$GITHUB_OUTPUT"; fi
+
+    - name: Set up .NET (global.json)
+      if: inputs.setup-dotnet == 'true' && steps.dotnet.outputs.global-json != ''
+      uses: actions/setup-dotnet@v5
+      with:
+        global-json-file: ${{ steps.dotnet.outputs.global-json }}
+
+    - name: Set up .NET
+      if: inputs.setup-dotnet == 'true' && steps.dotnet.outputs.global-json == ''
+      uses: actions/setup-dotnet@v5
+      with:
+        dotnet-version: 10.0.x
+
+    - name: Install Deployify
+      id: install
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_SOURCE: ${{ inputs.source }}
+        ACTION_REF: ${{ github.action_ref }}
+      run: bash "$GITHUB_ACTION_PATH/action/install.sh"
+
+    - name: Plan
+      id: plan
+      if: steps.mode.outputs.mode == 'plan'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PROJECT_PATH: ${{ inputs.project-path }}
+        DEPLOYIFY_ENV: ${{ inputs.env }}
+        TARGET: ${{ inputs.target }}
+        STRICT: ${{ inputs.strict }}
+        RUN_DIFF: ${{ inputs.diff }}
+        EXTRA_ARGS: ${{ inputs.plan-args }}
+      run: bash "$GITHUB_ACTION_PATH/action/plan.sh"
+
+    - name: Report plan
+      id: report
+      if: always() && steps.plan.outputs.plan-json != ''
+      uses: actions/github-script@v9
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        PLAN_JSON: ${{ steps.plan.outputs.plan-json }}
+        DIFF_JSON: ${{ steps.plan.outputs.diff-json }}
+        PLAN_EXIT_CODE: ${{ steps.plan.outputs.exit-code }}
+        COMMENT: ${{ steps.mode.outputs.comment == 'true' && inputs.comment == 'true' }}
+        DEPLOYIFY_ENV: ${{ inputs.env }}
+        PROJECT_PATH: ${{ inputs.project-path }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const report = require(require('path').join(process.env.ACTION_PATH, 'action', 'plan-comment.js'));
+          await report.run({ github, context, core });
+
+    - name: Fail on a failed or blocked plan
+      if: steps.mode.outputs.mode == 'plan' && steps.plan.outputs.exit-code != '0'
+      shell: bash
+      env:
+        CODE: ${{ steps.plan.outputs.exit-code }}
+      run: |
+        echo "::error title=Deployify plan::deployify plan exited with code $CODE"
+        exit "$CODE"
+
+    - name: Deploy
+      if: steps.mode.outputs.mode == 'deploy'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PROJECT_PATH: ${{ inputs.project-path }}
+        DEPLOYIFY_ENV: ${{ inputs.env }}
+        TARGET: ${{ inputs.target }}
+        STRICT: ${{ inputs.strict }}
+        IMAGE_TAG: ${{ inputs.image-tag }}
+        SKIP_VALIDATE: ${{ inputs.skip-validate }}
+        EXTRA_ARGS: ${{ inputs.deploy-args }}
+      run: bash "$GITHUB_ACTION_PATH/action/deploy.sh"

@@ -1,0 +1,102 @@
+name: GitHub Action
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'action.yml'
+      - 'action/**'
+      - 'src/**'
+      - '.github/workflows/action.yml'
+  pull_request:
+    paths:
+      - 'action.yml'
+      - 'action/**'
+      - 'src/**'
+      - '.github/workflows/action.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: action-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+
+jobs:
+  unit:
+    name: Comment rendering + scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Comment tests
+        run: node --test action/*.test.js
+      - name: ShellCheck
+        run: shellcheck --shell=bash --severity=warning action/*.sh
+
+  # Runs the action from this checkout against hello-aspire (Compose), installing the CLI built
+  # from the same commit.
+  end-to-end:
+    name: ${{ matrix.mode }} · hello-aspire
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [plan, deploy]
+    env:
+      # The sample's secret parameter. A test value: the sample protects nothing.
+      Parameters__admin_key: ci-admin-key
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Pack the CLI
+        id: pack
+        run: |
+          dotnet pack src/Deployify/Deployify.csproj -c Release -o "$RUNNER_TEMP/packages"
+          pkg="$(basename "$(ls "$RUNNER_TEMP"/packages/deployify.[0-9]*.nupkg)")"
+          version="${pkg#deployify.}"
+          echo "version=${version%.nupkg}" >> "$GITHUB_OUTPUT"
+
+      - name: Run the action
+        id: deployify
+        uses: ./
+        with:
+          version: ${{ steps.pack.outputs.version }}
+          source: ${{ runner.temp }}/packages
+          mode: ${{ matrix.mode }}
+          project-path: samples/hello-aspire/HelloAspire.AppHost
+          comment: 'false'
+          setup-dotnet: 'false'
+          # deploy: generate, validate and plan only; deploying is covered by samples.yml.
+          deploy-args: --skip-apply
+
+      - name: Check the outputs
+        env:
+          MODE: ${{ steps.deployify.outputs.mode }}
+          VERSION: ${{ steps.deployify.outputs.version }}
+          PLAN_JSON: ${{ steps.deployify.outputs.plan-json }}
+          UP_TO_DATE: ${{ steps.deployify.outputs.up-to-date }}
+          EXPECTED_VERSION: ${{ steps.pack.outputs.version }}
+        run: |
+          set -x
+          test "$MODE" = '${{ matrix.mode }}'
+          test "$VERSION" = "$EXPECTED_VERSION"
+          if [ "$MODE" = plan ]; then
+            jq -e '.command == "plan" and .success' "$PLAN_JSON"
+            # Nothing is deployed in this job, so every service is new.
+            jq -e '.result.create | index("api")' "$PLAN_JSON"
+            test "$UP_TO_DATE" = false
+          fi

@@ -13,6 +13,9 @@ Each release can have these sections: **Added**, **Changed**, **Deprecated**, **
 
 ### Added
 
+- GitHub Action (`uses: lv3rmeulen/Deployify@v1`): installs Deployify, posts the plan as a pull
+  request comment (updated in place, with each service's diff), and deploys with `deployify ci`
+  on a push to the default branch. The action's tag picks the Deployify version.
 - Release history: every `publish`, `promote`, deploy (`apply`, `ci`, `aspire deploy`) and
   `rollback` adds a record to the environment's deployment state, with the images and digests,
   the image tag, the commit they were built from, who ran it, the CI run link, the rollout and,
