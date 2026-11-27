@@ -33,4 +33,5 @@ Generated from the command definitions by `tools/Deployify.DocGen`; don't edit b
 | [`rollback`](./rollback/) | Undo a rollout: restore the revisions that ran before it. |
 | [`destroy`](./destroy/) | Remove everything Deployify deployed in an environment. |
 | [`state`](./state/) | Inspect and manage deployment state (inventory, lock, remote backend). |
-| [`plugin`](./plugin/) | Find, install, show and lock the target plugins this project can use. |
+| [`plugin`](./plugin/) | Find, install, update, show and lock the target plugins this project can use. |
+| [`update`](./update/) | Update the project's plugins to their newest version without breaking changes (like 'deployify plugin update') and check that the AppHost's Deployify.Hosting package matches this Deployify. With --self, update Deployify itself. |

@@ -76,8 +76,9 @@ public sealed class PluginInstaller(PluginFetcher? fetcher = null, BlobSignature
             : entry.FindVersion(version) ?? throw new PluginException(
                 $"'{targetId}' has no version {version} in the plugin index. Versions: {string.Join(", ", entry.Versions.Select(v => v.Version))}.");
 
-        if (release.Protocol is { } protocol && Version.TryParse(protocol, out var speaks) && speaks.Major != PluginProtocol.Version.Major)
+        if (!release.SpeaksCurrentProtocol)
         {
+            var protocol = release.Protocol;
             throw new PluginException(
                 $"{targetId} {release.Version} speaks plugin protocol {protocol}; this Deployify speaks {PluginProtocol.Version.ToString(2)}.");
         }

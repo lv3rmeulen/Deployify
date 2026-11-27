@@ -108,6 +108,28 @@ index signed with a key). Deployify doesn't read an unsigned index. Build one wi
 `tools/Deployify.PluginIndex` (see the [index's README](https://github.com/lv3rmeulen/Deployify/tree/main/plugin-index))
 and sign it with `cosign sign-blob --bundle index.json.sigstore.json index.json`.
 
+### Update plugins
+
+`deployify plugin update` moves the plugins the lock file records from an index to their newest
+version without breaking changes, and locks the new versions:
+
+```bash
+deployify plugin update              # every plugin installed from an index
+deployify plugin update example      # just this one
+deployify plugin update --check      # only report; exits 2 when something can be updated
+deployify plugin update --major      # also move to a new major version
+```
+
+"Without breaking changes" means the same major version (for a 0.x plugin, the same minor
+version). Pre-releases are only considered with `--prerelease`, or when the locked version is one
+already. Yanked versions, and versions that speak another plugin protocol, are skipped. Each new
+package is checked exactly like `plugin install` checks it, and goes into the folder the plugin is
+installed in now. The lock file keeps only the new version's hash for the platform it was installed
+on, so run `deployify plugin lock` on the other platforms you deploy from, or reinstall there.
+
+`deployify update` does the same and also checks that the AppHost's `Deployify.Hosting` package is
+on the same version as the CLI.
+
 ### See what is installed
 
 ```bash

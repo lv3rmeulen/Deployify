@@ -10,7 +10,7 @@ using Spectre.Console;
 
 namespace Deployify.Commands;
 
-/// <summary><c>deployify plugin search | install</c>: find plugins in a signed index and install them.</summary>
+/// <summary><c>deployify plugin search | install | update</c>: find plugins in a signed index, install and update them.</summary>
 public static partial class PluginCommand
 {
     private static readonly Option<string?> s_index = new("--index")
@@ -40,7 +40,7 @@ public static partial class PluginCommand
         Description = "Consider pre-release versions when picking the newest one."
     };
 
-    private static void AddIndexOptions(Command cmd)
+    internal static void AddIndexOptions(Command cmd)
     {
         cmd.Options.Add(s_index);
         cmd.Options.Add(s_indexIdentity);
@@ -178,114 +178,30 @@ public static partial class PluginCommand
                 }
             }
 
-            var client = new PluginIndexClient();
-            var installer = new PluginInstaller();
-            var indexes = new Dictionary<string, (PluginIndexSource Source, PluginIndex Index)>(StringComparer.Ordinal);
-            var catalog = new PluginCatalog();
+            var run = new IndexInstall(parseResult, project, lockFile, pluginsDirectory);
             var failed = false;
-            var lockChanged = false;
-
             foreach (var (id, version, indexUrl) in requests)
             {
-                if (!DeploymentTargetType.TryParse(id, out var target) || target.IsBuiltIn)
+                var requested = version;
+                if (requested is null && parseResult.GetValue(s_prerelease) &&
+                    DeploymentTargetType.TryParse(id, out var target) && !target.IsBuiltIn)
                 {
-                    AnsiConsole.MarkupLineInterpolated($"[red]✗[/] '{id}' isn't a plugin target ID.");
-                    failed = true;
-                    continue;
+                    try
+                    {
+                        requested = (await run.LoadIndexAsync(indexUrl, ct)).Index.Find(target.Value)?.Latest(includePrerelease: true)?.Version;
+                    }
+                    catch (PluginException ex)
+                    {
+                        AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {ex.Message}");
+                        failed = true;
+                        continue;
+                    }
                 }
 
-                StagedPlugin? staged = null;
-                try
-                {
-                    var source = IndexSource(parseResult, indexUrl);
-                    if (!indexes.TryGetValue(source.Url, out var loaded))
-                    {
-                        loaded = (source, await client.LoadAsync(source, ct));
-                        indexes[source.Url] = loaded;
-                    }
-
-                    var requested = version;
-                    if (requested is null && parseResult.GetValue(s_prerelease))
-                    {
-                        requested = loaded.Index.Find(target.Value)?.Latest(includePrerelease: true)?.Version;
-                    }
-
-                    staged = await installer.StageAsync(loaded.Index, loaded.Source, target.Value, requested, pluginsDirectory, ct: ct);
-                    if (staged.Yanked is { } why)
-                    {
-                        AnsiConsole.MarkupLineInterpolated($"[yellow]![/] {staged.TargetId} {staged.Version} was withdrawn from the index: {why}");
-                    }
-
-                    // The files are checked; now the lock file, before anything runs.
-                    var locked = lockFile?.Find(staged.TargetId);
-                    var sameVersion = locked is not null && string.Equals(locked.Version, staged.Version, StringComparison.OrdinalIgnoreCase);
-                    if (sameVersion && locked!.HashFor(staged.Files.Platform) is { } expected &&
-                        !string.Equals(expected, staged.Hash, StringComparison.OrdinalIgnoreCase))
-                    {
-                        throw new PluginException(
-                            $"{staged.TargetId} {staged.Version} from the index unpacks to SHA-256 {staged.Hash[..12]}…, but {PluginLockFile.FileName} " +
-                            $"locks {expected[..Math.Min(12, expected.Length)]}… for {staged.Files.Platform}. It was not installed. If the " +
-                            "package was republished on purpose, remove its hash from the lock file and install again.");
-                    }
-
-                    // Signed by its publisher, so it may run: check it is what the index says it is.
-                    var (info, error) = await ProbeAsync(
-                        new DiscoveredPlugin(staged.TargetId, staged.Files.EntryPath, "plugin index") { Files = staged.Files }, locked: null, ct);
-                    if (info is null)
-                    {
-                        throw new PluginException(error!);
-                    }
-
-                    if (!string.Equals(info.Plugin.Version, staged.Version, StringComparison.OrdinalIgnoreCase))
-                    {
-                        throw new PluginException(
-                            $"{staged.TargetId}: the package for {staged.Version} reports version {info.Plugin.Version ?? "(none)"}. It was not installed.");
-                    }
-
-                    if (!info.Targets.Any(t => string.Equals(t.Id, staged.TargetId, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        throw new PluginException($"{staged.TargetId}: the package doesn't serve target '{staged.TargetId}'. It was not installed.");
-                    }
-
-                    await installer.CommitAsync(staged, ct);
-                    AnsiConsole.MarkupLineInterpolated(
-                        $"[green]✓[/] {staged.TargetId}: {staged.Name} {staged.Version} into {staged.Destination}, signed by {staged.Signer.Describe()}");
-
-                    if (catalog.Find(target, project) is { } found &&
-                        !string.Equals(found.ExecutablePath, staged.InstalledEntryPath, StringComparison.OrdinalIgnoreCase))
-                    {
-                        AnsiConsole.MarkupLineInterpolated(
-                            $"[yellow]![/] Deployify finds another {staged.TargetId} plugin first: {found.ExecutablePath} ({found.Source}). Remove it to use this one.");
-                    }
-
-                    if (lockFile is not null)
-                    {
-                        var hashes = sameVersion && string.Equals(locked!.Plugin, info.Plugin.Name, StringComparison.Ordinal)
-                            ? new SortedDictionary<string, string>(locked.Sha256, StringComparer.Ordinal)
-                            : new SortedDictionary<string, string>(StringComparer.Ordinal);
-                        hashes[staged.Files.Platform] = staged.Hash;
-                        lockFile.Plugins[staged.TargetId] = new PluginLock
-                        {
-                            Plugin = info.Plugin.Name,
-                            Version = info.Plugin.Version,
-                            Sha256 = hashes,
-                            Source = new PluginLockSource { Index = loaded.Source.Url, Signer = staged.Signer.Describe() }
-                        };
-                        lockChanged = true;
-                    }
-                }
-                catch (PluginException ex)
-                {
-                    if (staged is not null)
-                    {
-                        installer.Discard(staged);
-                    }
-
-                    AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {ex.Message}");
-                    failed = true;
-                }
+                failed |= !await run.InstallAsync(id, requested, indexUrl, ct);
             }
 
+            var lockChanged = run.LockChanged;
             if (lockChanged)
             {
                 await lockFile!.SaveAsync(project!, ct);
@@ -302,4 +218,128 @@ public static partial class PluginCommand
     }
 
     private static string DeploymentSessionResolverStateFile => Core.Deployments.DeploymentSessionResolver.StateFileName;
+
+    /// <summary>
+    /// Installs plugins from signed indexes, one at a time, the way <c>plugin install</c> and
+    /// <c>plugin update</c> both do: the package must match the index's hash and be signed by its
+    /// publisher, the same version must match the hash in the lock file, and the plugin must say
+    /// it is that version and serves that target before it replaces what was installed. The lock
+    /// file is updated in memory; the caller saves it when <see cref="LockChanged"/>.
+    /// </summary>
+    private sealed class IndexInstall(ParseResult parseResult, string? project, PluginLockFile? lockFile, string pluginsDirectory)
+    {
+        private readonly PluginIndexClient _client = new();
+        private readonly PluginInstaller _installer = new();
+        private readonly PluginCatalog _catalog = new();
+        private readonly Dictionary<string, (PluginIndexSource Source, PluginIndex Index)> _indexes = new(StringComparer.Ordinal);
+
+        public bool LockChanged { get; private set; }
+
+        /// <summary>Overrides where <see cref="InstallAsync"/> installs, for one plugin.</summary>
+        public string PluginsDirectory { get; set; } = pluginsDirectory;
+
+        public async Task<(PluginIndexSource Source, PluginIndex Index)> LoadIndexAsync(string? indexUrl, CancellationToken ct)
+        {
+            var source = IndexSource(parseResult, indexUrl);
+            if (!_indexes.TryGetValue(source.Url, out var loaded))
+            {
+                loaded = (source, await _client.LoadAsync(source, ct));
+                _indexes[source.Url] = loaded;
+            }
+
+            return loaded;
+        }
+
+        /// <summary>Installs <paramref name="id"/> at <paramref name="version"/> (null: the newest). False, with the reason printed, when it wasn't.</summary>
+        public async Task<bool> InstallAsync(string id, string? version, string? indexUrl, CancellationToken ct)
+        {
+            if (!DeploymentTargetType.TryParse(id, out var target) || target.IsBuiltIn)
+            {
+                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] '{id}' isn't a plugin target ID.");
+                return false;
+            }
+
+            StagedPlugin? staged = null;
+            try
+            {
+                var loaded = await LoadIndexAsync(indexUrl, ct);
+                staged = await _installer.StageAsync(loaded.Index, loaded.Source, target.Value, version, PluginsDirectory, ct: ct);
+                if (staged.Yanked is { } why)
+                {
+                    AnsiConsole.MarkupLineInterpolated($"[yellow]![/] {staged.TargetId} {staged.Version} was withdrawn from the index: {why}");
+                }
+
+                // The files are checked; now the lock file, before anything runs.
+                var locked = lockFile?.Find(staged.TargetId);
+                var sameVersion = locked is not null && string.Equals(locked.Version, staged.Version, StringComparison.OrdinalIgnoreCase);
+                if (sameVersion && locked!.HashFor(staged.Files.Platform) is { } expected &&
+                    !string.Equals(expected, staged.Hash, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new PluginException(
+                        $"{staged.TargetId} {staged.Version} from the index unpacks to SHA-256 {staged.Hash[..12]}…, but {PluginLockFile.FileName} " +
+                        $"locks {expected[..Math.Min(12, expected.Length)]}… for {staged.Files.Platform}. It was not installed. If the " +
+                        "package was republished on purpose, remove its hash from the lock file and install again.");
+                }
+
+                // Signed by its publisher, so it may run: check it is what the index says it is.
+                var (info, error) = await ProbeAsync(
+                    new DiscoveredPlugin(staged.TargetId, staged.Files.EntryPath, "plugin index") { Files = staged.Files }, locked: null, ct);
+                if (info is null)
+                {
+                    throw new PluginException(error!);
+                }
+
+                if (!string.Equals(info.Plugin.Version, staged.Version, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new PluginException(
+                        $"{staged.TargetId}: the package for {staged.Version} reports version {info.Plugin.Version ?? "(none)"}. It was not installed.");
+                }
+
+                if (!info.Targets.Any(t => string.Equals(t.Id, staged.TargetId, StringComparison.OrdinalIgnoreCase)))
+                {
+                    throw new PluginException($"{staged.TargetId}: the package doesn't serve target '{staged.TargetId}'. It was not installed.");
+                }
+
+                await _installer.CommitAsync(staged, ct);
+                AnsiConsole.MarkupLineInterpolated(
+                    $"[green]✓[/] {staged.TargetId}: {staged.Name} {staged.Version} into {staged.Destination}, signed by {staged.Signer.Describe()}");
+
+                if (_catalog.Find(target, project) is { } found &&
+                    !string.Equals(found.ExecutablePath, staged.InstalledEntryPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    AnsiConsole.MarkupLineInterpolated(
+                        $"[yellow]![/] Deployify finds another {staged.TargetId} plugin first: {found.ExecutablePath} ({found.Source}). Remove it to use this one.");
+                }
+
+                if (lockFile is not null)
+                {
+                    // Another version's hashes for other platforms don't hold for this one.
+                    var hashes = sameVersion && string.Equals(locked!.Plugin, info.Plugin.Name, StringComparison.Ordinal)
+                        ? new SortedDictionary<string, string>(locked.Sha256, StringComparer.Ordinal)
+                        : new SortedDictionary<string, string>(StringComparer.Ordinal);
+                    hashes[staged.Files.Platform] = staged.Hash;
+                    lockFile.Plugins[staged.TargetId] = new PluginLock
+                    {
+                        Plugin = info.Plugin.Name,
+                        Version = info.Plugin.Version,
+                        Sha256 = hashes,
+                        Source = new PluginLockSource { Index = loaded.Source.Url, Signer = staged.Signer.Describe() }
+                    };
+                    LockChanged = true;
+                }
+
+                return true;
+            }
+            catch (PluginException ex)
+            {
+                if (staged is not null)
+                {
+                    _installer.Discard(staged);
+                }
+
+                AnsiConsole.MarkupLineInterpolated($"[red]✗[/] {ex.Message}");
+                return false;
+            }
+        }
+    }
 }

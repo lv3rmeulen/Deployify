@@ -13,6 +13,18 @@ Each release can have these sections: **Added**, **Changed**, **Deprecated**, **
 
 ### Added
 
+- `deployify update --self` updates Deployify itself with `dotnet tool update`, for a global,
+  `--tool-path` or local tool. It moves to the newest version without breaking changes (`--major`
+  to cross a major version, `--prerelease` for pre-releases), `--check` only reports and exits `2`
+  when there is a newer version, and `--source` (or `DEPLOYIFY_UPDATE_SOURCE`) reads another feed
+  than nuget.org. On Windows a global or `--tool-path` Deployify is updated in the background once
+  the command has exited, with its output in `%TEMP%\deployify-update.log`.
+- `deployify plugin update` moves the plugins `deployify-plugins.lock.json` records from an index
+  to their newest compatible version, with the same checks as `plugin install`, and locks them.
+  Yanked versions and versions that speak another plugin protocol are skipped; `--check`,
+  `--dry-run`, `--major` and `--prerelease` work as for `update --self`.
+- `deployify update` updates the project's plugins like `plugin update` and warns when the
+  AppHost's `Deployify.Hosting` package isn't on the same version as the CLI.
 - Drift alerts: `deployify drift` checks whether environments still match what was last
   deployed to them and alerts when they don't. Every successful deploy (`apply`, `ci`,
   `aspire deploy`) now records what it deployed (`{prefix}/{env}/deployed.json`: the manifest,
@@ -207,6 +219,8 @@ Each release can have these sections: **Added**, **Changed**, **Deprecated**, **
 
 ### Fixed
 
+- The plugin index orders pre-release versions by SemVer: numeric parts compare as numbers, so
+  `1.0.0-beta.10` is newer than `1.0.0-beta.2` and `plugin install` picks it.
 - `env list` shows the address (or context, project, region) of every environment again. It
   looked the key up with its case, and found nothing in files written by `init` and `env`,
   which write `Address`.

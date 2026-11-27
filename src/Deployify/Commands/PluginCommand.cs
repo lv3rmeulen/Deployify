@@ -14,16 +14,17 @@ using Spectre.Console;
 
 namespace Deployify.Commands;
 
-/// <summary><c>deployify plugin list | lock | search | install</c>: find, install and pin the target plugins a project uses.</summary>
+/// <summary><c>deployify plugin list | lock | search | install | update</c>: find, install, update and pin the target plugins a project uses.</summary>
 public static partial class PluginCommand
 {
     public static Command Build()
     {
-        var cmd = new Command("plugin", "Find, install, show and lock the target plugins this project can use.");
+        var cmd = new Command("plugin", "Find, install, update, show and lock the target plugins this project can use.");
         cmd.Subcommands.Add(BuildList());
         cmd.Subcommands.Add(BuildLock());
         cmd.Subcommands.Add(BuildSearch());
         cmd.Subcommands.Add(BuildInstall());
+        cmd.Subcommands.Add(BuildUpdate());
         return cmd;
     }
 
@@ -200,7 +201,7 @@ public static partial class PluginCommand
         return cmd;
     }
 
-    private static string? StateDirectory(string projectPath)
+    internal static string? StateDirectory(string projectPath)
     {
         var start = File.Exists(projectPath) ? Path.GetDirectoryName(Path.GetFullPath(projectPath))! : Path.GetFullPath(projectPath);
         return DeploymentSessionResolver.FindStateDirectory(start);

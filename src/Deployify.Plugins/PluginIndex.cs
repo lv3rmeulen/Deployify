@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Deployify.Core.Models;
+using Deployify.Core.Versioning;
 using Deployify.Plugin.Contracts;
 
 namespace Deployify.Plugins;
@@ -134,9 +135,24 @@ public sealed class PluginIndexEntry
     public PluginIndexVersion? Latest(bool includePrerelease = false)
         => Versions
             .Where(v => v.Yanked is null && (includePrerelease || !v.IsPrerelease))
-            .OrderByDescending(v => v.SortKey)
+            .OrderByDescending(v => v.Version, VersionOrder.Comparer)
             .FirstOrDefault()
            ?? (includePrerelease ? null : Latest(includePrerelease: true));
+
+    /// <summary>
+    /// The version <c>deployify plugin update</c> moves <paramref name="current"/> to: the newest
+    /// one that isn't yanked, speaks this Deployify's plugin protocol and is newer than
+    /// <paramref name="current"/>. Unless <paramref name="crossMajor"/>, only versions without
+    /// breaking changes count (<see cref="VersionOrder.IsCompatible"/>). Pre-releases count when
+    /// <paramref name="includePrerelease"/> or when <paramref name="current"/> is one. Null when
+    /// there is nothing newer.
+    /// </summary>
+    public PluginIndexVersion? UpdateFor(string current, bool includePrerelease = false, bool crossMajor = false)
+        => Versions
+            .Where(v => v.Version is not null && v.Yanked is null && v.SpeaksCurrentProtocol)
+            .Where(v => VersionOrder.IsUpdate(current, v.Version!, includePrerelease, crossMajor))
+            .OrderByDescending(v => v.Version, VersionOrder.Comparer)
+            .FirstOrDefault();
 
     public PluginIndexVersion? FindVersion(string version)
         => Versions.FirstOrDefault(v => string.Equals(v.Version, version, StringComparison.OrdinalIgnoreCase));
@@ -219,28 +235,10 @@ public sealed class PluginIndexVersion
             : Packages.TryGetValue(PluginFiles.AnyPlatform, out var any) ? (PluginFiles.AnyPlatform, any)
             : null;
 
-    /// <summary>Major, minor, patch, then releases after their pre-releases.</summary>
+    /// <summary>Whether this Deployify can talk to this version: no protocol listed, or the same major protocol version.</summary>
     [JsonIgnore]
-    internal (int, int, int, int, string) SortKey
-    {
-        get
-        {
-            var text = Version ?? string.Empty;
-            var plus = text.IndexOf('+', StringComparison.Ordinal);
-            if (plus >= 0)
-            {
-                text = text[..plus];
-            }
-
-            var dash = text.IndexOf('-', StringComparison.Ordinal);
-            var core = dash >= 0 ? text[..dash] : text;
-            var pre = dash >= 0 ? text[(dash + 1)..] : string.Empty;
-            var parts = core.Split('.');
-            return (Part(0), Part(1), Part(2), pre.Length == 0 ? 1 : 0, pre);
-
-            int Part(int i) => i < parts.Length && int.TryParse(parts[i], out var n) ? n : 0;
-        }
-    }
+    public bool SpeaksCurrentProtocol
+        => Protocol is not { } protocol || !System.Version.TryParse(protocol, out var speaks) || speaks.Major == PluginProtocol.Version.Major;
 
     internal IEnumerable<string> Validate(bool requireHashes)
     {

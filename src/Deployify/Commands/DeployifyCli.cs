@@ -34,5 +34,6 @@ public static class DeployifyCli
             DestroyCommand.Build(),
             StateCommand.Build(),
             PluginCommand.Build(),
+            UpdateCommand.Build(),
         };
 }
