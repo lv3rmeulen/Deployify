@@ -11,7 +11,6 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>deployify</ToolCommandName>
     <PackageId>deployify</PackageId>
-    <Version>1.0.0</Version>
     <EnablePackageValidation>true</EnablePackageValidation>
   </PropertyGroup>
 
