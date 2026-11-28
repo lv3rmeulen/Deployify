@@ -65,6 +65,7 @@ export default defineConfig({
 						'targets/cloud-run',
 						'targets/digitalocean',
 						'targets/iis',
+						'targets/host',
 						'targets/plugins',
 					],
 				},

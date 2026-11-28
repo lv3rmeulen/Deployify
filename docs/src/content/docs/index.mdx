@@ -20,7 +20,7 @@ import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 <CardGrid stagger>
 	<Card title="One AppHost, many targets" icon="rocket">
 		Docker Compose, Kubernetes (kubectl, Helm, Argo CD, Flux), OVHcloud Managed Kubernetes, Nomad, Nomad + Consul,
-		AWS ECS, Azure Container Apps, Google Cloud Run, IIS on Windows Server and DigitalOcean App Platform (a plugin) — or your own platform as a plugin.
+		AWS ECS, Azure Container Apps, Google Cloud Run, IIS on Windows Server, plain Linux and Windows machines (systemd units or Windows services) and DigitalOcean App Platform (a plugin) — or your own platform as a plugin.
 	</Card>
 	<Card title="Plan, then apply" icon="list-format">
 		`deployify plan` shows what will change on the target before anything does.
@@ -48,4 +48,5 @@ import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 	<LinkCard title="Google Cloud Run" href="/Deployify/targets/cloud-run/" />
 	<LinkCard title="DigitalOcean App Platform" href="/Deployify/targets/digitalocean/" />
 	<LinkCard title="IIS (Windows Server)" href="/Deployify/targets/iis/" />
+	<LinkCard title="Host (systemd and Windows services)" href="/Deployify/targets/host/" />
 </CardGrid>

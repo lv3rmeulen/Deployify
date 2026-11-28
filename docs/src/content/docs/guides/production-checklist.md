@@ -105,7 +105,7 @@ A gate is only as good as the check behind it:
 
 - **Map a health endpoint in production.** Aspire's `MapDefaultEndpoints()` only maps `/health`
   in the Development environment, so HTTP checks fail in production unless you map it yourself.
-  Then use it: `healthCheckType: "http"` on Nomad and Kubernetes, `healthPath` on IIS, probes on
+  Then use it: `healthCheckType: "http"` on Nomad and Kubernetes, `healthPath` on IIS and the host target, probes on
   Azure Container Apps (without them, Container Apps only reports whether containers start).
 - **Compose** generates no health checks by default (`generateHealthChecks`), because the images
   `dotnet publish` builds contain neither `curl` nor `wget`. Without one, the gate only checks

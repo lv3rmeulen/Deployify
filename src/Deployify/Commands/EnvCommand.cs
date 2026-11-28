@@ -17,6 +17,7 @@ using Deployify.Target.CloudRun;
 using Deployify.Target.Compose;
 using Deployify.Target.GitOps;
 using Deployify.Target.Helm;
+using Deployify.Target.Host;
 using Deployify.Target.Iis;
 using Deployify.Target.Kubernetes;
 using Deployify.Target.OvhCloud;
@@ -668,6 +669,8 @@ public static class EnvCommand
             DeploymentTargetType.Names.Iis => Sections(("iis", new IisTargetConfig())),
             // Set cloudrun.projectId before applying.
             DeploymentTargetType.Names.CloudRun => Sections(("cloudrun", new CloudRunTargetConfig())),
+            // Deploys to this machine until host.hosts is set.
+            DeploymentTargetType.Names.Host => Sections(("host", new HostTargetConfig())),
             _ => []
         };
 
@@ -716,7 +719,8 @@ public static class EnvCommand
         [DeploymentTargetType.Names.Flux] = ("gitops", "repoUrl", "-"),
         [DeploymentTargetType.Names.OvhCloud] = ("ovhcloud", "clusterId", "-"),
         [DeploymentTargetType.Names.Iis] = ("iis", "host", "localhost"),
-        [DeploymentTargetType.Names.CloudRun] = ("cloudrun", "region", "-")
+        [DeploymentTargetType.Names.CloudRun] = ("cloudrun", "region", "-"),
+        [DeploymentTargetType.Names.Host] = ("host", "hosts", "localhost")
     };
 
     internal static string GetDisplayAddress(EnvironmentConfig cfg)
@@ -743,7 +747,14 @@ public static class EnvCommand
 
         var property = element.EnumerateObject()
             .FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
-        return property.Value.ValueKind == JsonValueKind.String ? property.Value.GetString() : null;
+        return property.Value.ValueKind switch
+        {
+            JsonValueKind.String => property.Value.GetString(),
+            // A list (the host target's hosts) shows as its items; an empty one as unset.
+            JsonValueKind.Array when property.Value.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.String)
+                .Select(e => e.GetString()).ToList() is { Count: > 0 } items => string.Join(", ", items),
+            _ => null
+        };
     }
 
     private static IStateManager BuildStateManager()

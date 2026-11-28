@@ -65,10 +65,10 @@ deploy.
 | AWS ECS | ✓ (CANARY, LINEAR) | ✓ | ECS | exact |
 | Argo CD | ✓ | ✓ | Argo Rollouts | by number of pods |
 | Flux | ✓ (needs a mesh or ingress provider) | ✓ | Flagger | exact with a provider |
-| Docker Compose, IIS, DigitalOcean, plugins | — | — | | |
+| Docker Compose, IIS, Host, DigitalOcean, plugins | — | — | | |
 
-Docker Compose and IIS run on one host with no traffic splitting; DigitalOcean App Platform has
-none either. Plugin targets can't declare strategies yet.
+Docker Compose and IIS run on one host with no traffic splitting, and the host target leaves
+traffic between its hosts to your load balancer; DigitalOcean App Platform has none either. Plugin targets can't declare strategies yet.
 
 ### Strategies Deployify runs
 

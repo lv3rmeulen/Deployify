@@ -221,7 +221,14 @@ $server = {
         return [pscustomobject]@{ lines = $lines; next = $offset + $end }
     }
 
+    # Records what runs now, and the release that ran before it, which pruning keeps for a rollback.
     function Write-Marker([string]$serviceDir, $site) {
+        $old = Read-Marker $serviceDir
+        $previous = $null
+        if ($null -ne $old) {
+            $previous = $old.release
+            if ($previous -eq $site.release) { $previous = $old.previous }
+        }
         [pscustomobject]@{
             managedBy   = 'deployify'
             service     = $site.service
@@ -229,6 +236,7 @@ $server = {
             siteName    = $site.siteName
             fingerprint = $site.fingerprint
             release     = $site.release
+            previous    = $previous
             deployedAt  = (Get-Date).ToUniversalTime().ToString('o')
         } | ConvertTo-Json | Set-Content -Path (Join-Path $serviceDir $markerName) -Encoding UTF8
     }
@@ -260,9 +268,15 @@ $server = {
     }
 
     # Keeps the newest releases and their settings; one still locked by a recycling worker goes next time.
+    # The current release and the one that ran before it always stay, so a rollback can go back to
+    # it even when an earlier rollback left an older release running.
     function Remove-OldReleases([string]$serviceDir, [string]$current, [int]$keep) {
+        $previous = $null
+        $marker = Read-Marker $serviceDir
+        if ($null -ne $marker) { $previous = $marker.previous }
+        if ($previous -and $previous -ne $current) { $keep = $keep - 1 }
         Get-ChildItem -Path (Join-Path $serviceDir 'releases') -Directory |
-            Where-Object { $_.Name -ne $current } |
+            Where-Object { $_.Name -ne $current -and $_.Name -ne $previous } |
             Sort-Object CreationTimeUtc -Descending |
             Select-Object -Skip ([Math]::Max(0, $keep - 1)) |
             ForEach-Object { try { Remove-Item -Path $_.FullName -Recurse -Force } catch { } }

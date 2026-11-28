@@ -70,7 +70,7 @@ deployify env add <name> [options]
 |---|---|---|
 | `--project-path`, `-p` | Path to the Aspire AppHost .csproj or its directory. | current directory |
 | `--non-interactive` | Disable interactive prompts; fail on missing required values. | `false` |
-| `--target` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| ovhcloud \| compose \| awsecs \| azurecontainerapps \| nomadconsul \| iis \| cloudrun, or the ID of a plugin target. Required unless --extends is given. |  |
+| `--target` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| ovhcloud \| compose \| awsecs \| azurecontainerapps \| nomadconsul \| iis \| cloudrun \| host, or the ID of a plugin target. Required unless --extends is given. |  |
 | `--extends` | Build on another environment: start from its settings and keep only what differs. Takes the target and settings given here as overrides; no prompts. |  |
 | `--abstract` | Only hold settings for other environments to extend; it can't be deployed or made active. | `false` |
 | `--activate` | Set as active after adding. | `false` |

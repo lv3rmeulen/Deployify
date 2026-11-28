@@ -66,8 +66,8 @@ Smaller limitations are described on the page they apply to:
   app-level settings such as ingress. ([Rollouts](/Deployify/guides/rollouts/))
 - On Nomad with `registerServices: false`, services reach each other on `localhost`, which only
   works on a single node. ([Nomad](/Deployify/targets/nomad/))
-- Canary and blue-green aren't available on Docker Compose, IIS, DigitalOcean App Platform or
-  plugin targets, and Helm has no blue-green. On Kubernetes, canary weights are rounded to whole
+- Canary and blue-green aren't available on Docker Compose, IIS, the host target, DigitalOcean App
+  Platform or plugin targets, and Helm has no blue-green. On Kubernetes, canary weights are rounded to whole
   pods; on Nomad, the canaries' share is fixed for the whole rollout.
   ([Canary and blue-green](/Deployify/guides/rollout-strategies/))
 - Cloud Run runs only HTTP services; containers such as databases have to run elsewhere.

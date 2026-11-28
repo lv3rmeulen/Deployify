@@ -23,7 +23,7 @@ deployify init [options]
 | `--project-path`, `-p` | Path to the Aspire AppHost .csproj or its directory. | current directory |
 | `--non-interactive` | Disable interactive prompts; fail on missing required values. | `false` |
 | `--env-name` | Environment name. | `local` |
-| `--target` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| ovhcloud \| compose \| awsecs \| azurecontainerapps \| nomadconsul \| iis \| cloudrun, or the ID of a plugin target. |  |
+| `--target` | Deployment target: nomad \| kubernetes \| helm \| argocd \| flux \| ovhcloud \| compose \| awsecs \| azurecontainerapps \| nomadconsul \| iis \| cloudrun \| host, or the ID of a plugin target. |  |
 | `--container-registry` | Container registry URL. |  |
 | `--image-tag` | Default image tag. | `latest` |
 | `--output-path` | Output folder for artifacts. | `deployify-output` |
@@ -65,6 +65,11 @@ deployify init [options]
 | `--iis-transport` | How to reach --iis-host: WinRm \| Ssh. | `WinRm` |
 | `--iis-user` | User to connect as. WinRM reads the password from IIS_PASSWORD. |  |
 | `--iis-sites-root` | Folder on the server for the sites and their releases. | `C:\inetpub\deployify` |
+| `--host-hosts` | Comma-separated machines to deploy to (host names or SSH aliases). Default: this machine. |  |
+| `--host-os` | Operating system of the hosts: Linux \| Windows. Default: Linux, or this machine's OS without --host-hosts. |  |
+| `--host-transport` | Windows hosts: how to reach them, WinRm \| Ssh. | `WinRm` |
+| `--host-user` | User to connect as; on Linux the services run as this user too. WinRM reads the password from HOST_PASSWORD. |  |
+| `--host-root` | Folder on the hosts for the services and their releases. Default: /opt/deployify or C:\deployify. |  |
 | `--compose-project` | Docker Compose project name. | `deployify` |
 | `--compose-restart` | Restart policy. | `unless-stopped` |
 | `--ecs-region` | AWS region. | `us-east-1` |

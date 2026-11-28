@@ -23,6 +23,7 @@ internal sealed class TargetInitFlows
             new GitOpsInitFlow(kubernetes),
             new OvhCloudInitFlow(kubernetes),
             new IisInitFlow(),
+            new HostInitFlow(),
             new ComposeInitFlow(),
             new AwsEcsInitFlow(),
             new AzureContainerAppsInitFlow(),
@@ -47,7 +48,8 @@ internal sealed class TargetInitFlows
         DeploymentTargetType.Flux,
         DeploymentTargetType.OvhCloud,
         DeploymentTargetType.Iis,
-        DeploymentTargetType.CloudRun
+        DeploymentTargetType.CloudRun,
+        DeploymentTargetType.Host
     ];
 
     /// <summary>Every flow's flags, each listed once.</summary>

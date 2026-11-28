@@ -15,6 +15,7 @@
     <File Path=".github/workflows/release.yml" />
     <File Path=".github/workflows/samples.yml" />
     <File Path=".gitignore" />
+    <File Path="action.yml" />
     <File Path="Directory.Build.props" />
     <File Path="Directory.Packages.props" />
     <File Path="global.json" />
@@ -34,6 +35,7 @@
     <Project Path="src/Deployify.Target.GitOps/Deployify.Target.GitOps.csproj" />
     <Project Path="src/Deployify.Target.Helm/Deployify.Target.Helm.csproj" />
     <Project Path="src/Deployify.Target.Iis/Deployify.Target.Iis.csproj" />
+    <Project Path="src/Deployify.Target.Host/Deployify.Target.Host.csproj" />
     <Project Path="src/Deployify.Target.CloudRun/Deployify.Target.CloudRun.csproj" />
     <Project Path="src/Deployify.Target.Kubernetes/Deployify.Target.Kubernetes.csproj" />
     <Project Path="src/Deployify.Target.Nomad/Deployify.Target.Nomad.csproj" />
@@ -60,6 +62,7 @@
     <Project Path="test/Deployify.Target.GitOps.Tests/Deployify.Target.GitOps.Tests.csproj" />
     <Project Path="test/Deployify.Target.Helm.Tests/Deployify.Target.Helm.Tests.csproj" />
     <Project Path="test/Deployify.Target.Iis.Tests/Deployify.Target.Iis.Tests.csproj" />
+    <Project Path="test/Deployify.Target.Host.Tests/Deployify.Target.Host.Tests.csproj" />
     <Project Path="test/Deployify.Target.CloudRun.Tests/Deployify.Target.CloudRun.Tests.csproj" />
     <Project Path="test/Deployify.Target.Kubernetes.Tests/Deployify.Target.Kubernetes.Tests.csproj" />
     <Project Path="test/Deployify.Target.Nomad.Tests/Deployify.Target.Nomad.Tests.csproj" />

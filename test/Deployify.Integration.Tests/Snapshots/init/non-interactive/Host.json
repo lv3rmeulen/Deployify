@@ -1,0 +1,83 @@
+{
+  "FormatVersion": 1,
+  "ActiveEnvironment": "prod",
+  "Environments": {
+    "prod": {
+      "Target": "Host",
+      "ContainerRegistry": "registry.example.com/team",
+      "ImageTag": "1.2.3",
+      "OutputPath": "out",
+      "ServiceOverrides": {},
+      "IgnoreResources": [],
+      "Parameters": {},
+      "ContainerRuntime": "Podman",
+      "DeployDashboard": true,
+      "Dashboard": {
+        "ImageTag": "9.0",
+        "Port": 19888,
+        "OtlpPort": 19889,
+        "BrowserToken": "env:DASH_TOKEN",
+        "Cpu": "100m",
+        "Memory": "128Mi"
+      },
+      "AppHostPath": "<dir>",
+      "ContainerOs": "linux",
+      "ContainerArch": "arm64",
+      "DeployDapr": true,
+      "Dapr": {
+        "DaprVersion": "1.14",
+        "DaprHttpPort": 3600,
+        "DaprGrpcPort": 50101,
+        "ComponentsPath": "./components",
+        "ConfigPath": "./dapr.yaml",
+        "LogLevel": "debug"
+      },
+      "Secrets": {
+        "Backend": "Inline",
+        "Vault": {
+          "Mount": "secret",
+          "PathPrefix": "deployify",
+          "AuthMount": "kubernetes",
+          "ManageAuth": true,
+          "SecretsFileName": "appsettings.secrets.json",
+          "AgentAnnotations": {}
+        },
+        "KeyVault": {
+          "KubernetesIdentity": "WorkloadIdentity"
+        },
+        "References": {}
+      },
+      "TargetConfig": {
+        "host": {
+          "Hosts": [
+            "app01",
+            "app02"
+          ],
+          "Os": "Windows",
+          "Transport": "Ssh",
+          "UseSsl": false,
+          "UserName": "deploy",
+          "Root": "D:\\apps",
+          "KeepReleases": 3,
+          "HealthPath": "/",
+          "StartupSeconds": 10,
+          "HostHealthTimeoutSeconds": 120,
+          "SelfContained": true,
+          "BasePort": 8080,
+          "ListenAddress": "*",
+          "ExternalHosts": {}
+        }
+      },
+      "Protected": false,
+      "Prune": false,
+      "Sbom": {
+        "Enabled": false,
+        "Format": "Spdx",
+        "Attest": true
+      },
+      "Signing": {
+        "Enabled": false
+      }
+    }
+  }
+}

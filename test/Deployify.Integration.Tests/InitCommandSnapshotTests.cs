@@ -82,7 +82,7 @@ public sealed class InitCommandSnapshotTests : IDisposable
 
     public static TheoryData<string> Targets => new(
         "Nomad", "Kubernetes", "Compose", "AwsEcs", "AzureContainerApps", "NomadConsul",
-        "Helm", "ArgoCd", "Flux", "OvhCloud", "Iis", "CloudRun");
+        "Helm", "ArgoCd", "Flux", "OvhCloud", "Iis", "CloudRun", "Host");
 
     /// <summary>Every flag set to a value other than its default, so each one shows up in the snapshot.</summary>
     private const string AllFlags =
@@ -100,6 +100,7 @@ public sealed class InitCommandSnapshotTests : IDisposable
         "--gitops-repo https://git.example.com/config.git --gitops-branch deploy --gitops-path envs/prod " +
         "--ovh-endpoint ovh-ca --ovh-project proj-1 --ovh-cluster cluster-1 " +
         "--iis-host web01 --iis-transport Ssh --iis-user deploy --iis-sites-root D:\\sites " +
+        "--host-hosts \"app01, app02\" --host-os Windows --host-transport Ssh --host-user deploy --host-root D:\\apps " +
         "--compose-project shopapp --compose-restart always " +
         "--ecs-region eu-west-1 --ecs-cluster shop --ecs-profile prod --ecs-subnets \"subnet-a, subnet-b\" " +
         "--ecs-security-groups sg-1 --ecs-execution-role arn:aws:iam::1:role/exec " +
@@ -152,7 +153,7 @@ public sealed class InitCommandSnapshotTests : IDisposable
     private static readonly string[] s_choices =
     [
         "Nomad", "Kubernetes", "Compose", "AwsEcs", "AzureContainerApps", "NomadConsul",
-        "Helm", "ArgoCd", "Flux", "OvhCloud", "Iis", "CloudRun"
+        "Helm", "ArgoCd", "Flux", "OvhCloud", "Iis", "CloudRun", "Host"
     ];
 
     [Theory]
@@ -221,6 +222,14 @@ public sealed class InitCommandSnapshotTests : IDisposable
                 Pick(1); // Ssh
                 Text("deploy");
                 Text("D:\\sites");
+                break;
+
+            case "Host":
+                Text("app01, app02");
+                Pick(1); // Windows
+                Pick(1); // Ssh
+                Text("deploy");
+                Text("D:\\apps");
                 break;
 
             case "Compose":
@@ -296,6 +305,7 @@ public sealed class InitCommandSnapshotTests : IDisposable
             "Kubernetes" or "Helm" => 3,
             "ArgoCd" or "Flux" => 6,
             "Iis" => 2,
+            "Host" => 2, // hosts (this machine), folder
             "Compose" => 2,
             "AwsEcs" => 6,
             "AzureContainerApps" => 5,

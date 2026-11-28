@@ -478,10 +478,7 @@ public sealed class IisDeploymentTarget(ILogger<IisDeploymentTarget> logger) : I
 
     /// <summary>Release folder name: the tag (made safe for a folder name) and the start of the fingerprint.</summary>
     internal static string ReleaseName(IisSite site, string fingerprint)
-    {
-        var tag = new string([.. site.ImageTag.Select(ch => char.IsAsciiLetterOrDigit(ch) || ch is '.' or '-' or '_' ? ch : '_')]);
-        return $"{(tag.Length == 0 ? "release" : tag)}-{fingerprint[..12]}";
-    }
+        => Deployify.Core.Services.FolderPackage.ReleaseName(site.ImageTag, fingerprint);
 
     // ── Publish ───────────────────────────────────────────────────────────────
 

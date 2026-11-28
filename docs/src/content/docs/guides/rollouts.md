@@ -3,7 +3,7 @@ title: "Health-gated rollouts and rollback"
 description: "How apply deploys in waves, gates on health, and rolls back."
 ---
 
-On every target (**AWS ECS**, **Nomad**, **Nomad + Consul**, **Kubernetes**, **Azure Container Apps**, **Google Cloud Run**, **Docker Compose** and **IIS**), `apply` and `ci` deploy services in
+On every target (**AWS ECS**, **Nomad**, **Nomad + Consul**, **Kubernetes**, **Azure Container Apps**, **Google Cloud Run**, **Docker Compose**, **IIS** and **Host**), `apply` and `ci` deploy services in
 dependency order, one wave at a time, and wait for each wave to become healthy before moving on.
 If a service fails, doesn't become healthy within the timeout, or the run is canceled with
 Ctrl+C, every service the rollout touched is put back on the revision it ran before, in reverse
@@ -104,6 +104,13 @@ response below 500. The ASP.NET Core Module's "app failed to start" pages (`500.
 pool stopped by rapid-fail protection, or a site IIS couldn't start (a port in use) fail the rollout
 at once. A site the rollout created is removed. A rollback can only go back to a release still on
 the server: the newest `keepReleases` (default 3, at least 2) are kept.
+
+On the host target, a revision is a release folder on each host, and rolling back switches the
+service back to the folder it ran from before, on every host, with that release's environment
+(an environment file on Linux, saved settings on Windows). With several hosts, `apply` deploys host
+by host and waits for the service to be healthy on one before it moves on, so a failing build
+stops at the first host. See [the host target](/Deployify/targets/host/#health-checks-and-rollback)
+for what counts as healthy.
 
 ```bash
 deployify status                        # recent rollouts in this environment

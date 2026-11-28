@@ -147,6 +147,7 @@ changed field. `field` says what changed when the target reports it, and `reason
 | GitOps (Argo CD, Flux) | `files` | `newValue` lists the changed files. |
 | DigitalOcean | the component's changed setting, e.g. `instance_count` or `env.DB_URL` | The live and the desired value. Secret environment values read `(secret)`. |
 | IIS | `site`, `release` | The live and the desired site or release. |
+| Host | `release`, `hosts` | The live and the desired release; for `hosts`, which hosts don't run the service yet. |
 | Plugin targets | as the plugin reports | as the plugin reports |
 
 Other targets leave both `null`. Neither value is meant to be parsed: show it to a person, for

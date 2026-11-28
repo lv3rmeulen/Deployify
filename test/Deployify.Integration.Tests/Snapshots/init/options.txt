@@ -5,7 +5,7 @@
 --env-name : String = local
     Environment name.
 --target : DeploymentTargetType?
-    Deployment target: nomad | kubernetes | helm | argocd | flux | ovhcloud | compose | awsecs | azurecontainerapps | nomadconsul | iis | cloudrun, or the ID of a plugin target.
+    Deployment target: nomad | kubernetes | helm | argocd | flux | ovhcloud | compose | awsecs | azurecontainerapps | nomadconsul | iis | cloudrun | host, or the ID of a plugin target.
 --container-registry : String
     Container registry URL.
 --image-tag : String = latest
@@ -88,6 +88,16 @@
     User to connect as. WinRM reads the password from IIS_PASSWORD.
 --iis-sites-root : String = C:\inetpub\deployify
     Folder on the server for the sites and their releases.
+--host-hosts : String
+    Comma-separated machines to deploy to (host names or SSH aliases). Default: this machine.
+--host-os : HostOs?
+    Operating system of the hosts: Linux | Windows. Default: Linux, or this machine's OS without --host-hosts.
+--host-transport : HostTransport = WinRm
+    Windows hosts: how to reach them, WinRm | Ssh.
+--host-user : String
+    User to connect as; on Linux the services run as this user too. WinRM reads the password from HOST_PASSWORD.
+--host-root : String
+    Folder on the hosts for the services and their releases. Default: /opt/deployify or C:\deployify.
 --compose-project : String = deployify
     Docker Compose project name.
 --compose-restart : String = unless-stopped

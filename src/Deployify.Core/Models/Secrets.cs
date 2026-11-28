@@ -214,6 +214,8 @@ public static class StateFileSecrets
         ["nomadconsul.consulToken"] = "CONSUL_HTTP_TOKEN",
         ["nomadconsul.registryPassword"] = "DEPLOYIFY_REGISTRY_PASSWORD",
         ["iis.password"] = "IIS_PASSWORD",
+        ["host.password"] = "HOST_PASSWORD",
+        ["host.serviceAccountPassword"] = "HOST_SERVICE_PASSWORD",
         ["ovhcloud.applicationSecret"] = "OVH_APPLICATION_SECRET",
         ["ovhcloud.consumerKey"] = "OVH_CONSUMER_KEY",
         ["ovhcloud.clientSecret"] = "OVH_CLIENT_SECRET"

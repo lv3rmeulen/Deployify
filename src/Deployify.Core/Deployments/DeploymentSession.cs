@@ -241,6 +241,7 @@ public sealed record DeploymentSession(
                 DeploymentTargetType.Names.OvhCloud => "ovhcloud",
                 DeploymentTargetType.Names.Iis => "iis",
                 DeploymentTargetType.Names.CloudRun => "cloudrun",
+                DeploymentTargetType.Names.Host => "host",
                 _ => Config.Target.ToString().ToLower()
             };
             if (!Config.TargetConfig.TryGetValue(key, out var raw) ||
@@ -271,10 +272,18 @@ public sealed record DeploymentSession(
                     el.TryGetProperty("host", out var h) || el.TryGetProperty("Host", out h) ? h.GetString() ?? "localhost" : "localhost",
                 DeploymentTargetType.Names.CloudRun =>
                     el.TryGetProperty("region", out var cr) || el.TryGetProperty("Region", out cr) ? cr.GetString() ?? "-" : "-",
+                DeploymentTargetType.Names.Host => HostList(el),
                 _ => "-"
             };
         }
     }
+
+    /// <summary>The host target's hosts, comma-separated, or "localhost" when it deploys to this machine.</summary>
+    private static string HostList(System.Text.Json.JsonElement el)
+        => (el.TryGetProperty("hosts", out var h) || el.TryGetProperty("Hosts", out h)) && h.ValueKind == System.Text.Json.JsonValueKind.Array &&
+           h.EnumerateArray().Where(e => e.ValueKind == System.Text.Json.JsonValueKind.String).Select(e => e.GetString()).ToList() is { Count: > 0 } hosts
+            ? string.Join(", ", hosts)
+            : "localhost";
 
     /// <summary>
     /// Loads the manifest. With <see cref="ManifestPath"/> set, reads that file. Otherwise loads

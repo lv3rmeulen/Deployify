@@ -13,6 +13,17 @@ Each release can have these sections: **Added**, **Changed**, **Deprecated**, **
 
 ### Added
 
+- The host target (`Host`) deploys each project to plain machines as an operating-system service:
+  a systemd unit on Linux, reached over SSH, or a Windows service on Windows, reached over
+  PowerShell remoting, on one or more hosts or on this machine. Projects are published
+  self-contained to a folder; every release gets its own folder on the hosts, and a deploy switches
+  the service to it and restarts it, host by host, waiting for each host to be healthy before
+  the next. Rollback, `logs` (the systemd journal or the event log), drift checks and `destroy`
+  work as on the other targets. On Linux the services run as the deploy user, which needs
+  passwordless sudo for `systemctl` and `journalctl`; on Windows, `publish` refuses a project
+  without `Microsoft.Extensions.Hosting.WindowsServices`. Init flags: `--host-hosts`, `--host-os`,
+  `--host-transport`, `--host-user` and `--host-root`.
+
 - `deployify update --self` updates Deployify itself with `dotnet tool update`, for a global,
   `--tool-path` or local tool. It moves to the newest version without breaking changes (`--major`
   to cross a major version, `--prerelease` for pre-releases), `--check` only reports and exits `2`
@@ -219,6 +230,11 @@ Each release can have these sections: **Added**, **Changed**, **Deprecated**, **
 
 ### Fixed
 
+- IIS: pruning old releases no longer deletes the release a rollback needs. After a rollback left an
+  older release running, the next deploy kept the newest releases by date and could remove the one
+  that had just been running; the release that ran before the current one is now always kept.
+- `deployify init` ends with the commands to run next for the environment it set up (`publish`,
+  `plan`, `apply`) instead of an outdated list of targets.
 - The plugin index orders pre-release versions by SemVer: numeric parts compare as numbers, so
   `1.0.0-beta.10` is newer than `1.0.0-beta.2` and `plugin install` picks it.
 - `env list` shows the address (or context, project, region) of every environment again. It

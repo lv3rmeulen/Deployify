@@ -56,6 +56,7 @@ dashboard's browser token) are read from environment variables, not stored in `d
 | Consul ACL token | `CONSUL_HTTP_TOKEN` |
 | Registry password (Nomad, NomadConsul) | `DEPLOYIFY_REGISTRY_PASSWORD` |
 | IIS password | `IIS_PASSWORD` |
+| Host target: WinRM password, Windows service account password | `HOST_PASSWORD`, `HOST_SERVICE_PASSWORD` |
 
 To read a different variable, store a reference such as `"token": "env:PROD_NOMAD_TOKEN"`.
 

@@ -1,11 +1,14 @@
 ---
 title: "Release checklist for the cloud targets"
-description: "Manual checks to run against AWS ECS, Azure Container Apps, OVHcloud, IIS and Cloud Run before a release, since CI can't deploy to them."
+description: "Manual checks to run against AWS ECS, Azure Container Apps, OVHcloud, IIS, the host target and Cloud Run before a release, since CI can't deploy to them."
 ---
 
 CI builds every sample and deploys `hello-aspire` to Docker Compose and to kind, but it can't
-deploy to the targets that need a paid account or a Windows server: **AWS ECS**, **Azure Container
-Apps**, **OVHcloud Managed Kubernetes**, **IIS** and **Google Cloud Run**. Their unit and snapshot
+deploy to the targets that need a paid account, a Windows server or machines with systemd: **AWS
+ECS**, **Azure Container Apps**, **OVHcloud Managed Kubernetes**, **IIS**, the **host target** and
+**Google Cloud Run**. The host target's scripts also run in CI against stand-ins: the Linux one
+for `systemctl`, `sudo` and `journalctl`, the Windows one (with PowerShell 7) for the service
+manager, the registry and the event log. Neither meets a real systemd or Windows there. Their unit and snapshot
 tests run in CI; the platform itself is only exercised by this checklist.
 
 ## When to run it
@@ -21,7 +24,8 @@ To see what changed since the last release:
 ```bash
 git diff --stat v1.2.0..HEAD -- src/Deployify.Core src/Deployify.Targets \
   src/Deployify.Target.AwsEcs src/Deployify.Target.AzureContainerApps \
-  src/Deployify.Target.OvhCloud src/Deployify.Target.Iis src/Deployify.Target.CloudRun
+  src/Deployify.Target.OvhCloud src/Deployify.Target.Iis src/Deployify.Target.Host \
+  src/Deployify.Target.CloudRun
 ```
 
 Record the result of each run (date, commit, who, pass or the issue it raised) in the release's
@@ -38,7 +42,7 @@ pull request or GitHub release notes, so the next release knows what was last ch
   deployify --version   # matches the version you're about to tag
   ```
 - [ ] Work in a scratch copy of `samples/hello-aspire`, with one environment per target in its
-  `deployify-state.json`: `rc-ecs`, `rc-aca`, `rc-ovh`, `rc-iis`, `rc-run`. Never reuse an
+  `deployify-state.json`: `rc-ecs`, `rc-aca`, `rc-ovh`, `rc-iis`, `rc-linux`, `rc-windows`, `rc-run`. Never reuse an
   environment that serves anything real.
 - [ ] Give each environment a `ContainerRegistry` the platform can pull from, and a remote state
   backend (S3, Azure Blob, …) for at least one of them, so the run also covers remote state.
@@ -72,7 +76,7 @@ target-specific checks follow below.
    - [ ] Change something on the platform by hand (scale a service, edit an env var), then
      `deployify drift` reports it and `deployify diff` shows it.
    - [ ] `deployify history` lists the deploys from this run.
-5. **Rollout strategies** (skip on IIS, which only has `Rolling`)
+5. **Rollout strategies** (skip on IIS and the host target, which only have `Rolling`)
    - [ ] Set `"rollout": { "strategy": "Canary", "canary": { "steps": [{ "weight": 20, "pause": "1m" }] } }`
      and apply a change: the candidate starts, gets traffic, is promoted, and the old version is
      removed.
@@ -194,6 +198,48 @@ Checks:
 - [ ] `plan` with `"strategy": "Canary"` fails (only `Rolling` is available).
 - [ ] After `destroy`: only sites with a `deployify.json` marker are removed, with their pools,
   settings and folders; a site created by hand stays.
+
+## Host
+
+Needs: two Linux VMs with systemd (say Ubuntu and a RHEL-family distribution) and one Windows Server
+VM, all reachable from where you run Deployify. Local VMs are enough. On Linux, a `deploy` user
+that owns `/opt/deployify`, with the sudoers rule from the [host target](/Deployify/targets/host/)
+page; on Windows, an administrator account, WinRM and/or OpenSSH with PowerShell 7 as a subsystem.
+
+The host target only runs projects, so for `hello-aspire`:
+
+- add `"ignoreResources": ["web"]` (a Dockerfile resource);
+- point `cache` and `postgres` at a Redis and a Postgres the hosts can reach, under
+  `host.externalHosts`.
+
+Linux (`rc-linux`, both VMs in `hosts`):
+
+- [ ] `deployify publish` produces a self-contained `linux-x64` package per project.
+- [ ] `apply` deploys host by host: make the app fail on the second VM only (occupy its port
+  there with another process), and the rollout fails and puts the first VM back on its previous release.
+- [ ] Make it fail on the first VM instead: `apply` stops there and never touches the second.
+- [ ] `systemctl status deployify-rc-linux-api` shows the unit running as `deploy` from
+  `/opt/deployify/rc-linux-api/current`, and `current/env` is mode 600.
+- [ ] A second `apply` with nothing changed restarts nothing.
+- [ ] Without the sudoers rule, `apply` stops and says to add it.
+- [ ] Kill the app (`kill -9`): systemd restarts it, and a rollout running at the time fails.
+- [ ] `logs api --since 5m` and `logs api --follow` show lines from both VMs, named by host.
+- [ ] `selfContained: false` with .NET installed on the VMs works; without .NET, drift checks report it.
+- [ ] After `destroy`: the units and their folders are gone; `/opt/deployify` and a unit you
+  created by hand stay.
+
+Windows (`rc-windows`, `"os": "Windows"`):
+
+- [ ] Without `Microsoft.Extensions.Hosting.WindowsServices` in the projects, `publish` stops and
+  says to add it. With it and `AddWindowsService()`, `apply` installs a Windows service per project
+  running as `LocalService`.
+- [ ] The service's registry key is readable by Administrators and SYSTEM only, and its
+  `Environment` value holds the variables; `settings` is locked the same way.
+- [ ] Deploy over WinRM from Windows and over SSH from Linux or macOS.
+- [ ] `logs api` shows the app's warnings and errors from the Application log, and a crash
+  shows up as a `[service-manager]` line.
+- [ ] A rollback switches the service's executable path and variables back.
+- [ ] After `destroy`: the services and folders are gone; the event log sources stay.
 
 ## Google Cloud Run
 

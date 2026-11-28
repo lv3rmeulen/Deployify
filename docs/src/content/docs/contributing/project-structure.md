@@ -97,6 +97,9 @@ src/
   Deployify.Target.AzureContainerApps/
   Deployify.Target.Iis/                   IIS sites on Windows Server, driven through PowerShell remoting
     Scripts/deployify-iis.ps1             runs on the server; embedded in the assembly
+  Deployify.Target.Host/                  systemd units over SSH, or Windows services over PowerShell remoting
+    Scripts/deployify-host.sh             sent to bash on each Linux host; embedded in the assembly
+    Scripts/deployify-host.ps1            drives the Windows service manager; embedded in the assembly
   Deployify.Target.DigitalOcean/          DigitalOcean App Platform, shipped as a plugin (deployify-target-digitalocean)
   Deployify.ResourceServer/               the Aspire dashboard's resource service (gRPC), fed by an IResourceSource
   Deployify.Hosting/                      AddDeployify(): running Deployify from `aspire deploy`

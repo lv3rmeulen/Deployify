@@ -8,6 +8,7 @@ using Deployify.Target.CloudRun;
 using Deployify.Target.Compose;
 using Deployify.Target.GitOps;
 using Deployify.Target.Helm;
+using Deployify.Target.Host;
 using Deployify.Target.Iis;
 using Deployify.Target.Kubernetes;
 using Deployify.Target.Nomad;
@@ -46,6 +47,7 @@ public static class DeployifyServiceCollectionExtensions
             .AddSingleton<IDeploymentTarget, OvhCloudDeploymentTarget>()
             .AddSingleton<IDeploymentTarget, IisDeploymentTarget>()
             .AddSingleton<IDeploymentTarget, CloudRunDeploymentTarget>()
+            .AddSingleton<IDeploymentTarget, HostDeploymentTarget>()
             .AddSingleton(_ => new PluginCatalog())
             .AddSingleton(sp => new PluginTargetSource(
                 sp.GetRequiredService<PluginCatalog>(), sp.GetService<ILoggerFactory>(), sp.GetService<PluginHostOptions>()))

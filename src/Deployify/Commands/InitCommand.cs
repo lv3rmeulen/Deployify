@@ -236,9 +236,15 @@ public static class InitCommand
             AnsiConsole.MarkupLine(
                 $"  Environments: {string.Join(", ", stateFile.Environments.Keys.Select(k => $"[cyan]{Markup.Escape(k)}[/]"))}");
             AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine("Next steps:");
-            AnsiConsole.MarkupLine("  [cyan]deployify plan --target <nomad|kubernetes|compose|awsecs|azurecontainerapps|ovhcloud|iis>[/]");
-            AnsiConsole.MarkupLine("  [cyan]deployify apply --target <nomad|kubernetes|compose|awsecs|azurecontainerapps|ovhcloud|iis>[/]");
+            // The environment just set up is the active one and carries its target, so the next
+            // commands need neither --env nor --target, and this list never goes stale.
+            var targetNote = stateFile.ActiveEnvironment is { } activeName && stateFile.Environments.TryGetValue(activeName, out var activeEnv)
+                ? $" ({activeEnv.Target})"
+                : "";
+            AnsiConsole.MarkupLineInterpolated($"Next steps, for [cyan]{stateFile.ActiveEnvironment}[/]{targetNote}:");
+            AnsiConsole.MarkupLine("  [cyan]deployify publish[/]   [dim]build and push the images (or packages)[/]");
+            AnsiConsole.MarkupLine("  [cyan]deployify plan[/]      [dim]preview what apply would change[/]");
+            AnsiConsole.MarkupLine("  [cyan]deployify apply[/]     [dim]deploy[/]");
             return 0;
         });
 
