@@ -11,5 +11,17 @@
         }
       }
     }
+  },
+  "Targets": {
+    "target": "Flux",
+    "flux": {
+      "namespace": "flux-system",
+      "sourceName": null,
+      "createSource": true,
+      "secretRef": null,
+      "interval": "1m",
+      "timeout": "5m",
+      "prune": true
+    }
   }
 }
